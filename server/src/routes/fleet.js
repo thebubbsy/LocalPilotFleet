@@ -8,6 +8,7 @@ import { getDb } from '../db.js';
 import { requireFleetKey, setFleetKey } from '../utils/auth.js';
 import { sendJson } from '../utils/router.js';
 import dynamicGroupsService from '../services/dynamicGroups.js';
+import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
   // 1. GET /api/v1/fleet/stats and /overview
@@ -265,6 +266,83 @@ export function registerFleetRoutes(router) {
       });
     } catch (err) {
       sendJson(res, 500, { error: 'DEVICE_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 5b. POST /api/v1/fleet/devices/:id/run-script (Intune Remote Script Runner)
+  router.post('/api/v1/fleet/devices/:id/run-script', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+
+    try {
+      const db = getDb();
+      const deviceId = req.params.id;
+      const { script, command_text, created_by = 'admin' } = req.body || {};
+      const commandStr = script || command_text;
+
+      if (!commandStr) {
+        sendJson(res, 400, { error: 'BAD_REQUEST', message: 'script or command_text is required' });
+        return;
+      }
+
+      const dev = db.prepare('SELECT id, hostname FROM devices WHERE id = ?').get(deviceId);
+      if (!dev) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: `Device ${deviceId} not found` });
+        return;
+      }
+
+      const commandId = crypto.randomUUID();
+      db.prepare(`
+        INSERT INTO device_commands (id, device_id, command_text, created_by, status)
+        VALUES (?, ?, ?, ?, 'PENDING')
+      `).run(commandId, deviceId, commandStr, created_by);
+
+      broadcastEvent('command_queued', {
+        command_id: commandId,
+        device_id: deviceId,
+        hostname: dev.hostname,
+        command: commandStr
+      });
+
+      sendJson(res, 201, {
+        command_id: commandId,
+        device_id: deviceId,
+        status: 'PENDING',
+        message: 'Command queued for execution on target node'
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: 'COMMAND_DISPATCH_ERROR', message: err.message });
+    }
+  });
+
+  // 5c. GET /api/v1/fleet/commands/:id
+  router.get('/api/v1/fleet/commands/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+
+    try {
+      const db = getDb();
+      const cmd = db.prepare('SELECT * FROM device_commands WHERE id = ?').get(req.params.id);
+      if (!cmd) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Command not found' });
+        return;
+      }
+      sendJson(res, 200, cmd);
+    } catch (err) {
+      sendJson(res, 500, { error: 'COMMAND_QUERY_ERROR', message: err.message });
+    }
+  });
+
+  // 5d. GET /api/v1/fleet/devices/:id/commands
+  router.get('/api/v1/fleet/devices/:id/commands', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+
+    try {
+      const db = getDb();
+      const cmds = db.prepare(`
+        SELECT * FROM device_commands WHERE device_id = ? ORDER BY created_at DESC LIMIT 50
+      `).all(req.params.id);
+      sendJson(res, 200, { commands: cmds });
+    } catch (err) {
+      sendJson(res, 500, { error: 'COMMAND_LIST_ERROR', message: err.message });
     }
   });
 

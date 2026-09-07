@@ -201,9 +201,25 @@ export function initDb(dbOrPath, options = {}) {
       is_secret INTEGER DEFAULT 0 CHECK(is_secret IN (0, 1)),
       updated_at TEXT NOT NULL DEFAULT (DATETIME('now'))
     );
+
+    -- 9. DEVICE_COMMANDS (Intune Remote Actions & PowerShell execution)
+    CREATE TABLE IF NOT EXISTS device_commands (
+      id TEXT PRIMARY KEY NOT NULL,
+      device_id TEXT NOT NULL,
+      command_text TEXT NOT NULL,
+      created_by TEXT DEFAULT 'admin',
+      status TEXT DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED')),
+      exit_code INTEGER,
+      stdout TEXT,
+      stderr TEXT,
+      created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      executed_at TEXT,
+      completed_at TEXT,
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
   `);
 
-  // 16 Indexes
+  // 17 Indexes
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_devices_status ON devices(status);
     CREATE INDEX IF NOT EXISTS idx_devices_last_seen ON devices(last_seen_at);
@@ -227,6 +243,8 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_events_device ON security_events(device_id);
     CREATE INDEX IF NOT EXISTS idx_events_sev_ack ON security_events(severity, acknowledged);
     CREATE INDEX IF NOT EXISTS idx_events_created ON security_events(created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_device_commands_dev_status ON device_commands(device_id, status);
   `);
 
   if (shouldSeed) {

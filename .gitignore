@@ -2,4 +2,9 @@ node_modules/
 *.log
 fleet.db-shm
 fleet.db-wal
+fleet-config.json
+data/
+*.db
+!server/data/fleet.db
 .agents/
+

@@ -218,4 +218,35 @@ describe('Fleet Command Center API QA (fleet_api.test.js)', () => {
       assert.equal(val.value, 'HQ Central Command');
     });
   });
+
+  describe('7. Intune Remote Script Runner & Command History', () => {
+    it('POST /api/v1/fleet/devices/:id/run-script queues command and GET /api/v1/fleet/commands/:id inspects it', async () => {
+      const dev = app.db.prepare('SELECT id FROM devices LIMIT 1').get();
+      assert.ok(dev);
+
+      const res = await fetch(`${app.baseUrl}/api/v1/fleet/devices/${dev.id}/run-script`, {
+        method: 'POST',
+        headers: jsonHeader,
+        body: JSON.stringify({ script: 'Get-Service spooler' })
+      });
+      assert.equal(res.status, 201);
+      const data = await res.json();
+      assert.ok(data.command_id);
+      assert.equal(data.status, 'PENDING');
+
+      // Inspect via GET /commands/:id
+      const cmdRes = await fetch(`${app.baseUrl}/api/v1/fleet/commands/${data.command_id}`, { headers: authHeader });
+      assert.equal(cmdRes.status, 200);
+      const cmd = await cmdRes.json();
+      assert.equal(cmd.command_text, 'Get-Service spooler');
+      assert.equal(cmd.device_id, dev.id);
+
+      // List device command history
+      const listRes = await fetch(`${app.baseUrl}/api/v1/fleet/devices/${dev.id}/commands`, { headers: authHeader });
+      assert.equal(listRes.status, 200);
+      const list = await listRes.json();
+      assert.ok(Array.isArray(list.commands));
+      assert.ok(list.commands.some(c => c.id === data.command_id));
+    });
+  });
 });

@@ -48,6 +48,8 @@
     return fp.match(/.{1,8}/g).join(':');
   }
 
+  let _currentDevice = null;
+
   /* ── Open drawer with device data ──────────────────────────────── */
   async function open(deviceId) {
     const drawer  = document.getElementById('bc-drawer');
@@ -60,8 +62,8 @@
     if (!drawer) return;
 
     // Show drawer immediately with loading state
-    hostnameEl.textContent = 'Loading…';
-    friendlyEl.textContent = '';
+    if (hostnameEl) hostnameEl.textContent = 'Loading…';
+    if (friendlyEl) friendlyEl.textContent = '';
     body.innerHTML = `
       <div style="padding:24px;">
         ${[...Array(8)].map(() => '<div class="skeleton skeleton-text" style="margin-bottom:14px;height:18px;"></div>').join('')}
@@ -69,19 +71,25 @@
     `;
 
     drawer.classList.add('open');
-    overlay.classList.add('active');
+    if (overlay) {
+      overlay.classList.add('open');
+      overlay.classList.add('active');
+    }
     document.body.style.overflow = 'hidden';
 
     try {
       const device = await window.FleetAPI.getDevice(deviceId);
+      _currentDevice = device;
 
-      hostnameEl.textContent = device.hostname || '—';
-      friendlyEl.textContent = device.friendly_name && device.friendly_name !== device.hostname
-        ? device.friendly_name
-        : (device.primary_user ? `👤 ${device.primary_user}` : '');
+      if (hostnameEl) hostnameEl.textContent = device.hostname || '—';
+      if (friendlyEl) {
+        friendlyEl.textContent = device.friendly_name && device.friendly_name !== device.hostname
+          ? device.friendly_name
+          : (device.primary_user ? `👤 Active User: ${device.primary_user}` : 'Windows device | Managed by LocalPilot');
+      }
 
       // Avatar — laptop vs desktop
-      avatar.textContent = device.has_battery ? '💻' : '🖥️';
+      if (avatar) avatar.textContent = device.has_battery ? '💻' : '🖥️';
 
       body.innerHTML = renderBirthCertificate(device);
       attachBcEvents(body);
@@ -101,7 +109,10 @@
     const drawer  = document.getElementById('bc-drawer');
     const overlay = document.getElementById('bc-overlay');
     if (drawer)  drawer.classList.remove('open');
-    if (overlay) overlay.classList.remove('active');
+    if (overlay) {
+      overlay.classList.remove('open');
+      overlay.classList.remove('active');
+    }
     document.body.style.overflow = '';
   }
 
@@ -119,6 +130,21 @@
     const groups = d.assigned_groups || [];
 
     return `
+      <!-- ── Active User & Console Session ── -->
+      <div class="bc-section active-user-blade-card">
+        <div class="bc-section-title">👤 Active User &amp; Interactive Session</div>
+        <div class="bc-active-user-strip">
+          <div class="active-user-avatar">👤</div>
+          <div class="active-user-meta">
+            <div class="active-user-title">${esc(d.primary_user || 'No logged-in user')}</div>
+            <div class="active-user-subtitle">${d.primary_user ? 'Interactive Windows Desktop Session Active' : 'Machine is online with no active desktop session'}</div>
+          </div>
+          <div class="active-user-pill-wrap">
+            <span class="badge ${d.primary_user ? 'badge-online' : 'badge-offline'}">${d.primary_user ? 'Logged In' : 'Console Idle'}</span>
+          </div>
+        </div>
+      </div>
+
       <!-- ── Hardware Identity ── -->
       <div class="bc-section">
         <div class="bc-section-title">🪪 Hardware Identity</div>
@@ -424,6 +450,74 @@
     // Keyboard: Escape closes drawer
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') close();
+    });
+
+    // Remote Action Ribbon buttons
+    const btnRunScript = document.getElementById('btn-blade-terminal');
+    btnRunScript?.addEventListener('click', () => {
+      if (_currentDevice && window.RemoteTerminal) {
+        window.RemoteTerminal.open(_currentDevice.id);
+      }
+    });
+
+    const btnSync = document.getElementById('btn-blade-sync');
+    btnSync?.addEventListener('click', async () => {
+      if (!_currentDevice) return;
+      try {
+        await window.FleetAPI.runScript(_currentDevice.id, 'Get-Date -Format o');
+        if (typeof showToast === 'function') showToast('Sync Dispatched', `Check-in requested for ${_currentDevice.hostname}`, 'success');
+      } catch (err) {
+        if (typeof showToast === 'function') showToast('Sync Failed', err.message, 'critical');
+      }
+    });
+
+    const btnRestart = document.getElementById('btn-blade-restart');
+    btnRestart?.addEventListener('click', async () => {
+      if (!_currentDevice) return;
+      if (!confirm(`Are you sure you want to remotely reboot ${_currentDevice.hostname}?\nThis will force restart the machine.`)) return;
+      try {
+        await window.FleetAPI.runScript(_currentDevice.id, 'Restart-Computer -Force');
+        if (typeof showToast === 'function') showToast('Reboot Queued', `Restart command queued for ${_currentDevice.hostname}`, 'warning');
+      } catch (err) {
+        if (typeof showToast === 'function') showToast('Reboot Failed', err.message, 'critical');
+      }
+    });
+
+    const btnLock = document.getElementById('btn-blade-lock');
+    btnLock?.addEventListener('click', async () => {
+      if (!_currentDevice) return;
+      try {
+        await window.FleetAPI.runScript(_currentDevice.id, 'rundll32.exe user32.dll,LockWorkStation');
+        if (typeof showToast === 'function') showToast('Remote Lock', `Lock workstation command dispatched to ${_currentDevice.hostname}`, 'info');
+      } catch (err) {
+        if (typeof showToast === 'function') showToast('Lock Failed', err.message, 'critical');
+      }
+    });
+
+    const btnScan = document.getElementById('btn-blade-scan');
+    btnScan?.addEventListener('click', async () => {
+      if (!_currentDevice) return;
+      try {
+        await window.FleetAPI.runScript(_currentDevice.id, 'Start-MpScan -ScanType QuickScan');
+        if (typeof showToast === 'function') showToast('Defender Scan', `Windows Defender quick scan initiated on ${_currentDevice.hostname}`, 'info');
+      } catch (err) {
+        if (typeof showToast === 'function') showToast('Scan Failed', err.message, 'critical');
+      }
+    });
+
+    const btnDelete = document.getElementById('btn-delete-device-blade');
+    btnDelete?.addEventListener('click', async () => {
+      if (!_currentDevice) return;
+      if (!confirm(`Permanently decommission and delete ${_currentDevice.hostname} from the fleet?\nThis will erase all historical telemetry and un-assign policies.`)) return;
+      try {
+        await window.FleetAPI.deleteDevice(_currentDevice.id);
+        close();
+        if (typeof showToast === 'function') showToast('Device Deleted', `${_currentDevice.hostname} was decommissioned`, 'success');
+        if (typeof renderDeviceTable === 'function') renderDeviceTable();
+        if (window.OverviewWidgets) window.OverviewWidgets.render();
+      } catch (err) {
+        if (typeof showToast === 'function') showToast('Delete Failed', err.message, 'critical');
+      }
     });
   }
 

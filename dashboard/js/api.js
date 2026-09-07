@@ -220,6 +220,22 @@ async function verifyCredentials() {
   }
 }
 
+/* ── Remote Scripts & Cloud Shell ─────────────────────────────────── */
+async function runScript(deviceId, script) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/run-script`, {
+    method: 'POST',
+    body: JSON.stringify({ script })
+  });
+}
+
+async function getCommandStatus(commandId) {
+  return apiFetch(`/api/v1/fleet/commands/${encodeURIComponent(commandId)}`);
+}
+
+async function getDeviceCommands(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/commands`);
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -236,6 +252,10 @@ window.FleetAPI = {
   getDevice,
   updateDevice,
   deleteDevice,
+  // Remote Scripts & Cloud Shell
+  runScript,
+  getCommandStatus,
+  getDeviceCommands,
   // Groups
   getGroups,
   createGroup,
@@ -261,5 +281,7 @@ window.FleetAPI = {
 };
 // Append window.apiFetch and aliases to api.js
 window.apiFetch = apiFetch;
-window.renderDeviceTable = () => window.DeviceTable && window.DeviceTable.load();
-window.renderKpiCards = () => window.KpiCards && window.KpiCards.refresh();
+window.renderKpiCards = () => {
+  if (window.KpiCards) window.KpiCards.refresh();
+  if (window.OverviewWidgets) window.OverviewWidgets.render();
+};

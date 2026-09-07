@@ -231,4 +231,73 @@ describe('Node Agent Endpoints API QA (nodes_api.test.js)', () => {
       assert.ok(requiredIds.includes('Google.Chrome'));
     });
   });
+
+  describe('6. Remote Command Execution & Result Ingest', () => {
+    it('node receives pending command on heartbeat, executes, and posts result back', async () => {
+      // 1. Queue a command via fleet endpoint
+      const runRes = await fetch(`${app.baseUrl}/api/v1/fleet/devices/${activeDeviceId}/run-script`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Fleet-Key': app.fleetKey
+        },
+        body: JSON.stringify({ script: 'Get-Process | Select-Object -First 5' })
+      });
+      assert.equal(runRes.status, 201);
+      const runData = await runRes.json();
+      assert.ok(runData.command_id);
+      const cmdId = runData.command_id;
+
+      // 2. Node performs heartbeat with active_user reporting
+      const hbRes = await fetch(`${app.baseUrl}/api/v1/nodes/heartbeat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${activeNodeToken}`
+        },
+        body: JSON.stringify({
+          active_user: 'DOM\\Tony',
+          cpu_usage_percent: 15.2,
+          ram_usage_percent: 42.0
+        })
+      });
+      assert.equal(hbRes.status, 200);
+      const hbData = await hbRes.json();
+      assert.equal(hbData.commands_pending, true);
+      assert.ok(Array.isArray(hbData.pending_commands));
+      assert.equal(hbData.pending_commands.length, 1);
+      assert.equal(hbData.pending_commands[0].id, cmdId);
+
+      // Verify device's primary_user was updated in DB
+      const dev = app.db.prepare('SELECT primary_user FROM devices WHERE id = ?').get(activeDeviceId);
+      assert.equal(dev.primary_user, 'DOM\\Tony');
+
+      // 3. Node posts execution result back
+      const resultRes = await fetch(`${app.baseUrl}/api/v1/nodes/${activeDeviceId}/command-result`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${activeNodeToken}`
+        },
+        body: JSON.stringify({
+          command_id: cmdId,
+          status: 'COMPLETED',
+          exit_code: 0,
+          stdout: 'Handles  NPM(K)    PM(K)      WS(K)     CPU(s)     Id  SI ProcessName\n-------  ------    -----      -----     ------     --  -- -----------',
+          stderr: ''
+        })
+      });
+      assert.equal(resultRes.status, 200);
+      const resultData = await resultRes.json();
+      assert.equal(resultData.success, true);
+      assert.equal(resultData.status, 'COMPLETED');
+
+      // Verify command in DB
+      const cmdRecord = app.db.prepare('SELECT * FROM device_commands WHERE id = ?').get(cmdId);
+      assert.equal(cmdRecord.status, 'COMPLETED');
+      assert.equal(cmdRecord.exit_code, 0);
+      assert.ok(cmdRecord.stdout.includes('Handles'));
+      assert.ok(cmdRecord.completed_at);
+    });
+  });
 });

@@ -65,6 +65,7 @@
       src = src.filter(d =>
         (d.hostname || '').toLowerCase().includes(q) ||
         (d.friendly_name || '').toLowerCase().includes(q) ||
+        (d.primary_user || '').toLowerCase().includes(q) ||
         (d.ip_address || '').toLowerCase().includes(q) ||
         (d.os_build || '').toLowerCase().includes(q)
       );
@@ -133,7 +134,7 @@
             class="search-input"
             id="device-search"
             type="text"
-            placeholder="Search by hostname, IP, OS build…"
+            placeholder="Search by hostname, primary user, IP, OS build…"
             value="${_searchTerm}"
           >
         </div>
@@ -158,6 +159,7 @@
             <thead>
               <tr>
                 <th data-sort="hostname">Hostname${sortIndicator('hostname')}</th>
+                <th data-sort="primary_user">Primary User${sortIndicator('primary_user')}</th>
                 <th data-sort="status">Status${sortIndicator('status')}</th>
                 <th data-sort="os_build">OS Build${sortIndicator('os_build')}</th>
                 <th data-sort="ip_address">IP Address${sortIndicator('ip_address')}</th>
@@ -169,7 +171,7 @@
             </thead>
             <tbody id="device-tbody">
               ${page.length === 0
-                ? `<tr><td colspan="8">
+                ? `<tr><td colspan="9">
                     <div class="empty-state">
                       <div class="empty-state-icon">🖥️</div>
                       <div class="empty-state-title">No devices found</div>
@@ -184,6 +186,11 @@
                         ? `<div style="font-size:11px;color:var(--text-muted);">${escapeHtml(d.friendly_name)}</div>`
                         : ''}
                     </td>
+                    <td>
+                      <span class="user-pill-tag ${d.primary_user ? 'has-user' : 'no-user'}">
+                        ${d.primary_user ? `👤 ${escapeHtml(d.primary_user)}` : '<span style="color:#777;">—</span>'}
+                      </span>
+                    </td>
                     <td>${statusBadge(d.status)}</td>
                     <td class="mono">${escapeHtml(d.os_build || d.os_version || '—')}</td>
                     <td class="mono">${escapeHtml(d.ip_address || '—')}</td>
@@ -192,6 +199,7 @@
                     <td class="mono" style="font-size:11px;">${formatLastSeen(d.last_seen_at)}</td>
                     <td onclick="event.stopPropagation();">
                       <div style="display:flex;gap:6px;">
+                        <button class="btn btn-ghost btn-sm btn-terminal-row" data-id="${d.id}" title="Run PowerShell Script">&gt;_</button>
                         <button class="btn btn-ghost btn-sm btn-inspect" data-id="${d.id}" title="View Birth Certificate">🔍</button>
                         <button class="btn btn-danger btn-sm btn-delete" data-id="${d.id}" data-hostname="${escapeHtml(d.hostname)}" title="Delete device">🗑️</button>
                       </div>
@@ -227,6 +235,15 @@
       row.addEventListener('click', () => {
         const id = row.getAttribute('data-device-id');
         if (id && window.BirthCertificate) window.BirthCertificate.open(id);
+      });
+    });
+
+    // Cloud Shell terminal button
+    container.querySelectorAll('.btn-terminal-row').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = btn.getAttribute('data-id');
+        if (id && window.RemoteTerminal) window.RemoteTerminal.open(id);
       });
     });
 

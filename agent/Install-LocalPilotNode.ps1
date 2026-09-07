@@ -155,6 +155,31 @@ if ($tpm -and $tpm.SpecVersion) {
     $tpmVersion = ($tpm.SpecVersion -split ',')[0].Trim()
 }
 
+# Active logged-in user detection
+function Get-ActiveLoggedInUser {
+    try {
+        $u = (Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue).UserName
+        if ($u) { return $u }
+    } catch {}
+
+    try {
+        $explorer = Get-CimInstance Win32_Process -Filter "Name = 'explorer.exe'" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($explorer) {
+            $owner = Invoke-CimMethod -InputObject $explorer -MethodName GetOwner -ErrorAction SilentlyContinue
+            if ($owner -and $owner.User) {
+                if ($owner.Domain) { return "$($owner.Domain)\$($owner.User)" }
+                return $owner.User
+            }
+        }
+    } catch {}
+
+    if ($env:USERNAME -and $env:USERNAME -ne 'SYSTEM') {
+        if ($env:USERDOMAIN) { return "$($env:USERDOMAIN)\$($env:USERNAME)" }
+        return $env:USERNAME
+    }
+    return 'Unknown'
+}
+
 # Tags: include the group and 'managed'
 $tags = @($Group, 'managed') | Where-Object { $_ -ne '' }
 
@@ -182,7 +207,7 @@ $enrollBody = @{
     tpm_enabled         = if ($tpm) { [bool]$tpm.IsEnabled_InitialValue } else { $false }
     secure_boot_enabled = $secureBoot
     bitlocker_status    = $bitlockerStatus
-    primary_user        = [Environment]::UserName
+    primary_user        = Get-ActiveLoggedInUser
     agent_version       = $AGENT_VERSION
 }
 

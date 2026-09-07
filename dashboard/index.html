@@ -39,7 +39,7 @@
   </div>
 
   <div class="shell-right">
-    <button class="shell-tool-btn" title="Cloud Shell (>_)"><span class="tool-icon">&gt;_</span></button>
+    <button class="shell-tool-btn" id="btn-terminal" title="Cloud Shell (>_)"><span class="tool-icon">&gt;_</span></button>
     <button class="shell-tool-btn" title="Directories + subscriptions"><span class="tool-icon">🗂️</span></button>
     <button class="shell-tool-btn relative" id="btn-notifications" title="Notifications">
       <span class="tool-icon">🔔</span>
@@ -263,10 +263,10 @@
 <div id="bc-drawer" class="intune-device-blade">
   <div class="intune-blade-top">
     <div class="device-blade-header-left">
-      <div class="device-blade-icon">💻</div>
+      <div class="device-blade-icon" id="bc-avatar">💻</div>
       <div>
         <div class="device-blade-title" id="bc-hostname">DESKTOP-GAMING</div>
-        <div class="device-blade-meta">Windows device | Managed by LocalPilot</div>
+        <div class="device-blade-meta" id="bc-friendly-name">Windows device | Managed by LocalPilot</div>
       </div>
     </div>
     <button class="bc-close-btn" id="bc-close-btn" title="Close blade">&times;</button>
@@ -274,14 +274,13 @@
 
   <!-- Intune Device Remote Actions Ribbon -->
   <div class="intune-device-actions">
-    <button class="action-btn" title="Retire device" onclick="showToast('Retire', 'Device retirement policy queued.', 'info')"><span class="act-icon">🛑</span> Retire</button>
-    <button class="action-btn" title="Wipe device" onclick="showToast('Wipe', 'Remote wipe requested.', 'warning')"><span class="act-icon">🧹</span> Wipe</button>
-    <button class="action-btn delete" id="btn-delete-device-blade" title="Delete device"><span class="act-icon">🗑️</span> Delete</button>
-    <button class="action-btn" title="Remote lock" onclick="showToast('Lock', 'Remote lock signal dispatched.', 'info')"><span class="act-icon">🔒</span> Remote lock</button>
-    <button class="action-btn" title="Sync now" onclick="showToast('Sync', 'Check-in signal sent.', 'success')"><span class="act-icon">🔄</span> Sync</button>
-    <button class="action-btn" title="Restart" onclick="showToast('Restart', 'Reboot command queued.', 'warning')"><span class="act-icon">↻</span> Restart</button>
+    <button class="action-btn" id="btn-blade-terminal" title="Run PowerShell Script"><span class="act-icon">&gt;_</span> Run script</button>
+    <button class="action-btn" id="btn-blade-sync" title="Sync now"><span class="act-icon">🔄</span> Sync</button>
+    <button class="action-btn" id="btn-blade-lock" title="Remote lock"><span class="act-icon">🔒</span> Remote lock</button>
+    <button class="action-btn" id="btn-blade-restart" title="Restart"><span class="act-icon">↻</span> Restart</button>
+    <button class="action-btn" id="btn-blade-scan" title="Defender Scan"><span class="act-icon">⚡</span> Quick scan</button>
     <button class="action-btn" title="Fresh Start" onclick="showToast('Fresh Start', 'Fresh Start provisioner triggered.', 'info')"><span class="act-icon">✨</span> Fresh Start</button>
-    <button class="action-btn" title="Quick scan" onclick="showToast('Defender Scan', 'Windows Defender scan running.', 'info')"><span class="act-icon">⚡</span> Quick scan</button>
+    <button class="action-btn delete" id="btn-delete-device-blade" title="Delete device"><span class="act-icon">🗑️</span> Delete</button>
   </div>
 
   <div class="intune-blade-content" id="bc-body">
@@ -297,7 +296,9 @@
      ════════════════════════════════════════════════════════════════ -->
 <script src="/js/api.js"></script>
 <script src="/js/sse.js"></script>
+<script src="/js/components/remoteTerminal.js"></script>
 <script src="/js/components/kpiCards.js"></script>
+<script src="/js/components/overviewWidgets.js"></script>
 <script src="/js/components/deviceTable.js"></script>
 <script src="/js/components/birthCertificate.js"></script>
 <script src="/js/components/dynamicGroups.js"></script>

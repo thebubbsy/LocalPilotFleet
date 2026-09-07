@@ -207,10 +207,14 @@ export function registerNodeRoutes(router) {
 
   // 2. POST /api/v1/nodes/heartbeat
   router.post('/api/v1/nodes/heartbeat', async (req, res) => {
-    if (!requireNodeToken(req, res)) return;
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
 
-    const deviceId = req.device.id;
     const body = req.body || {};
+    const deviceId = req.device?.id || body.device_id;
+    if (!deviceId) {
+      sendJson(res, 400, { error: 'BAD_REQUEST', message: 'Missing device_id' });
+      return;
+    }
     const {
       cpu_usage_percent,
       ram_used_bytes,
@@ -220,8 +224,11 @@ export function registerNodeRoutes(router) {
       battery_charging,
       ip_address,
       connection_route,
-      uptime_seconds
+      uptime_seconds,
+      primary_user,
+      active_user
     } = body;
+    const currentActiveUser = active_user || primary_user || null;
 
     try {
       const db = getDb();
@@ -233,6 +240,7 @@ export function registerNodeRoutes(router) {
           connection_route = COALESCE(?, connection_route),
           battery_percent = COALESCE(?, battery_percent),
           battery_charging = COALESCE(?, battery_charging),
+          primary_user = COALESCE(?, primary_user),
           updated_at = DATETIME('now')
         WHERE id = ?
       `).run(
@@ -240,22 +248,41 @@ export function registerNodeRoutes(router) {
         connection_route || null,
         battery_percent !== undefined ? Number(battery_percent) : null,
         battery_charging !== undefined ? (battery_charging ? 1 : 0) : null,
+        currentActiveUser,
         deviceId
       );
 
+      const deviceRecord = req.device || db.prepare('SELECT * FROM devices WHERE id = ?').get(deviceId);
+
       broadcastEvent('heartbeat', {
         device_id: deviceId,
-        hostname: req.device.hostname,
+        hostname: deviceRecord?.hostname || 'Unknown',
+        primary_user: currentActiveUser || deviceRecord?.primary_user || 'Unknown',
         cpu_usage_percent: cpu_usage_percent || null,
         ram_usage_percent: ram_usage_percent || null,
-        connection_route: connection_route || req.device.connection_route,
-        status: req.device.status
+        connection_route: connection_route || deviceRecord?.connection_route || 'LAN',
+        status: deviceRecord?.status || 'online'
       });
+
+      // Check for pending remote execution commands for this node
+      const pendingCommands = db.prepare(`
+        SELECT id, command_text FROM device_commands
+        WHERE device_id = ? AND status = 'PENDING'
+        ORDER BY created_at ASC
+      `).all(deviceId);
+
+      if (pendingCommands.length > 0) {
+        const markStmt = db.prepare("UPDATE device_commands SET status = 'RUNNING', executed_at = DATETIME('now') WHERE id = ?");
+        for (const c of pendingCommands) {
+          markStmt.run(c.id);
+        }
+      }
 
       sendJson(res, 200, {
         acknowledged: true,
         server_time: new Date().toISOString(),
-        commands_pending: false
+        commands_pending: pendingCommands.length > 0,
+        pending_commands: pendingCommands
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -264,10 +291,14 @@ export function registerNodeRoutes(router) {
 
   // 3. POST /api/v1/nodes/telemetry
   router.post('/api/v1/nodes/telemetry', async (req, res) => {
-    if (!requireNodeToken(req, res)) return;
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
 
-    const deviceId = req.device.id;
     const body = req.body || {};
+    const deviceId = req.device?.id || body.device_id;
+    if (!deviceId) {
+      sendJson(res, 400, { error: 'BAD_REQUEST', message: 'Missing device_id' });
+      return;
+    }
     const hardware = body.hardware || {};
     const security = body.security || {};
     const installedSoftware = body.installed_software || [];
@@ -319,6 +350,8 @@ export function registerNodeRoutes(router) {
         bitlockerStatus = sysVol.protection_status === 'On' ? 'FullyEncrypted' : 'Disabled';
       }
 
+      const reportedUser = body.primary_user || body.active_user || null;
+
       db.prepare(`
         UPDATE devices SET
           last_seen_at = DATETIME('now'),
@@ -326,9 +359,10 @@ export function registerNodeRoutes(router) {
           tpm_enabled = COALESCE(?, tpm_enabled),
           secure_boot_enabled = COALESCE(?, secure_boot_enabled),
           bitlocker_status = COALESCE(?, bitlocker_status),
+          primary_user = COALESCE(?, primary_user),
           updated_at = DATETIME('now')
         WHERE id = ?
-      `).run(tpmPresent, tpmEnabled, secureBoot, bitlockerStatus, deviceId);
+      `).run(tpmPresent, tpmEnabled, secureBoot, bitlockerStatus, reportedUser, deviceId);
 
       // 3. Re-evaluate dynamic groups
       const activeGroups = dynamicGroupsService.reevaluateDeviceMemberships(db, deviceId, { disk_free_gb: diskFreeGb }, installedSoftware);
@@ -339,6 +373,7 @@ export function registerNodeRoutes(router) {
       broadcastEvent('telemetry_updated', {
         device_id: deviceId,
         hostname: req.device.hostname,
+        primary_user: reportedUser || req.device.primary_user,
         compliance_status: compliance.compliance_status,
         drift_detected: !compliance.is_compliant,
         active_groups: activeGroups
@@ -359,10 +394,14 @@ export function registerNodeRoutes(router) {
 
   // 4. POST /api/v1/nodes/events
   router.post('/api/v1/nodes/events', async (req, res) => {
-    if (!requireNodeToken(req, res)) return;
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
 
-    const deviceId = req.device.id;
     const body = req.body || {};
+    const deviceId = req.device?.id || body.device_id;
+    if (!deviceId) {
+      sendJson(res, 400, { error: 'BAD_REQUEST', message: 'Missing device_id' });
+      return;
+    }
     const {
       event_type,
       event_id,
@@ -450,6 +489,64 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, policy);
     } catch (err) {
       sendJson(res, 500, { error: 'POLICY_QUERY_ERROR', message: err.message });
+    }
+  });
+
+  // 6. POST /api/v1/nodes/:id/command-result (Agent reports script execution result)
+  router.post('/api/v1/nodes/:id/command-result', async (req, res) => {
+    const targetDeviceId = req.params.id;
+    if (!requireFleetKeyOrNodeToken(req, res, targetDeviceId)) return;
+
+    const body = req.body || {};
+    const { command_id, status = 'COMPLETED', exit_code = 0, stdout = '', stderr = '' } = body;
+
+    if (!command_id) {
+      sendJson(res, 400, { error: 'BAD_REQUEST', message: 'command_id is required' });
+      return;
+    }
+
+    try {
+      const db = getDb();
+      const cmd = db.prepare('SELECT * FROM device_commands WHERE id = ? AND device_id = ?').get(command_id, targetDeviceId);
+      if (!cmd) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Command not found for this device' });
+        return;
+      }
+
+      const finalStatus = (status === 'COMPLETED' || status === 'FAILED') ? status : (exit_code === 0 ? 'COMPLETED' : 'FAILED');
+
+      db.prepare(`
+        UPDATE device_commands SET
+          status = ?,
+          exit_code = ?,
+          stdout = ?,
+          stderr = ?,
+          completed_at = DATETIME('now')
+        WHERE id = ?
+      `).run(
+        finalStatus,
+        exit_code !== undefined && exit_code !== null ? Number(exit_code) : 0,
+        stdout || '',
+        stderr || '',
+        command_id
+      );
+
+      broadcastEvent('command_completed', {
+        command_id,
+        device_id: targetDeviceId,
+        status: finalStatus,
+        exit_code: Number(exit_code) || 0,
+        stdout: stdout || '',
+        stderr: stderr || ''
+      });
+
+      sendJson(res, 200, {
+        success: true,
+        command_id,
+        status: finalStatus
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: 'COMMAND_RESULT_ERROR', message: err.message });
     }
   });
 }

@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     LocalPilot Fleet - Main Agent Runner.
     Executes Heartbeat, Telemetry, or PolicyCheck cycles against the Fleet Command Center.
@@ -40,7 +40,22 @@ param(
     [string]$ServerUrl = '',
 
     [Parameter(Mandatory = $false)]
-    [string]$FleetKey = ''
+    [string]$FleetKey = '',
+
+    [Parameter(Mandatory = $false)]
+    [string]$DeviceId = '',
+
+    [Parameter(Mandatory = $false)]
+    [string]$NodeToken = '',
+
+    [Parameter(Mandatory = $false)]
+    [string]$ConfigPath = '',
+
+    [Parameter(Mandatory = $false)]
+    [switch]$Continuous,
+
+    [Parameter(Mandatory = $false)]
+    [int]$IntervalSec = 5
 )
 
 Set-StrictMode -Version Latest
@@ -56,29 +71,75 @@ function Write-AgentLog {
     param([string]$Level = 'INFO', [string]$Message)
     $entry = "$(Get-Date -Format 'o') [$Level] [$Mode] $Message"
     try { Add-Content -Path $LOG_FILE -Value $entry -ErrorAction SilentlyContinue } catch { }
-    if ($Level -eq 'ERROR') { Write-Warning $entry }
+    if ($Level -eq 'ERROR') { Write-Warning $entry } else { Write-Host $entry }
 }
 
-# ─── Load configuration ───────────────────────────────────────────────────────
-if (-not (Test-Path $CONFIG_FILE)) {
-    Write-AgentLog 'ERROR' "Config file not found: $CONFIG_FILE. Run Install-LocalPilotNode.ps1 first."
+# ─── Load configuration (Multi-tiered: Config File -> CLI -> Fleet Authority) ───
+$activeDeviceId = $DeviceId
+$activeNodeToken = $NodeToken
+$lanUrl = $ServerUrl
+$cfUrl = ''
+$activeFleetKey = $FleetKey
+
+$cfgPath = if ($ConfigPath) { $ConfigPath } else { $CONFIG_FILE }
+
+if (Test-Path $cfgPath) {
+    try {
+        $config = Get-Content $cfgPath -Raw -ErrorAction Stop | ConvertFrom-Json
+        if (-not $activeDeviceId)  { $activeDeviceId  = $config.device_id }
+        if (-not $activeNodeToken) { $activeNodeToken = $config.node_token }
+        if (-not $lanUrl)          { $lanUrl          = $config.server_url }
+        if (-not $cfUrl)           { $cfUrl           = $config.cloudflare_url }
+    } catch {
+        Write-AgentLog 'WARN' "Could not read $cfgPath ($($_.Exception.Message)) -- attempting local authority fallback"
+    }
+}
+
+# Master Fleet Authority Fallback (for interactive execution / testing without SYSTEM elevation)
+if (-not $activeDeviceId -or (-not $activeNodeToken -and -not $activeFleetKey)) {
+    $fleetConfigs = @(
+        (Join-Path $PSScriptRoot '..\fleet-config.json'),
+        'C:\temp\LocalPilotFleet\fleet-config.json'
+    )
+    foreach ($fc in $fleetConfigs) {
+        if (Test-Path $fc) {
+            try {
+                $fJson = Get-Content $fc -Raw -ErrorAction Stop | ConvertFrom-Json
+                if (-not $lanUrl) { $lanUrl = "http://localhost:$($fJson.port)" }
+                if (-not $activeFleetKey) { $activeFleetKey = $fJson.fleetKey }
+                break
+            } catch {}
+        }
+    }
+
+    if ($lanUrl -and $activeFleetKey -and -not $activeDeviceId) {
+        try {
+            $apiRes = Invoke-RestMethod -Uri "$lanUrl/api/v1/fleet/devices" -Method GET -Headers @{ 'X-Fleet-Key' = $activeFleetKey } -TimeoutSec 4 -ErrorAction Stop
+            $devList = if ($apiRes.devices) { $apiRes.devices } else { $apiRes }
+            $match = $devList | Where-Object { $_.hostname -eq $env:COMPUTERNAME } | Select-Object -First 1
+            if ($match) {
+                $activeDeviceId = $match.id
+                Write-AgentLog 'INFO' "Resolved target device ID '$activeDeviceId' ($($match.hostname)) via local Fleet Authority."
+            }
+        } catch {
+            Write-AgentLog 'WARN' "Could not resolve device via Fleet Authority API: $($_.Exception.Message)"
+        }
+    }
+}
+
+$deviceId = $activeDeviceId
+if (-not $deviceId) {
+    Write-AgentLog 'ERROR' 'Unable to determine Device ID. Run Install-LocalPilotNode.ps1 or specify -DeviceId.'
     exit 1
 }
 
-try {
-    $config = Get-Content $CONFIG_FILE -Raw -ErrorAction Stop | ConvertFrom-Json
-} catch {
-    Write-AgentLog 'ERROR' "Failed to parse config.json: $($_.Exception.Message)"
-    exit 1
-}
-
-$deviceId  = $config.device_id
-$nodeToken = $config.node_token
-$lanUrl    = if ($ServerUrl) { $ServerUrl } else { $config.server_url }
-$cfUrl     = $config.cloudflare_url
-
-if (-not $deviceId -or -not $nodeToken) {
-    Write-AgentLog 'ERROR' 'config.json is missing device_id or node_token. Re-enroll this node.'
+$authHeaders = @{ 'Content-Type' = 'application/json' }
+if ($activeNodeToken) {
+    $authHeaders['Authorization'] = "Bearer $activeNodeToken"
+} elseif ($activeFleetKey) {
+    $authHeaders['X-Fleet-Key'] = $activeFleetKey
+} else {
+    Write-AgentLog 'ERROR' 'No NodeToken or FleetKey available for authentication. Re-enroll this node.'
     exit 1
 }
 
@@ -124,77 +185,176 @@ $route     = $endpoint.Route
 
 Write-AgentLog 'INFO' "Active endpoint: $baseUrl (Route: $route)"
 
-# Common authenticated headers for all node API calls
-$authHeaders = @{
-    'Content-Type'  = 'application/json'
-    'Authorization' = "Bearer $nodeToken"
+# ─── Active logged-in user detection ─────────────────────────────────────────
+function Get-ActiveLoggedInUser {
+    try {
+        $u = (Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue).UserName
+        if ($u) { return $u }
+    } catch {}
+
+    try {
+        $explorer = Get-CimInstance Win32_Process -Filter "Name = 'explorer.exe'" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($explorer) {
+            $owner = Invoke-CimMethod -InputObject $explorer -MethodName GetOwner -ErrorAction SilentlyContinue
+            if ($owner -and $owner.User) {
+                if ($owner.Domain) { return "$($owner.Domain)\$($owner.User)" }
+                return $owner.User
+            }
+        }
+    } catch {}
+
+    if ($env:USERNAME -and $env:USERNAME -ne 'SYSTEM') {
+        if ($env:USERDOMAIN) { return "$($env:USERDOMAIN)\$($env:USERNAME)" }
+        return $env:USERNAME
+    }
+    return 'Unknown'
 }
 
 # ===============================================================================
 # MODE: HEARTBEAT
 # ===============================================================================
 if ($Mode -eq 'Heartbeat') {
-    try {
-        # CPU load
-        $cpuLoad = (Get-CimInstance -ClassName Win32_Processor -ErrorAction SilentlyContinue |
-                    Measure-Object -Property LoadPercentage -Average).Average
-        $cpuPct  = if ($null -ne $cpuLoad) { [math]::Round([double]$cpuLoad, 1) } else { 0.0 }
-
-        # RAM
-        $osInfo   = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
-        $freeRam  = [int64]$osInfo.FreePhysicalMemory  * 1024
-        $totalRam = [int64]$osInfo.TotalVisibleMemorySize * 1024
-        $usedRam  = $totalRam - $freeRam
-        $ramPct   = if ($totalRam -gt 0) { [math]::Round(($usedRam / $totalRam) * 100, 1) } else { 0.0 }
-
-        # Uptime
-        $uptimeSec = [int]((Get-Date) - $osInfo.LastBootUpTime).TotalSeconds
-
-        # IP address (first active IPv4)
-        $ipAddress = $null
+    do {
         try {
-            $ipAddress = (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-                          Where-Object { $_.InterfaceAlias -notlike '*Loopback*' -and $_.IPAddress -ne '127.0.0.1' } |
-                          Sort-Object -Property PrefixLength -Descending |
-                          Select-Object -First 1).IPAddress
+            # CPU load
+            $cpuLoad = (Get-CimInstance -ClassName Win32_Processor -ErrorAction SilentlyContinue |
+                        Measure-Object -Property LoadPercentage -Average).Average
+            $cpuPct  = if ($null -ne $cpuLoad) { [math]::Round([double]$cpuLoad, 1) } else { 0.0 }
+
+            # RAM
+            $osInfo   = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+            $freeRam  = [int64]$osInfo.FreePhysicalMemory  * 1024
+            $totalRam = [int64]$osInfo.TotalVisibleMemorySize * 1024
+            $usedRam  = $totalRam - $freeRam
+            $ramPct   = if ($totalRam -gt 0) { [math]::Round(($usedRam / $totalRam) * 100, 1) } else { 0.0 }
+
+            # Uptime
+            $uptimeSec = [int]((Get-Date) - $osInfo.LastBootUpTime).TotalSeconds
+
+            # Active user
+            $activeUser = Get-ActiveLoggedInUser
+
+            # IP address (first active IPv4)
+            $ipAddress = $null
+            try {
+                $ipAddress = (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+                              Where-Object { $_.InterfaceAlias -notlike '*Loopback*' -and $_.IPAddress -ne '127.0.0.1' } |
+                              Sort-Object -Property PrefixLength -Descending |
+                              Select-Object -First 1).IPAddress
+            } catch {
+                # Fallback: CIM
+                $ipAddress = (Get-CimInstance -ClassName Win32_NetworkAdapterConfiguration -ErrorAction SilentlyContinue |
+                              Where-Object { $_.IPEnabled } |
+                              Select-Object -First 1).IPAddress |
+                              Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' } |
+                              Select-Object -First 1
+            }
+
+            # Battery
+            $battery = Get-CimInstance -ClassName Win32_Battery -ErrorAction SilentlyContinue | Select-Object -First 1
+
+            $heartbeatPayload = @{
+                device_id         = $deviceId
+                primary_user      = $activeUser
+                active_user       = $activeUser
+                cpu_usage_percent = $cpuPct
+                ram_used_bytes    = $usedRam
+                ram_free_bytes    = $freeRam
+                ram_usage_percent = $ramPct
+                ip_address        = $ipAddress
+                connection_route  = $route
+                uptime_seconds    = $uptimeSec
+                battery_percent   = if ($battery) { [double]$battery.EstimatedChargeRemaining } else { $null }
+                battery_charging  = if ($battery) { [bool]($battery.BatteryStatus -eq 2) } else { $false }
+            }
+
+            $resp = Invoke-RestMethod `
+                -Uri        "$baseUrl/api/v1/nodes/heartbeat" `
+                -Method     POST `
+                -Body       ($heartbeatPayload | ConvertTo-Json -Compress) `
+                -Headers    $authHeaders `
+                -TimeoutSec 8 `
+                -ErrorAction Stop
+
+            Write-AgentLog 'INFO' "Heartbeat acknowledged. Server time: $($resp.server_time). CPU: ${cpuPct}% RAM: ${ramPct}% User: $activeUser"
+
+            # Check and execute pending remote execution commands
+            if ($resp.commands_pending -and $resp.pending_commands) {
+                $cmds = @($resp.pending_commands)
+                Write-AgentLog 'INFO' "Received $($cmds.Count) pending command(s) to execute"
+
+                foreach ($cmd in $cmds) {
+                    $cmdId = $cmd.id
+                    $cmdText = $cmd.command_text
+                    Write-AgentLog 'INFO' "Executing remote script [$cmdId]: $cmdText"
+
+                    $stdout = ''
+                    $stderr = ''
+                    $exitCode = 0
+                    $status = 'COMPLETED'
+
+                    try {
+                        $fullScript = "`$ProgressPreference = 'SilentlyContinue';`n" + $cmdText
+                        $encodedCmd = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($fullScript))
+                        $execResult = powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encodedCmd 2>&1
+                        $exitCode = $LASTEXITCODE
+                        if ($null -eq $exitCode) { $exitCode = 0 }
+
+                        $outputLines = @()
+                        $errorLines  = @()
+                        foreach ($item in $execResult) {
+                            if ($null -eq $item) { continue }
+                            $line = $item.ToString()
+                            if ($line -like '#< CLIXML*' -or $line -like '<Objs Version=*' -or $line -like '</Objs>*') {
+                                continue
+                            }
+                            if ($item -is [System.Management.Automation.ErrorRecord]) {
+                                $errorLines += $line
+                            } else {
+                                $outputLines += $line
+                            }
+                        }
+                        $stdout = $outputLines -join "`n"
+                        $stderr = $errorLines -join "`n"
+                        if ($exitCode -ne 0) {
+                            $status = 'FAILED'
+                        }
+                    } catch {
+                        $status   = 'FAILED'
+                        $exitCode = 1
+                        $stderr   = $_.Exception.Message
+                    }
+
+                    try {
+                        $resPayload = @{
+                            command_id = $cmdId
+                            status     = $status
+                            exit_code  = $exitCode
+                            stdout     = $stdout
+                            stderr     = $stderr
+                        }
+                        Invoke-RestMethod `
+                            -Uri        "$baseUrl/api/v1/nodes/$deviceId/command-result" `
+                            -Method     POST `
+                            -Body       ($resPayload | ConvertTo-Json -Compress) `
+                            -Headers    $authHeaders `
+                            -TimeoutSec 15 `
+                            -ErrorAction Stop | Out-Null
+                        Write-AgentLog 'INFO' "Reported command [$cmdId] execution result ($status, exit code: $exitCode)"
+                    } catch {
+                        Write-AgentLog 'ERROR' "Failed to report command result for [$cmdId]: $($_.Exception.Message)"
+                    }
+                }
+            }
         } catch {
-            # Fallback: CIM
-            $ipAddress = (Get-CimInstance -ClassName Win32_NetworkAdapterConfiguration -ErrorAction SilentlyContinue |
-                          Where-Object { $_.IPEnabled } |
-                          Select-Object -First 1).IPAddress |
-                          Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' } |
-                          Select-Object -First 1
+            Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
+            if (-not $Continuous) { exit 1 }
         }
 
-        # Battery
-        $battery = Get-CimInstance -ClassName Win32_Battery -ErrorAction SilentlyContinue | Select-Object -First 1
-
-        $heartbeatPayload = @{
-            device_id         = $deviceId
-            cpu_usage_percent = $cpuPct
-            ram_used_bytes    = $usedRam
-            ram_free_bytes    = $freeRam
-            ram_usage_percent = $ramPct
-            ip_address        = $ipAddress
-            connection_route  = $route
-            uptime_seconds    = $uptimeSec
-            battery_percent   = if ($battery) { [double]$battery.EstimatedChargeRemaining } else { $null }
-            battery_charging  = if ($battery) { [bool]($battery.BatteryStatus -eq 2) } else { $false }
+        if ($Continuous) {
+            Start-Sleep -Seconds $IntervalSec
         }
-
-        $resp = Invoke-RestMethod `
-            -Uri        "$baseUrl/api/v1/nodes/heartbeat" `
-            -Method     POST `
-            -Body       ($heartbeatPayload | ConvertTo-Json -Compress) `
-            -Headers    $authHeaders `
-            -TimeoutSec 8 `
-            -ErrorAction Stop
-
-        Write-AgentLog 'INFO' "Heartbeat acknowledged. Server time: $($resp.server_time). CPU: ${cpuPct}% RAM: ${ramPct}%"
-    } catch {
-        Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
-        exit 1
-    }
+    } while ($Continuous)
 }
 
 # ===============================================================================
@@ -417,8 +577,11 @@ elseif ($Mode -eq 'Telemetry') {
         $battery = Get-CimInstance -ClassName Win32_Battery -ErrorAction SilentlyContinue | Select-Object -First 1
 
         # ── Assemble telemetry payload ─────────────────────────────────────────
+        $activeUser = Get-ActiveLoggedInUser
         $telemetryPayload = @{
             device_id       = $deviceId
+            primary_user    = $activeUser
+            active_user     = $activeUser
             timestamp       = (Get-Date).ToString('o')
             uptime_seconds  = $uptimeSec
             battery_percent = if ($battery) { [double]$battery.EstimatedChargeRemaining } else { $null }

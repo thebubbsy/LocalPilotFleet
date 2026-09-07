@@ -43,7 +43,7 @@ const App = {
   },
 
   bindNavigation() {
-    const navItems = document.querySelectorAll('.nav-item');
+    const navItems = document.querySelectorAll('.nav-item, .nav-sub-item');
     navItems.forEach(item => {
       item.addEventListener('click', () => {
         const tab = item.getAttribute('data-tab');
@@ -56,7 +56,7 @@ const App = {
     this.currentTab = tabName;
 
     // Update active nav item
-    document.querySelectorAll('.nav-item').forEach(el => {
+    document.querySelectorAll('.nav-item, .nav-sub-item').forEach(el => {
       el.classList.toggle('active', el.getAttribute('data-tab') === tabName);
     });
 
@@ -72,6 +72,7 @@ const App = {
     switch (tabName) {
       case 'overview':
         if (typeof renderKpiCards === 'function') renderKpiCards();
+        if (window.OverviewWidgets) window.OverviewWidgets.render();
         break;
       case 'devices':
         if (typeof renderDeviceTable === 'function') renderDeviceTable();
@@ -95,6 +96,15 @@ const App = {
   },
 
   bindGlobalEvents() {
+    // Cloud Shell terminal top header button
+    const terminalBtn = document.getElementById('btn-terminal') || document.querySelector('button[title*="Cloud Shell"]');
+    if (terminalBtn) {
+      terminalBtn.id = 'btn-terminal';
+      terminalBtn.addEventListener('click', () => {
+        if (window.RemoteTerminal) window.RemoteTerminal.open();
+      });
+    }
+
     // SSE Alert event listener
     document.addEventListener('fleet:event', (e) => {
       const data = e.detail;
@@ -114,8 +124,9 @@ const App = {
         loadEventsData();
       }
       // Live update if on overview tab
-      if (this.currentTab === 'overview' && typeof renderKpiCards === 'function') {
-        renderKpiCards();
+      if (this.currentTab === 'overview') {
+        if (typeof renderKpiCards === 'function') renderKpiCards();
+        if (window.OverviewWidgets) window.OverviewWidgets.render();
       }
     });
 

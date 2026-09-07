@@ -52,10 +52,11 @@ describe('Database Engine & Concurrency QA (db.test.js)', () => {
       'software_catalog',
       'policy_assignments',
       'security_events',
-      'fleet_settings'
+      'fleet_settings',
+      'device_commands'
     ];
 
-    it('creates all 8 required tables', () => {
+    it('creates all 9 required tables', () => {
       const rows = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%';").all();
       const tableNames = rows.map(r => r.name);
       for (const table of expectedTables) {

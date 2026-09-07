@@ -912,3 +912,586 @@ body.intune-portal {
   from { transform: translateX(100%); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
 }
+
+/* ════════════════════════════════════════════════════════════════
+   8. BIRTH CERTIFICATE & DEVICE BLADE DETAIL STYLES
+   ════════════════════════════════════════════════════════════════ */
+#bc-overlay.open,
+#bc-overlay.active {
+  display: block;
+}
+
+.bc-section {
+  background-color: #242424;
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 14px;
+  margin-bottom: 16px;
+}
+
+.bc-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid #2d2d2d;
+  padding-bottom: 6px;
+}
+
+.bc-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.bc-field-full {
+  grid-column: span 2;
+}
+
+.bc-field-label {
+  font-size: 10.5px;
+  color: #888;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+
+.bc-field-value {
+  font-size: 12px;
+  color: #eee;
+  word-break: break-all;
+}
+
+.bc-field-value.mono {
+  font-family: 'Consolas', 'Courier New', monospace;
+}
+
+.bc-sub-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+  margin-top: 6px;
+}
+
+.bc-sub-table th {
+  text-align: left;
+  padding: 6px 8px;
+  color: #888;
+  border-bottom: 1px solid #383838;
+  font-size: 10.5px;
+  text-transform: uppercase;
+}
+
+.bc-sub-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #2d2d2d;
+}
+
+.fingerprint {
+  font-family: 'Consolas', monospace;
+  font-size: 10px;
+  color: #00a4ef;
+  letter-spacing: 0.5px;
+}
+
+/* Active User Blade Card */
+.active-user-blade-card {
+  background: linear-gradient(135deg, rgba(0, 120, 212, 0.15), rgba(16, 124, 65, 0.1));
+  border-color: #0078d4;
+}
+
+.bc-active-user-strip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.active-user-avatar {
+  font-size: 24px;
+  background: rgba(0, 120, 212, 0.2);
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 120, 212, 0.4);
+}
+
+.active-user-meta {
+  flex: 1;
+}
+
+.active-user-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.active-user-subtitle {
+  font-size: 11px;
+  color: #aaa;
+  margin-top: 2px;
+}
+
+/* Table User Pill Tag */
+.user-pill-tag {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  display: inline-block;
+  font-weight: 500;
+}
+.user-pill-tag.has-user {
+  background-color: rgba(0, 120, 212, 0.2);
+  color: #50e6ff;
+  border: 1px solid rgba(0, 120, 212, 0.4);
+}
+.user-pill-tag.no-user {
+  color: #666;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   9. OVERVIEW WIDGETS & DEVICE CARDS
+   ════════════════════════════════════════════════════════════════ */
+.overview-device-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.overview-device-card {
+  background-color: #242424;
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 12px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.overview-device-card:hover {
+  background-color: #2a2a2a;
+  border-color: #0078d4;
+}
+
+.card-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.device-ident {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.device-type-icon {
+  font-size: 20px;
+}
+
+.device-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  font-family: 'Consolas', monospace;
+}
+
+.device-os-sub {
+  font-size: 11px;
+  color: #888;
+}
+
+.card-user-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  background-color: rgba(255, 255, 255, 0.04);
+  border-radius: 3px;
+  margin-bottom: 8px;
+}
+
+.user-pill-label {
+  font-size: 11px;
+  color: #aaa;
+}
+
+.user-pill-val {
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.active-user-highlight {
+  color: #50e6ff;
+  text-shadow: 0 0 8px rgba(80, 230, 255, 0.3);
+}
+
+.user-muted {
+  color: #777;
+}
+
+.card-specs-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 6px;
+  font-size: 11px;
+  margin-bottom: 8px;
+}
+
+.spec-cell {
+  display: flex;
+  gap: 4px;
+}
+
+.spec-label {
+  color: #777;
+}
+
+.spec-val {
+  color: #ddd;
+}
+
+.card-action-bar {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  padding-top: 6px;
+  border-top: 1px solid #2d2d2d;
+}
+
+.intune-btn-sub {
+  background: #333;
+  border: 1px solid #444;
+  color: #fff;
+  font-size: 10.5px;
+  padding: 3px 8px;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.intune-btn-sub:hover {
+  background: #0078d4;
+  border-color: #0078d4;
+}
+
+/* Overview Events List */
+.overview-events-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.overview-event-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  background-color: #242424;
+  border: 1px solid #333;
+  border-radius: 3px;
+  font-size: 11.5px;
+}
+
+.event-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.event-summary-wrap {
+  display: flex;
+  flex-direction: column;
+}
+
+.event-summary {
+  font-weight: 500;
+  color: #fff;
+}
+
+.event-meta {
+  font-size: 10.5px;
+  color: #888;
+}
+
+.event-ack-tag {
+  font-size: 10.5px;
+  color: #6ccb5f;
+  background: rgba(108, 203, 95, 0.1);
+  padding: 1px 5px;
+  border-radius: 2px;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   10. CLOUD SHELL / REMOTE TERMINAL STYLES
+   ════════════════════════════════════════════════════════════════ */
+.cloud-shell-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 2500;
+  display: none;
+}
+.cloud-shell-overlay.open {
+  display: block;
+}
+
+.cloud-shell-container {
+  position: fixed;
+  bottom: -550px;
+  left: 0;
+  right: 0;
+  height: 440px;
+  background: #0c0c0c;
+  border-top: 2px solid #0078d4;
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.8);
+  z-index: 2501;
+  display: flex;
+  flex-direction: column;
+  transition: bottom 0.25s cubic-bezier(0.16, 1, 0.3, 1), height 0.2s ease;
+  font-family: 'Cascadia Code', 'Consolas', monospace;
+}
+.cloud-shell-container.open {
+  bottom: 0;
+}
+.cloud-shell-container.maximized {
+  height: 85vh;
+}
+
+.shell-header-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 16px;
+  background: #181818;
+  border-bottom: 1px solid #282828;
+}
+
+.shell-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: #ccc;
+}
+
+.shell-header-icon {
+  font-weight: bold;
+  color: #0078d4;
+  font-size: 14px;
+}
+
+.shell-header-title {
+  font-weight: 600;
+  color: #fff;
+}
+
+.shell-env-tag {
+  background: #222;
+  border: 1px solid #333;
+  padding: 1px 6px;
+  border-radius: 2px;
+  font-size: 10.5px;
+  color: #7fba00;
+}
+
+.shell-target-picker {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  margin-left: 8px;
+}
+
+.shell-select {
+  background: #222;
+  border: 1px solid #444;
+  color: #fff;
+  padding: 2px 6px;
+  border-radius: 2px;
+  font-size: 11px;
+  font-family: inherit;
+}
+
+.shell-status-pill {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  font-weight: bold;
+}
+.status-ready   { background: #1f3b25; color: #6ccb5f; }
+.status-queued  { background: #3b351f; color: #ffb900; }
+.status-running { background: #1a334d; color: #00a4ef; animation: pulse 1s infinite; }
+.status-success { background: #107c41; color: #fff; }
+.status-error   { background: #a80000; color: #fff; }
+
+.shell-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.shell-btn-icon {
+  background: none;
+  border: 1px solid #333;
+  color: #ccc;
+  padding: 2px 8px;
+  border-radius: 2px;
+  cursor: pointer;
+  font-size: 11px;
+}
+.shell-btn-icon:hover {
+  background: #2a2a2a;
+  color: #fff;
+}
+
+.shell-snippets-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px;
+  background: #141414;
+  border-bottom: 1px solid #222;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.snippet-label {
+  font-size: 10.5px;
+  color: #777;
+  text-transform: uppercase;
+}
+
+.shell-snippet-btn {
+  background: #1e1e1e;
+  border: 1px solid #333;
+  color: #aaa;
+  padding: 2px 8px;
+  border-radius: 2px;
+  font-size: 10.5px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.shell-snippet-btn:hover {
+  background: #2a2a2a;
+  color: #00a4ef;
+  border-color: #00a4ef;
+}
+
+.shell-terminal-screen {
+  flex: 1;
+  padding: 12px 16px;
+  overflow-y: auto;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #ddd;
+  background: #0c0c0c;
+}
+
+.shell-line {
+  margin-bottom: 4px;
+}
+.shell-system {
+  color: #666;
+  font-style: italic;
+}
+.shell-info {
+  color: #00a4ef;
+}
+.shell-error {
+  color: #f45b5b;
+}
+
+.shell-cmd-block {
+  margin: 8px 0;
+  padding-top: 4px;
+  border-top: 1px dashed #222;
+}
+
+.shell-prompt-line {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  color: #7fba00;
+  font-weight: bold;
+}
+.shell-cmd-text {
+  color: #fff;
+}
+.shell-timestamp {
+  color: #555;
+  font-size: 10px;
+  margin-left: auto;
+}
+
+.shell-stdout {
+  color: #e6e6e6;
+  margin: 4px 0 6px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: inherit;
+  font-size: 11.5px;
+}
+.shell-stderr {
+  color: #ff6b6b;
+  margin: 4px 0 6px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: inherit;
+  font-size: 11.5px;
+}
+
+.shell-summary {
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.shell-input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: #161616;
+  border-top: 1px solid #282828;
+}
+
+.shell-input-prompt {
+  color: #7fba00;
+  font-weight: bold;
+  font-size: 13px;
+}
+
+.shell-input {
+  flex: 1;
+  background: #0c0c0c;
+  border: 1px solid #333;
+  color: #fff;
+  padding: 6px 10px;
+  font-size: 12px;
+  border-radius: 2px;
+  font-family: inherit;
+}
+.shell-input:focus {
+  outline: none;
+  border-color: #0078d4;
+  box-shadow: 0 0 6px rgba(0, 120, 212, 0.4);
+}
+
+.shell-run-btn {
+  background: #0078d4;
+  border: none;
+  color: #fff;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 2px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.shell-run-btn:hover {
+  background: #106ebe;
+}
+

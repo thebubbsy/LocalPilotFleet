@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     One-command launcher for LocalPilot Fleet Command Center.
 
