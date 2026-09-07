@@ -567,6 +567,95 @@ if ($Mode -eq 'Heartbeat') {
                     }
                 }
             }
+
+            # ── Windows Update for Business (WUfB) & Patch Cadence Audit ────────
+            if ($resp.update_ring) {
+                if (-not (Get-Variable -Name 'LastUpdateAudit' -Scope Script -ErrorAction SilentlyContinue)) {
+                    $script:LastUpdateAudit = $null
+                }
+                $now = Get-Date
+                $shouldAuditUpdates = $false
+                if ($null -eq $script:LastUpdateAudit) {
+                    $shouldAuditUpdates = $true
+                } elseif (($now - $script:LastUpdateAudit).TotalSeconds -ge 600) { # 10-minute cadence to avoid CPU overhead
+                    $shouldAuditUpdates = $true
+                }
+
+                if ($shouldAuditUpdates) {
+                    $ring = $resp.update_ring
+                    Write-AgentLog 'INFO' "Auditing Windows Update status for Ring: $($ring.name) ($($ring.servicing_channel))"
+                    $script:LastUpdateAudit = $now
+
+                    $isRebootPending = $false
+                    $rebootReasons = @()
+
+                    # 1. Check Registry RebootRequired
+                    $wuReboot = Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired'
+                    if ($wuReboot) {
+                        $isRebootPending = $true
+                        $rebootReasons += 'WindowsUpdate:RebootRequired'
+                    }
+
+                    # 2. Check CBS RebootPending
+                    $cbsReboot = Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending'
+                    if ($cbsReboot) {
+                        $isRebootPending = $true
+                        $rebootReasons += 'ComponentBasedServicing:RebootPending'
+                    }
+
+                    # 3. Check PendingFileRenameOperations
+                    try {
+                        $pfr = Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -Name 'PendingFileRenameOperations' -ErrorAction SilentlyContinue
+                        if ($pfr -and $pfr.PendingFileRenameOperations) {
+                            $isRebootPending = $true
+                            $rebootReasons += 'SessionManager:PendingFileRenameOperations'
+                        }
+                    } catch {}
+
+                    # 4. Harvest Top Hotfixes
+                    $hotfixes = @()
+                    try {
+                        $hfList = Get-HotFix -ErrorAction SilentlyContinue | Sort-Object -Property InstalledOn -Descending | Select-Object -First 5
+                        foreach ($hf in $hfList) {
+                            $hotfixes += @{
+                                hotfix_id    = $hf.HotFixID
+                                description  = $hf.Description
+                                installed_on = if ($hf.InstalledOn) { $hf.InstalledOn.ToString('yyyy-MM-dd') } else { '' }
+                            }
+                        }
+                    } catch {
+                        Write-AgentLog 'WARN' "Could not harvest hotfixes: $($_.Exception.Message)"
+                    }
+
+                    # 5. Check Windows Update Service Status
+                    $wuServiceStatus = 'Running'
+                    try {
+                        $svc = Get-Service -Name 'wuauserv' -ErrorAction SilentlyContinue
+                        if ($svc) { $wuServiceStatus = $svc.Status.ToString() }
+                    } catch {}
+
+                    # 6. Report Windows Update Status to Fleet Server
+                    try {
+                        $updPayload = @{
+                            reboot_pending          = $isRebootPending
+                            reboot_pending_reasons  = $rebootReasons
+                            last_scan_at            = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+                            installed_hotfixes      = $hotfixes
+                            update_service_status   = $wuServiceStatus
+                        }
+                        $updRes = Invoke-RestMethod `
+                            -Uri        "$baseUrl/api/v1/nodes/$deviceId/update-status" `
+                            -Method     POST `
+                            -Body       ($updPayload | ConvertTo-Json -Depth 5 -Compress) `
+                            -Headers    $authHeaders `
+                            -TimeoutSec 10 `
+                            -ErrorAction Stop
+                        Write-AgentLog 'INFO' "Reported Windows Update telemetry (Compliance: $($updRes.compliance_status), RebootPending: $isRebootPending, Hotfixes: $($hotfixes.Count))"
+                    } catch {
+                        Write-AgentLog 'ERROR' "Failed to report Windows Update status: $($_.Exception.Message)"
+                    }
+                }
+            }
         } catch {
             Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
             if (-not $Continuous) { exit 1 }

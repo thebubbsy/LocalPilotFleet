@@ -387,6 +387,14 @@
         </div>
       </div>
 
+      <!-- ── Windows Update for Business & Patch Status ── -->
+      <div class="bc-section" id="bc-updates-section">
+        <div class="bc-section-title">🔄 Windows Update for Business &amp; Patches</div>
+        <div id="bc-updates-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading Windows Update posture…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -482,6 +490,62 @@
         `;
       }).catch(err => {
         profListEl.innerHTML = `<div style="color:#EF4444;font-size:12px;">Failed to load profiles: ${esc(err.message)}</div>`;
+      });
+    }
+
+    // Fetch and populate update ring and patch status
+    const updListEl = body.querySelector('#bc-updates-list');
+    if (updListEl && _currentDevice?.id) {
+      window.FleetAPI.getDeviceUpdateStatus(_currentDevice.id).then(status => {
+        if (!status || !status.ring_id) {
+          updListEl.innerHTML = '<div style="color:var(--text-muted);">No Windows Update telemetry reported yet. Will report on next heartbeat cycle.</div>';
+          return;
+        }
+
+        const isPending = status.reboot_pending === 1;
+        const reasons = status.reboot_pending_reasons || [];
+        const hotfixes = status.installed_hotfixes || [];
+
+        updListEl.innerHTML = `
+          <div style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:10px 14px;display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <span style="font-weight:600;color:var(--text-bright);font-size:13px;">${esc(status.ring_name || 'Assigned Update Ring')}</span>
+                <span style="font-size:11px;color:var(--text-muted);margin-left:6px;">(${esc(status.servicing_channel || 'GeneralAvailability')})</span>
+              </div>
+              <span class="badge" style="background:${isPending ? '#EF444422' : '#10B98122'};color:${isPending ? '#EF4444' : '#10B981'};border:1px solid ${isPending ? '#EF444455' : '#10B98155'};font-weight:600;">
+                ${isPending ? '⚠️ Reboot Required' : '✓ Up to Date'}
+              </span>
+            </div>
+
+            ${isPending && reasons.length > 0 ? `
+              <div style="font-size:11px;color:#f87171;background:#450a0a44;padding:4px 8px;border-radius:4px;border:1px solid #7f1d1d;">
+                <strong>Pending triggers:</strong> ${esc(reasons.join(', '))}
+              </div>
+            ` : ''}
+
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
+              <div style="font-size:11px;color:var(--text-muted);">
+                <strong>Recent hotfixes:</strong>
+                ${hotfixes.length > 0 ? hotfixes.slice(0, 3).map(h => `<span class="badge" style="background:#334155;color:#94a3b8;font-size:10px;margin-left:4px;">${esc(h.hotfix_id)}</span>`).join('') : 'None'}
+              </div>
+              <button class="intune-btn small primary" id="btn-bc-scan-now" style="font-size:11px;padding:2px 8px;">
+                ⚡ Scan now
+              </button>
+            </div>
+          </div>
+        `;
+
+        updListEl.querySelector('#btn-bc-scan-now')?.addEventListener('click', async () => {
+          try {
+            await window.FleetAPI.scanDeviceUpdates(_currentDevice.id);
+            if (typeof showToast === 'function') showToast('Scan Queued', 'Windows Update scan dispatched to node.', 'info');
+          } catch (err) {
+            if (typeof showToast === 'function') showToast('Scan Failed', err.message, 'critical');
+          }
+        });
+      }).catch(err => {
+        updListEl.innerHTML = `<div style="color:#EF4444;font-size:12px;">Failed to load update status: ${esc(err.message)}</div>`;
       });
     }
   }

@@ -95,6 +95,9 @@ const App = {
       case 'profiles':
         if (window.ConfigurationProfilesTable) window.ConfigurationProfilesTable.loadData();
         break;
+      case 'updates':
+        if (window.UpdateRingsTable) window.UpdateRingsTable.loadData();
+        break;
       case 'settings':
         this.renderSettings();
         break;

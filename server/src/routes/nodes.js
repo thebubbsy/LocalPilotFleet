@@ -12,6 +12,7 @@ import policyEngine from '../services/policyEngine.js';
 import alertEngine from '../services/alertEngine.js';
 import remediationEngine from '../services/remediationEngine.js';
 import { configProfileEngine } from '../services/configProfileEngine.js';
+import { updateRingEngine } from '../services/updateRingEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -286,13 +287,17 @@ export function registerNodeRoutes(router) {
       // Check for assigned configuration profiles
       const assignedProfiles = configProfileEngine.getProfilesForDevice(db, deviceId);
 
+      // Check for assigned update ring
+      const assignedRing = updateRingEngine.getRingForDevice(db, deviceId);
+
       sendJson(res, 200, {
         acknowledged: true,
         server_time: new Date().toISOString(),
         commands_pending: pendingCommands.length > 0,
         pending_commands: pendingCommands,
         remediations: assignedRemediations,
-        profiles: assignedProfiles
+        profiles: assignedProfiles,
+        update_ring: assignedRing
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -658,6 +663,46 @@ export function registerNodeRoutes(router) {
       });
     } catch (err) {
       sendJson(res, 500, { error: 'PROFILE_COMPLIANCE_ERROR', message: err.message });
+    }
+  });
+
+  // 11. GET /api/v1/nodes/:id/update-ring
+  router.get('/api/v1/nodes/:id/update-ring', async (req, res) => {
+    const targetDeviceId = req.params.id;
+    if (!requireFleetKeyOrNodeToken(req, res, targetDeviceId)) return;
+
+    try {
+      const db = getDb();
+      const ring = updateRingEngine.getRingForDevice(db, targetDeviceId);
+      sendJson(res, 200, { update_ring: ring });
+    } catch (err) {
+      sendJson(res, 500, { error: 'UPDATE_RING_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 12. POST /api/v1/nodes/:id/update-status
+  router.post('/api/v1/nodes/:id/update-status', async (req, res) => {
+    const targetDeviceId = req.params.id;
+    if (!requireFleetKeyOrNodeToken(req, res, targetDeviceId)) return;
+
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const result = updateRingEngine.recordDeviceUpdateStatus(db, targetDeviceId, body);
+
+      broadcastEvent('device_update_status_updated', {
+        device_id: targetDeviceId,
+        reboot_pending: result.reboot_pending,
+        compliance_status: result.compliance_status,
+        ring_id: result.ring_id
+      });
+
+      sendJson(res, 200, {
+        success: true,
+        ...result
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: 'UPDATE_STATUS_RECORD_ERROR', message: err.message });
     }
   });
 }

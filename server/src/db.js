@@ -280,6 +280,46 @@ export function initDb(dbOrPath, options = {}) {
       FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
       UNIQUE(profile_id, device_id)
     );
+
+    -- 14. UPDATE_RINGS (Windows Update for Business / WUfB Patch Cadence)
+    CREATE TABLE IF NOT EXISTS update_rings (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      target_group_id TEXT DEFAULT 'grp-all',
+      servicing_channel TEXT DEFAULT 'GeneralAvailability' CHECK(servicing_channel IN (
+        'GeneralAvailability', 'WindowsInsiderPreRelease', 'WindowsInsiderBeta', 'WindowsInsiderReleasePreview'
+      )),
+      quality_deferral_days INTEGER DEFAULT 0 CHECK(quality_deferral_days >= 0 AND quality_deferral_days <= 30),
+      feature_deferral_days INTEGER DEFAULT 0 CHECK(feature_deferral_days >= 0 AND feature_deferral_days <= 365),
+      active_hours_start INTEGER DEFAULT 8 CHECK(active_hours_start >= 0 AND active_hours_start <= 23),
+      active_hours_end INTEGER DEFAULT 17 CHECK(active_hours_end >= 0 AND active_hours_end <= 23),
+      automatic_update_mode TEXT DEFAULT 'AutoInstallAndRebootAtMaintenanceTime' CHECK(automatic_update_mode IN (
+        'NotifyDownload', 'AutoInstallAndRebootAtMaintenanceTime', 'AutoInstallAndRebootWithoutEndUserControl', 'ResetToDefault'
+      )),
+      restart_deadline_days INTEGER DEFAULT 5 CHECK(restart_deadline_days >= 0 AND restart_deadline_days <= 30),
+      is_paused INTEGER DEFAULT 0 CHECK(is_paused IN (0, 1)),
+      created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET NULL
+    );
+
+    -- 15. DEVICE_UPDATE_STATUS (Per-device Windows Update, Reboot & Hotfix Telemetry)
+    CREATE TABLE IF NOT EXISTS device_update_status (
+      id TEXT PRIMARY KEY NOT NULL,
+      device_id TEXT NOT NULL UNIQUE,
+      ring_id TEXT,
+      reboot_pending INTEGER DEFAULT 0 CHECK(reboot_pending IN (0, 1)),
+      reboot_pending_reasons_json TEXT DEFAULT '[]',
+      last_scan_at TEXT,
+      last_install_at TEXT,
+      installed_hotfixes_json TEXT DEFAULT '[]',
+      update_service_status TEXT DEFAULT 'Running',
+      compliance_status TEXT DEFAULT 'COMPLIANT' CHECK(compliance_status IN ('COMPLIANT', 'REBOOT_PENDING', 'DRIFTED', 'ERROR')),
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(ring_id) REFERENCES update_rings(id) ON DELETE SET NULL
+    );
   `);
 
   // Indexes
@@ -317,6 +357,10 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_profiles_type ON configuration_profiles(profile_type);
     CREATE INDEX IF NOT EXISTS idx_compliance_dev ON profile_compliance(device_id, evaluated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_compliance_prof ON profile_compliance(profile_id, compliance_status);
+
+    CREATE INDEX IF NOT EXISTS idx_rings_target ON update_rings(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_dev_update_ring ON device_update_status(ring_id);
+    CREATE INDEX IF NOT EXISTS idx_dev_update_reboot ON device_update_status(reboot_pending);
   `);
 
   if (shouldSeed) {
@@ -785,6 +829,79 @@ exit 0`,
           { id: 'fast_startup', category: 'System & Power', name: 'Fast Startup (Hiberboot)', desired_value: 0, current_value: 0, status: 'COMPLIANT', message: 'Fast Startup disabled' }
         ]),
         '-2 hours'
+      );
+    }
+  }
+
+  // 8. Seed Default Windows Update Rings
+  const ringCount = db.prepare('SELECT COUNT(*) as count FROM update_rings').get().count;
+  if (ringCount === 0) {
+    const insertRing = db.prepare(`
+      INSERT INTO update_rings (
+        id, name, description, target_group_id, servicing_channel, quality_deferral_days,
+        feature_deferral_days, active_hours_start, active_hours_end, automatic_update_mode,
+        restart_deadline_days, is_paused, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, DATETIME('now', ?), DATETIME('now', ?))
+    `);
+
+    insertRing.run(
+      'ring-fast-insider',
+      'Ring 1: Homelab Fast & Canary Ring',
+      'Early adoption ring for developer workstations and disposable VMs. 0 days deferral with 2-day reboot deadline.',
+      'grp-workstations',
+      'WindowsInsiderBeta',
+      0, 0, 9, 18, 'AutoInstallAndRebootAtMaintenanceTime', 2,
+      '-3 days', '-3 days'
+    );
+
+    insertRing.run(
+      'ring-broad-production',
+      'Ring 2: Broad Production Fleet',
+      'Standard enterprise patch ring with 7-day quality update validation buffer and 5-day grace period.',
+      'grp-all',
+      'GeneralAvailability',
+      7, 30, 8, 17, 'AutoInstallAndRebootAtMaintenanceTime', 5,
+      '-2 days', '-2 days'
+    );
+
+    insertRing.run(
+      'ring-gaming-vip',
+      'Ring 3: Gaming & Low-Latency Rig Ring',
+      'Extended active hours (08:00 - 02:00) and notify-download policy to prevent unwanted reboots during competitive play or long renders.',
+      'grp-all',
+      'GeneralAvailability',
+      14, 90, 8, 2, 'NotifyDownload', 14,
+      '-1 day', '-1 day'
+    );
+
+    // Sample device update status (if sample devices exist)
+    const hasSampleDevForUpdate = db.prepare('SELECT id FROM devices WHERE id = ?').get('dev-daddy-pc');
+    if (hasSampleDevForUpdate) {
+      const insertDevUpdate = db.prepare(`
+        INSERT INTO device_update_status (
+          id, device_id, ring_id, reboot_pending, reboot_pending_reasons_json, last_scan_at,
+          last_install_at, installed_hotfixes_json, update_service_status, compliance_status, updated_at
+        ) VALUES (?, ?, ?, ?, ?, DATETIME('now', ?), DATETIME('now', ?), ?, 'Running', ?, DATETIME('now', ?))
+      `);
+
+      insertDevUpdate.run(
+        'upd-01', 'dev-daddy-pc', 'ring-fast-insider', 0, '[]',
+        '-2 hours', '-3 days',
+        JSON.stringify([
+          { hotfix_id: 'KB5043076', description: 'Security Update', installed_on: '2026-09-02' },
+          { hotfix_id: 'KB5042099', description: 'Update', installed_on: '2026-08-20' }
+        ]),
+        'COMPLIANT', '-2 hours'
+      );
+
+      insertDevUpdate.run(
+        'upd-02', 'dev-livingroom-pc', 'ring-broad-production', 1,
+        JSON.stringify(['WindowsUpdate:KB5043076', 'ComponentBasedServicing:RebootPending']),
+        '-45 minutes', '-1 day',
+        JSON.stringify([
+          { hotfix_id: 'KB5041585', description: 'Security Update', installed_on: '2026-08-15' }
+        ]),
+        'REBOOT_PENDING', '-45 minutes'
       );
     }
   }

@@ -10,6 +10,7 @@ import { sendJson } from '../utils/router.js';
 import dynamicGroupsService from '../services/dynamicGroups.js';
 import remediationEngine from '../services/remediationEngine.js';
 import { configProfileEngine } from '../services/configProfileEngine.js';
+import { updateRingEngine } from '../services/updateRingEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -1191,6 +1192,193 @@ try {
       sendJson(res, 200, { device_id: id, hostname: device.hostname, profiles });
     } catch (err) {
       sendJson(res, 500, { error: 'DEVICE_PROFILES_ERROR', message: err.message });
+    }
+  });
+
+  /* ── Windows Update for Business (WUfB Update Rings) ──────────────── */
+
+  // 34. GET /api/v1/fleet/updates/rings
+  router.get('/api/v1/fleet/updates/rings', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const rings = updateRingEngine.getAllRings(db);
+      sendJson(res, 200, { rings, total_count: rings.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'RINGS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 35. GET /api/v1/fleet/updates/stats
+  router.get('/api/v1/fleet/updates/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const stats = updateRingEngine.getFleetUpdateStats(db);
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'UPDATE_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 36. GET /api/v1/fleet/updates/rings/:id
+  router.get('/api/v1/fleet/updates/rings/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const ring = updateRingEngine.getRingById(db, req.params.id);
+      if (!ring) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Update ring not found' });
+        return;
+      }
+      sendJson(res, 200, ring);
+    } catch (err) {
+      sendJson(res, 500, { error: 'RING_DETAIL_ERROR', message: err.message });
+    }
+  });
+
+  // 37. POST /api/v1/fleet/updates/rings
+  router.post('/api/v1/fleet/updates/rings', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const body = req.body || {};
+    const { name } = body;
+
+    if (!name || !name.trim()) {
+      sendJson(res, 400, { error: 'BAD_REQUEST', message: 'Update ring name is required' });
+      return;
+    }
+
+    try {
+      const db = getDb();
+      const created = updateRingEngine.createRing(db, body);
+      broadcastEvent('update_ring_created', { ring_id: created.id, name: created.name });
+      sendJson(res, 201, created);
+    } catch (err) {
+      sendJson(res, 500, { error: 'RING_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 38. PATCH /api/v1/fleet/updates/rings/:id
+  router.patch('/api/v1/fleet/updates/rings/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+
+    try {
+      const db = getDb();
+      const updated = updateRingEngine.updateRing(db, id, body);
+      if (!updated) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Update ring not found' });
+        return;
+      }
+
+      broadcastEvent('update_ring_updated', { ring_id: id, name: updated.name });
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 500, { error: 'RING_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 39. DELETE /api/v1/fleet/updates/rings/:id
+  router.delete('/api/v1/fleet/updates/rings/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+
+    try {
+      const db = getDb();
+      const deleted = updateRingEngine.deleteRing(db, id);
+      if (!deleted) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Update ring not found' });
+        return;
+      }
+
+      broadcastEvent('update_ring_deleted', { ring_id: id });
+      sendJson(res, 200, { success: true, deleted_id: id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'RING_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 40. POST /api/v1/fleet/devices/:id/scan-updates
+  router.post('/api/v1/fleet/devices/:id/scan-updates', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+
+    try {
+      const db = getDb();
+      const device = db.prepare('SELECT id, hostname FROM devices WHERE id = ?').get(id);
+      if (!device) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Device not found' });
+        return;
+      }
+
+      const scanScript = `
+try {
+  $session = New-Object -ComObject Microsoft.Update.Session
+  $searcher = $session.CreateUpdateSearcher()
+  $res = $searcher.Search("IsInstalled=0 and Type='Software'")
+  Write-Host "Windows Update scan completed. Found $($res.Updates.Count) pending updates."
+} catch {
+  Start-Process -FilePath "C:\\Windows\\System32\\UsoClient.exe" -ArgumentList "StartScan" -WindowStyle Hidden -ErrorAction SilentlyContinue
+  Write-Host "Triggered background Windows Update scan via UsoClient."
+}
+`;
+      const cmdId = crypto.randomUUID();
+      db.prepare(`
+        INSERT INTO device_commands (
+          id, device_id, command_text, created_by, status, created_at
+        ) VALUES (?, ?, ?, 'admin', 'PENDING', DATETIME('now'))
+      `).run(cmdId, id, scanScript);
+
+      broadcastEvent('command_dispatched', {
+        command_id: cmdId,
+        device_id: id,
+        hostname: device.hostname,
+        action: 'scan-updates'
+      });
+
+      sendJson(res, 202, {
+        success: true,
+        command_id: cmdId,
+        device_id: id,
+        message: 'Windows Update scan queued for node'
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: 'UPDATE_SCAN_DISPATCH_ERROR', message: err.message });
+    }
+  });
+
+  // 41. GET /api/v1/fleet/devices/:id/update-status
+  router.get('/api/v1/fleet/devices/:id/update-status', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+
+    try {
+      const db = getDb();
+      const status = db.prepare(`
+        SELECT s.*, r.name as ring_name, r.servicing_channel, r.active_hours_start, r.active_hours_end
+        FROM device_update_status s
+        LEFT JOIN update_rings r ON s.ring_id = r.id
+        WHERE s.device_id = ?
+      `).get(id);
+
+      if (!status) {
+        sendJson(res, 200, { device_id: id, status: null });
+        return;
+      }
+
+      let reasons = [];
+      let hotfixes = [];
+      try { reasons = JSON.parse(status.reboot_pending_reasons_json || '[]'); } catch {}
+      try { hotfixes = JSON.parse(status.installed_hotfixes_json || '[]'); } catch {}
+
+      sendJson(res, 200, {
+        ...status,
+        reboot_pending_reasons: reasons,
+        installed_hotfixes: hotfixes
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_UPDATE_STATUS_ERROR', message: err.message });
     }
   });
 }

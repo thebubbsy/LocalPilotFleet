@@ -316,6 +316,49 @@ async function getDeviceProfiles(deviceId) {
   return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/profiles`);
 }
 
+/* ── Windows Update for Business & Update Rings ────────────────────── */
+async function getUpdateRings() {
+  return apiFetch('/api/v1/fleet/updates/rings');
+}
+
+async function getUpdateStats() {
+  return apiFetch('/api/v1/fleet/updates/stats');
+}
+
+async function getUpdateRing(id) {
+  return apiFetch(`/api/v1/fleet/updates/rings/${encodeURIComponent(id)}`);
+}
+
+async function createUpdateRing(data) {
+  return apiFetch('/api/v1/fleet/updates/rings', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateUpdateRing(id, data) {
+  return apiFetch(`/api/v1/fleet/updates/rings/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteUpdateRing(id) {
+  return apiFetch(`/api/v1/fleet/updates/rings/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function scanDeviceUpdates(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/scan-updates`, {
+    method: 'POST'
+  });
+}
+
+async function getDeviceUpdateStatus(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/update-status`);
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -353,6 +396,15 @@ window.FleetAPI = {
   updateProfile,
   deleteProfile,
   getDeviceProfiles,
+  // Windows Update for Business & Update Rings
+  getUpdateRings,
+  getUpdateStats,
+  getUpdateRing,
+  createUpdateRing,
+  updateUpdateRing,
+  deleteUpdateRing,
+  scanDeviceUpdates,
+  getDeviceUpdateStatus,
   // Groups
   getGroups,
   createGroup,
