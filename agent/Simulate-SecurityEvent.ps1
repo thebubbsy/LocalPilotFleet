@@ -1,6 +1,6 @@
-<#
+﻿<#
 .SYNOPSIS
-    LocalPilot Fleet — Development Test Harness for Security Events.
+    LocalPilot Fleet - Development Test Harness for Security Events.
     Simulates security events without requiring Administrator rights or real Windows events.
 
 .DESCRIPTION
@@ -15,11 +15,11 @@
 
 .PARAMETER EventType
     The event type to simulate:
-      UserCreated          — New local user account creation (Event 4720, HIGH)
-      UserDeleted          — Local user account deletion (Event 4726, MEDIUM)
-      PrivilegeEscalation  — User added to Administrators group (Event 4732, CRITICAL)
-      SoftwareInstalled    — MSI application installed (Event 1033, MEDIUM)
-      AppProhibited        — Prohibited application detected (APP_PROHIBITED_DETECTED, CRITICAL)
+      UserCreated          - New local user account creation (Event 4720, HIGH)
+      UserDeleted          - Local user account deletion (Event 4726, MEDIUM)
+      PrivilegeEscalation  - User added to Administrators group (Event 4732, CRITICAL)
+      SoftwareInstalled    - MSI application installed (Event 1033, MEDIUM)
+      AppProhibited        - Prohibited application detected (APP_PROHIBITED_DETECTED, CRITICAL)
 
 .PARAMETER ServerUrl
     Fleet Command Center URL. Defaults to 'http://localhost:8443'.
@@ -95,7 +95,7 @@ if ((-not $DeviceId -or -not $Token) -and (Test-Path $CONFIG_FILE)) {
         if ($ServerUrl -eq 'http://localhost:8443' -and $config.server_url) {
             $ServerUrl = $config.server_url
         }
-        Write-Host "  [Config] Loaded config.json — Device: $DeviceId" -ForegroundColor DarkGray
+        Write-Host "  [Config] Loaded config.json - Device: $DeviceId" -ForegroundColor DarkGray
     } catch {
         Write-Warning "Could not load config.json: $($_.Exception.Message)"
     }
@@ -213,7 +213,7 @@ $payload = switch ($EventType) {
             event_id     = 1033
             event_source = 'LocalPilotWatchdog'
             severity     = 'CRITICAL'
-            summary      = "[SIMULATED] Prohibited application '$AppName' detected on $hostname — policy enforcement triggered"
+            summary      = "[SIMULATED] Prohibited application '$AppName' detected on $hostname - policy enforcement triggered"
             timestamp    = $now.ToString('o')
             details      = @{
                 ProductName      = $AppName
@@ -231,10 +231,10 @@ $payload = switch ($EventType) {
 
 # ─── Display payload ──────────────────────────────────────────────────────────
 Write-Host ''
-Write-Host '═══════════════════════════════════════════════════════' -ForegroundColor Cyan
-Write-Host '  LocalPilot Fleet — Security Event Simulator' -ForegroundColor Cyan
-Write-Host '═══════════════════════════════════════════════════════' -ForegroundColor Cyan
-Write-Host "  EventType  : $EventType → $($payload.event_type)" -ForegroundColor White
+Write-Host '=======================================================' -ForegroundColor Cyan
+Write-Host '  LocalPilot Fleet - Security Event Simulator' -ForegroundColor Cyan
+Write-Host '=======================================================' -ForegroundColor Cyan
+Write-Host "  EventType  : $EventType -> $($payload.event_type)" -ForegroundColor White
 Write-Host "  Severity   : $($payload.severity)" -ForegroundColor $(
     switch ($payload.severity) {
         'CRITICAL' { 'Red' }
@@ -273,7 +273,7 @@ try {
     $elapsed = [int]((Get-Date) - $startTime).TotalMilliseconds
 
     Write-Host ''
-    Write-Host '  ✓ Event dispatched successfully!' -ForegroundColor Green
+    Write-Host '  [OK] Event dispatched successfully!' -ForegroundColor Green
     Write-Host ''
     Write-Host '  Server Response:' -ForegroundColor Cyan
     Write-Host "    Status         : $($resp.status)" -ForegroundColor White
@@ -293,8 +293,9 @@ try {
     }
 
     Write-Host ''
-    Write-Host '  ✗ Event dispatch failed!' -ForegroundColor Red
-    Write-Host "    HTTP Status  : $($statusCode ?? 'N/A')" -ForegroundColor Red
+    Write-Host '  [FAIL] Event dispatch failed!' -ForegroundColor Red
+    $statusDisplay = if ($statusCode) { $statusCode } else { 'N/A' }
+    Write-Host "    HTTP Status  : $statusDisplay" -ForegroundColor Red
     Write-Host "    Error        : $($_.Exception.Message)" -ForegroundColor Red
 
     # Try to extract and print the response body for context

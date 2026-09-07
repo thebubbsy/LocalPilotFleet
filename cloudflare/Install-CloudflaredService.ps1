@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Installs cloudflared as a persistent Windows Service for LocalPilot Fleet.
 

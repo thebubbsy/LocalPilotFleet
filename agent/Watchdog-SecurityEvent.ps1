@@ -1,6 +1,6 @@
-<#
+﻿<#
 .SYNOPSIS
-    LocalPilot Fleet — Real-time Security Event Watchdog.
+    LocalPilot Fleet - Real-time Security Event Watchdog.
     Triggered by Windows Scheduled Task Event Log subscriptions. Dispatches security
     events to the Fleet Command Center within ~400ms of the triggering Windows event.
 
@@ -14,11 +14,11 @@
     Reads the most recent relevant events from the last 90 seconds, dispatches each as
     a security event to POST /api/v1/nodes/events, and logs to watchdog.log.
 
-    All try/catch blocks ensure this script NEVER crashes silently — every failure
+    All try/catch blocks ensure this script NEVER crashes silently - every failure
     is logged before re-throwing or continuing.
 
 .NOTES
-    Runs as NT AUTHORITY\SYSTEM — no interactive prompts.
+    Runs as NT AUTHORITY\SYSTEM - no interactive prompts.
     Config file: C:\ProgramData\LocalPilotFleet\config.json
     Log file:    C:\ProgramData\LocalPilotFleet\watchdog.log
 #>
@@ -55,11 +55,11 @@ function Write-WatchdogLog {
     } catch { }
 }
 
-Write-WatchdogLog 'INFO' "Watchdog fired on $env:COMPUTERNAME — scanning last $LOOKBACK_SEC seconds"
+Write-WatchdogLog 'INFO' "Watchdog fired on $env:COMPUTERNAME - scanning last $LOOKBACK_SEC seconds"
 
 # ─── Load configuration ───────────────────────────────────────────────────────
 if (-not (Test-Path $CONFIG_FILE)) {
-    Write-WatchdogLog 'ERROR' "Config file not found: $CONFIG_FILE — Watchdog cannot operate."
+    Write-WatchdogLog 'ERROR' "Config file not found: $CONFIG_FILE - Watchdog cannot operate."
     exit 1
 }
 
@@ -91,7 +91,7 @@ function Resolve-Endpoint {
         } catch { }
     }
     if ($CfUrl) {
-        Write-WatchdogLog 'INFO' "LAN unreachable — using Cloudflare Tunnel: $CfUrl"
+        Write-WatchdogLog 'INFO' "LAN unreachable - using Cloudflare Tunnel: $CfUrl"
         return $CfUrl
     }
     return $LanUrl
@@ -136,7 +136,7 @@ function Send-SecurityEvent {
             -TimeoutSec 10 `
             -ErrorAction Stop
 
-        Write-WatchdogLog 'INFO' "Dispatched $EventType (EID:$EventId) → Record ID: $($resp.event_record_id) | Toast: $($resp.toast_fired)"
+        Write-WatchdogLog 'INFO' "Dispatched $EventType (EID:$EventId) -> Record ID: $($resp.event_record_id) | Toast: $($resp.toast_fired)"
     } catch {
         Write-WatchdogLog 'ERROR' "Failed to dispatch $EventType (EID:$EventId): $($_.Exception.Message)"
     }
@@ -158,9 +158,9 @@ function Get-EventXmlData {
 $since = (Get-Date).AddSeconds(-$LOOKBACK_SEC)
 $eventsDispatched = 0
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 # SECURITY LOG: User account & group management events
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 $secEventIds = @(4720, 4726, 4728, 4732)
 
 try {
@@ -274,9 +274,9 @@ try {
     Write-WatchdogLog 'WARN' "Security log scan failed: $($_.Exception.Message)"
 }
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 # APPLICATION LOG: MSI Installer events
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 try {
     $msiEvents = Get-WinEvent -FilterHashtable @{
         LogName      = 'Application'
@@ -301,27 +301,31 @@ try {
 
         # Fallback: parse the formatted message
         if (-not $productName) {
-            $msg = $msiEvt.Message ?? ''
+            $msg = if ($msiEvt.Message) { $msiEvt.Message } else { '' }
             if ($msg -match 'Product:\s+(.+?)\s+--') {
                 $productName = $matches[1]
             }
         }
 
+        $rawMsg = if ($msiEvt.Message) { $msiEvt.Message } else { '' }
         $details = @{
             ProductName     = $productName
             ProductVersion  = $productVersion
             Publisher       = $publisher
             WindowsEventId  = $msiEvt.Id
-            EventMessage    = ($msiEvt.Message ?? '').Substring(0, [Math]::Min(500, ($msiEvt.Message ?? '').Length))
+            EventMessage    = $rawMsg.Substring(0, [Math]::Min(500, $rawMsg.Length))
             Hostname        = $env:COMPUTERNAME
         }
+
+        $prodDisplay = if ($productName) { $productName } else { 'Unknown' }
+        $verDisplay  = if ($productVersion) { $productVersion } else { '?' }
 
         Send-SecurityEvent `
             -EventType   'APP_INSTALLED' `
             -EventId     $msiEvt.Id `
             -EventSource 'MsiInstaller' `
             -Severity    'MEDIUM' `
-            -Summary     "Application installed via MSI: '$($productName ?? 'Unknown')' v$($productVersion ?? '?') on $env:COMPUTERNAME" `
+            -Summary     "Application installed via MSI: '$prodDisplay' v$verDisplay on $env:COMPUTERNAME" `
             -Details     $details `
             -Timestamp   $msiEvt.TimeCreated
         $eventsDispatched++
@@ -330,9 +334,9 @@ try {
     Write-WatchdogLog 'WARN' "MSI event scan failed: $($_.Exception.Message)"
 }
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 # APPX DEPLOYMENT LOG: Event ID 854 (Store App installed)
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 try {
     $appxEvents = Get-WinEvent -FilterHashtable @{
         LogName   = 'Microsoft-Windows-AppXDeployment-Server/Operational'
@@ -359,12 +363,14 @@ try {
             Hostname        = $env:COMPUTERNAME
         }
 
+        $pkgDisplay = if ($packageFullName) { $packageFullName } else { 'Unknown' }
+
         Send-SecurityEvent `
             -EventType   'APP_INSTALLED' `
             -EventId     854 `
             -EventSource 'AppXDeployment-Server' `
             -Severity    'LOW' `
-            -Summary     "AppX/MSIX package installed: '$($packageFullName ?? 'Unknown')' on $env:COMPUTERNAME" `
+            -Summary     "AppX/MSIX package installed: '$pkgDisplay' on $env:COMPUTERNAME" `
             -Details     $details `
             -Timestamp   $appxEvt.TimeCreated
         $eventsDispatched++
@@ -373,9 +379,9 @@ try {
     Write-WatchdogLog 'WARN' "AppX deployment log scan failed: $($_.Exception.Message)"
 }
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 # PROACTIVE: Recent AppX installs via Get-AppxPackage (catch anything missed)
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 try {
     $recentAppx = Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue |
                   Where-Object {
@@ -414,4 +420,4 @@ try {
     Write-WatchdogLog 'WARN' "AppX proactive scan failed: $($_.Exception.Message)"
 }
 
-Write-WatchdogLog 'INFO' "Watchdog cycle complete — $eventsDispatched event(s) dispatched"
+Write-WatchdogLog 'INFO' "Watchdog cycle complete - $eventsDispatched event(s) dispatched"

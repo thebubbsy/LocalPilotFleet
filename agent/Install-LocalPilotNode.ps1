@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    LocalPilot Fleet — Node Agent Installer & Enrollment Script.
+    LocalPilot Fleet - Node Agent Installer & Enrollment Script.
     Enrolls this PC into the LocalPilot Fleet and registers all Scheduled Tasks.
 
 .DESCRIPTION
@@ -75,14 +75,14 @@ function Write-Step {
     Add-Content -Path $LOG_FILE -Value "$(Get-Date -Format 'o') $line" -ErrorAction SilentlyContinue
 }
 
-function Write-Success { param([string]$Message); Write-Host "  ✓ $Message" -ForegroundColor Green }
+function Write-Success { param([string]$Message); Write-Host "  [OK] $Message" -ForegroundColor Green }
 function Write-Warn    { param([string]$Message); Write-Host "  ! $Message" -ForegroundColor Yellow }
-function Write-Fail    { param([string]$Message); Write-Host "  ✗ $Message" -ForegroundColor Red }
+function Write-Fail    { param([string]$Message); Write-Host "  [FAIL] $Message" -ForegroundColor Red }
 
 # ─── Step 0: Elevation check ─────────────────────────────────────────────────
 $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Fail 'This script must be run as Administrator. Right-click → Run as Administrator.'
+    Write-Fail 'This script must be run as Administrator. Right-click -> Run as Administrator.'
     exit 1
 }
 
@@ -149,7 +149,7 @@ try {
     }
 } catch { }
 
-# TPM version parsing — SpecVersion is typically "2.0, 0, 1.38" so take first token
+# TPM version parsing - SpecVersion is typically "2.0, 0, 1.38" so take first token
 $tpmVersion = $null
 if ($tpm -and $tpm.SpecVersion) {
     $tpmVersion = ($tpm.SpecVersion -split ',')[0].Trim()
@@ -186,7 +186,8 @@ $enrollBody = @{
     agent_version       = $AGENT_VERSION
 }
 
-Write-Success "Fingerprint harvested — Serial: $($serialNumber ?? 'N/A') | RAM: $([math]::Round($enrollBody.total_ram_bytes / 1GB, 1)) GB"
+$serialDisplay = if ($serialNumber) { $serialNumber } else { 'N/A' }
+Write-Success "Fingerprint harvested - Serial: $serialDisplay | RAM: $([math]::Round($enrollBody.total_ram_bytes / 1GB, 1)) GB"
 
 # ─── Step 4: Enroll with the Fleet Command Center ────────────────────────────
 Write-Step '4/7' "Enrolling '$DeviceName' with Fleet Command Center at $ServerUrl..."
@@ -240,6 +241,9 @@ Write-Success "Assigned groups: $($enrollResponse.assigned_groups -join ', ')"
 # ─── Step 5: Persist configuration ───────────────────────────────────────────
 Write-Step '5/7' 'Persisting agent configuration...'
 
+$hbInterval = if ($enrollResponse.heartbeat_interval_sec) { $enrollResponse.heartbeat_interval_sec } else { 300 }
+$telInterval = if ($enrollResponse.telemetry_interval_min) { $enrollResponse.telemetry_interval_min } else { 30 }
+
 $config = @{
     device_id             = $deviceId
     node_token            = $nodeToken
@@ -251,8 +255,8 @@ $config = @{
     group                 = $Group
     agent_version         = $AGENT_VERSION
     enrolled_at           = (Get-Date).ToString('o')
-    heartbeat_interval_sec = $enrollResponse.heartbeat_interval_sec ?? 300
-    telemetry_interval_min = $enrollResponse.telemetry_interval_min ?? 30
+    heartbeat_interval_sec = $hbInterval
+    telemetry_interval_min = $telInterval
 }
 
 $config | ConvertTo-Json -Depth 3 | Set-Content -Path $CONFIG_FILE -Encoding UTF8 -Force
@@ -289,7 +293,7 @@ foreach ($script in $scriptsToCopy) {
         Copy-Item -Path $src -Destination $dst -Force
         Write-Success "Copied $script"
     } else {
-        Write-Warn "$script not found in script directory — skipping copy (will still register task)"
+        Write-Warn "$script not found in script directory - skipping copy (will still register task)"
     }
 }
 
@@ -313,7 +317,7 @@ $hbSettings = New-ScheduledTaskSettingsSet `
 
 Register-ScheduledTask `
     -TaskName    'LocalPilot-Heartbeat' `
-    -Description 'LocalPilot Fleet — Lightweight keepalive heartbeat every 5 minutes' `
+    -Description 'LocalPilot Fleet - Lightweight keepalive heartbeat every 5 minutes' `
     -Action      $hbAction `
     -Trigger     $hbTrigger `
     -Settings    $hbSettings `
@@ -335,7 +339,7 @@ $telSettings = New-ScheduledTaskSettingsSet `
 
 Register-ScheduledTask `
     -TaskName    'LocalPilot-Telemetry' `
-    -Description 'LocalPilot Fleet — Deep hardware/software telemetry harvest every 30 minutes' `
+    -Description 'LocalPilot Fleet - Deep hardware/software telemetry harvest every 30 minutes' `
     -Action      $telAction `
     -Trigger     $telTrigger `
     -Settings    $telSettings `
@@ -353,7 +357,7 @@ $watchdogXml = @"
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>LocalPilot Fleet — Real-time Security Event Watchdog</Description>
+    <Description>LocalPilot Fleet - Real-time Security Event Watchdog</Description>
   </RegistrationInfo>
   <Triggers>
     <EventTrigger>
@@ -408,9 +412,9 @@ try {
 
 # ─── Summary ─────────────────────────────────────────────────────────────────
 Write-Host ''
-Write-Host '═══════════════════════════════════════════════════════════════' -ForegroundColor Magenta
-Write-Host '  LocalPilot Fleet Node Agent — Installation Complete!' -ForegroundColor Green
-Write-Host '═══════════════════════════════════════════════════════════════' -ForegroundColor Magenta
+Write-Host '===============================================================' -ForegroundColor Magenta
+Write-Host '  LocalPilot Fleet Node Agent - Installation Complete!' -ForegroundColor Green
+Write-Host '===============================================================' -ForegroundColor Magenta
 Write-Host ''
 Write-Host "  Device Name   : $DeviceName" -ForegroundColor White
 Write-Host "  Hostname      : $env:COMPUTERNAME" -ForegroundColor White
@@ -423,9 +427,9 @@ Write-Host "  Config File   : $CONFIG_FILE" -ForegroundColor White
 Write-Host "  Agent Version : $AGENT_VERSION" -ForegroundColor White
 Write-Host ''
 Write-Host '  Scheduled Tasks:' -ForegroundColor Cyan
-Write-Host '    LocalPilot-Heartbeat  → every 5 min (SYSTEM)' -ForegroundColor White
-Write-Host '    LocalPilot-Telemetry  → every 30 min (SYSTEM)' -ForegroundColor White
-Write-Host '    LocalPilot-Watchdog   → event-driven (SYSTEM)' -ForegroundColor White
+Write-Host '    LocalPilot-Heartbeat  ->` every 5 min (SYSTEM)' -ForegroundColor White
+Write-Host '    LocalPilot-Telemetry  ->` every 30 min (SYSTEM)' -ForegroundColor White
+Write-Host '    LocalPilot-Watchdog   ->` event-driven (SYSTEM)' -ForegroundColor White
 Write-Host ''
 Write-Host '  The node is now live. Check the Fleet dashboard at:' -ForegroundColor Cyan
 Write-Host "    $activeServerUrl" -ForegroundColor Yellow

@@ -1,6 +1,6 @@
-<#
+﻿<#
 .SYNOPSIS
-    LocalPilot Fleet — Main Agent Runner.
+    LocalPilot Fleet - Main Agent Runner.
     Executes Heartbeat, Telemetry, or PolicyCheck cycles against the Fleet Command Center.
 
 .DESCRIPTION
@@ -9,9 +9,9 @@
     then falls back to the Cloudflare Tunnel URL if configured.
 
     Modes:
-      Heartbeat   — Lightweight 60-second keepalive: CPU%, RAM, IP, uptime.
-      Telemetry   — Deep hardware/software inventory snapshot (~30 min cadence).
-      PolicyCheck — Fetch effective policy and enforce via Winget.
+      Heartbeat   - Lightweight 60-second keepalive: CPU%, RAM, IP, uptime.
+      Telemetry   - Deep hardware/software inventory snapshot (~30 min cadence).
+      PolicyCheck - Fetch effective policy and enforce via Winget.
 
 .PARAMETER Mode
     Operating mode: Heartbeat | Telemetry | PolicyCheck
@@ -114,7 +114,7 @@ function Resolve-ActiveEndpoint {
     }
 
     # No connectivity confirmed but proceed with LAN URL and let specific calls fail gracefully
-    Write-AgentLog 'WARN' 'No reachable endpoint found — proceeding with LAN URL (may fail)'
+    Write-AgentLog 'WARN' 'No reachable endpoint found - proceeding with LAN URL (may fail)'
     return [pscustomobject]@{ Url = $LanUrl; Route = 'LAN' }
 }
 
@@ -130,9 +130,9 @@ $authHeaders = @{
     'Authorization' = "Bearer $nodeToken"
 }
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 # MODE: HEARTBEAT
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 if ($Mode -eq 'Heartbeat') {
     try {
         # CPU load
@@ -197,9 +197,9 @@ if ($Mode -eq 'Heartbeat') {
     }
 }
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 # MODE: TELEMETRY
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 elseif ($Mode -eq 'Telemetry') {
     try {
         Write-AgentLog 'INFO' 'Starting deep telemetry harvest...'
@@ -475,9 +475,9 @@ elseif ($Mode -eq 'Telemetry') {
     }
 }
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 # MODE: POLICYCHECK
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 elseif ($Mode -eq 'PolicyCheck') {
     try {
         Write-AgentLog 'INFO' 'Fetching effective policy from Fleet Command Center...'
@@ -497,7 +497,7 @@ elseif ($Mode -eq 'PolicyCheck') {
         # Check if winget is available
         $winget = Get-Command winget -ErrorAction SilentlyContinue
         if (-not $winget) {
-            Write-AgentLog 'WARN' 'winget not found in PATH — skipping enforcement. Install App Installer from the Microsoft Store.'
+            Write-AgentLog 'WARN' 'winget not found in PATH - skipping enforcement. Install App Installer from the Microsoft Store.'
             exit 0
         }
 
@@ -514,7 +514,7 @@ elseif ($Mode -eq 'PolicyCheck') {
         foreach ($pkg in $required) {
             $wingetId   = $pkg.winget_id
             $pkgName    = $pkg.name
-            $installArgs = $pkg.silent_install_args ?? '--silent --accept-package-agreements --accept-source-agreements'
+            $installArgs = if ($pkg.silent_install_args) { $pkg.silent_install_args } else { '--silent --accept-package-agreements --accept-source-agreements' }
 
             Write-AgentLog 'INFO' "Checking required package: $pkgName ($wingetId)"
 
@@ -543,7 +543,7 @@ elseif ($Mode -eq 'PolicyCheck') {
         foreach ($pkg in $prohibited) {
             $wingetId     = $pkg.winget_id
             $pkgName      = $pkg.name
-            $uninstallArgs = $pkg.silent_uninstall_args ?? '--silent'
+            $uninstallArgs = if ($pkg.silent_uninstall_args) { $pkg.silent_uninstall_args } else { '--silent' }
 
             Write-AgentLog 'INFO' "Checking prohibited package: $pkgName ($wingetId)"
 
@@ -551,7 +551,7 @@ elseif ($Mode -eq 'PolicyCheck') {
             $isInstalled = $checkResult | Select-String -Pattern ([regex]::Escape($wingetId)) -Quiet
 
             if ($isInstalled) {
-                Write-AgentLog 'WARN' "Prohibited package detected: $pkgName ($wingetId) — uninstalling"
+                Write-AgentLog 'WARN' "Prohibited package detected: $pkgName ($wingetId) - uninstalling"
 
                 # Post a security event to the Fleet Command Center
                 try {
@@ -560,7 +560,7 @@ elseif ($Mode -eq 'PolicyCheck') {
                         event_id     = 1033
                         event_source = 'LocalPilotWatchdog'
                         severity     = 'CRITICAL'
-                        summary      = "Prohibited application '$pkgName' detected on $env:COMPUTERNAME — forcing uninstall"
+                        summary      = "Prohibited application '$pkgName' detected on $env:COMPUTERNAME - forcing uninstall"
                         timestamp    = (Get-Date).ToString('o')
                         details      = @{
                             winget_id   = $wingetId

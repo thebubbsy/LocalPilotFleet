@@ -1,6 +1,6 @@
-<#
+﻿<#
 .SYNOPSIS
-    LocalPilot Fleet — Node Agent Uninstaller.
+    LocalPilot Fleet - Node Agent Uninstaller.
     Removes all Scheduled Tasks, agent files, and stored configuration.
 
 .DESCRIPTION
@@ -54,9 +54,9 @@ $TASK_NAMES     = @('LocalPilot-Heartbeat', 'LocalPilot-Telemetry', 'LocalPilot-
 $AGENT_VERSION  = '1.0.0'
 
 function Write-Step  { param([string]$S, [string]$M); Write-Host "[$S] $M" -ForegroundColor Cyan }
-function Write-OK    { param([string]$M); Write-Host "  ✓ $M" -ForegroundColor Green }
+function Write-OK    { param([string]$M); Write-Host "  [OK] $M" -ForegroundColor Green }
 function Write-Warn  { param([string]$M); Write-Host "  ! $M" -ForegroundColor Yellow }
-function Write-Fail  { param([string]$M); Write-Host "  ✗ $M" -ForegroundColor Red }
+function Write-Fail  { param([string]$M); Write-Host "  [FAIL] $M" -ForegroundColor Red }
 
 # ─── Elevation check ─────────────────────────────────────────────────────────
 $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
@@ -136,14 +136,14 @@ if ($Deregister -and $deviceId) {
             Write-OK "Server response: $($deregResp.message)"
         } catch {
             Write-Warn "Deregistration request failed: $($_.Exception.Message)"
-            Write-Warn "The device record may remain on the server — remove it manually from the dashboard."
+            Write-Warn "The device record may remain on the server - remove it manually from the dashboard."
         }
     }
 } elseif ($Deregister -and -not $deviceId) {
     Write-Warn 'Cannot deregister: device_id not found in config.json.'
 } else {
     Write-Warn 'Skipping server deregistration (-Deregister not specified).'
-    Write-Warn 'The device record will remain on the Fleet dashboard — remove it manually if desired.'
+    Write-Warn 'The device record will remain on the Fleet dashboard - remove it manually if desired.'
 }
 
 # ─── Remove install directory ─────────────────────────────────────────────────
@@ -178,9 +178,9 @@ if (Test-Path $INSTALL_DIR) {
 }
 
 Write-Host ''
-Write-Host '═══════════════════════════════════════════════════════════════' -ForegroundColor Magenta
-Write-Host '  LocalPilot Fleet Node Agent — Uninstallation Complete' -ForegroundColor Green
-Write-Host '═══════════════════════════════════════════════════════════════' -ForegroundColor Magenta
+Write-Host '===============================================================' -ForegroundColor Magenta
+Write-Host '  LocalPilot Fleet Node Agent - Uninstallation Complete' -ForegroundColor Green
+Write-Host '===============================================================' -ForegroundColor Magenta
 Write-Host ''
 Write-Host "  Device     : $env:COMPUTERNAME" -ForegroundColor White
 if ($deviceId) { Write-Host "  Device ID  : $deviceId" -ForegroundColor White }
@@ -188,7 +188,7 @@ Write-Host "  Deregistered: $Deregister" -ForegroundColor White
 Write-Host ''
 Write-Host '  All agent components have been removed from this machine.' -ForegroundColor Gray
 if (-not $Deregister) {
-    Write-Host "  The device record still exists on the Fleet dashboard — remove it at:" -ForegroundColor Yellow
+    Write-Host "  The device record still exists on the Fleet dashboard - remove it at:" -ForegroundColor Yellow
     if ($ServerUrl) { Write-Host "    $ServerUrl" -ForegroundColor Yellow }
 }
 Write-Host ''
