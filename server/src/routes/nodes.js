@@ -10,6 +10,7 @@ import { sendJson } from '../utils/router.js';
 import dynamicGroupsService from '../services/dynamicGroups.js';
 import policyEngine from '../services/policyEngine.js';
 import alertEngine from '../services/alertEngine.js';
+import remediationEngine from '../services/remediationEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -278,11 +279,15 @@ export function registerNodeRoutes(router) {
         }
       }
 
+      // Check for assigned proactive remediations
+      const assignedRemediations = remediationEngine.getRemediationsForDevice(db, deviceId);
+
       sendJson(res, 200, {
         acknowledged: true,
         server_time: new Date().toISOString(),
         commands_pending: pendingCommands.length > 0,
-        pending_commands: pendingCommands
+        pending_commands: pendingCommands,
+        remediations: assignedRemediations
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -547,6 +552,58 @@ export function registerNodeRoutes(router) {
       });
     } catch (err) {
       sendJson(res, 500, { error: 'COMMAND_RESULT_ERROR', message: err.message });
+    }
+  });
+
+  // 7. GET /api/v1/nodes/:id/remediations
+  router.get('/api/v1/nodes/:id/remediations', async (req, res) => {
+    const targetDeviceId = req.params.id;
+    if (!requireFleetKeyOrNodeToken(req, res, targetDeviceId)) return;
+
+    try {
+      const db = getDb();
+      const remediations = remediationEngine.getRemediationsForDevice(db, targetDeviceId);
+      sendJson(res, 200, { remediations });
+    } catch (err) {
+      sendJson(res, 500, { error: 'REMEDIATIONS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 8. POST /api/v1/nodes/:id/remediation-result
+  router.post('/api/v1/nodes/:id/remediation-result', async (req, res) => {
+    const targetDeviceId = req.params.id;
+    if (!requireFleetKeyOrNodeToken(req, res, targetDeviceId)) return;
+
+    const body = req.body || {};
+    const { remediation_id } = body;
+
+    if (!remediation_id) {
+      sendJson(res, 400, { error: 'BAD_REQUEST', message: 'remediation_id is required' });
+      return;
+    }
+
+    try {
+      const db = getDb();
+      const result = remediationEngine.recordRemediationRun(db, {
+        ...body,
+        device_id: targetDeviceId
+      });
+
+      broadcastEvent('remediation_run_completed', {
+        device_id: targetDeviceId,
+        remediation_id,
+        detection_status: result.detection_status,
+        remediation_status: result.remediation_status
+      });
+
+      sendJson(res, 200, {
+        success: true,
+        run_id: result.run_id,
+        detection_status: result.detection_status,
+        remediation_status: result.remediation_status
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: 'REMEDIATION_RESULT_ERROR', message: err.message });
     }
   });
 }

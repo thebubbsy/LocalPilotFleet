@@ -8,6 +8,7 @@ import { getDb } from '../db.js';
 import { requireFleetKey, setFleetKey } from '../utils/auth.js';
 import { sendJson } from '../utils/router.js';
 import dynamicGroupsService from '../services/dynamicGroups.js';
+import remediationEngine from '../services/remediationEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -784,6 +785,269 @@ export function registerFleetRoutes(router) {
       });
     } catch (err) {
       sendJson(res, 500, { error: 'TUNNEL_STATUS_ERROR', message: err.message });
+    }
+  });
+
+  /* ── Proactive Remediations ────────────────────────────────────────── */
+
+  // 20. GET /api/v1/fleet/remediations
+  router.get('/api/v1/fleet/remediations', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const list = remediationEngine.listRemediations(db);
+      sendJson(res, 200, { remediations: list, total_count: list.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'REMEDIATION_LIST_ERROR', message: err.message });
+    }
+  });
+
+  // 21. GET /api/v1/fleet/remediations/stats
+  router.get('/api/v1/fleet/remediations/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const stats = remediationEngine.getFleetRemediationStats(db);
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'REMEDIATION_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 22. GET /api/v1/fleet/remediations/:id
+  router.get('/api/v1/fleet/remediations/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const pkg = remediationEngine.getRemediationDetails(db, req.params.id);
+      if (!pkg) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Remediation package not found' });
+        return;
+      }
+      sendJson(res, 200, pkg);
+    } catch (err) {
+      sendJson(res, 500, { error: 'REMEDIATION_DETAIL_ERROR', message: err.message });
+    }
+  });
+
+  // 23. POST /api/v1/fleet/remediations
+  router.post('/api/v1/fleet/remediations', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const body = req.body || {};
+    const {
+      name,
+      description = '',
+      publisher = 'LocalPilot Admin',
+      target_group_id = 'grp-all',
+      detection_script,
+      remediation_script,
+      schedule_type = 'HEARTBEAT'
+    } = body;
+
+    if (!name || !detection_script || !remediation_script) {
+      sendJson(res, 400, {
+        error: 'BAD_REQUEST',
+        message: 'name, detection_script, and remediation_script are required'
+      });
+      return;
+    }
+
+    try {
+      const db = getDb();
+      const id = body.id || `rem-${crypto.randomUUID().slice(0, 8)}`;
+      db.prepare(`
+        INSERT INTO remediations (
+          id, name, description, publisher, target_group_id,
+          detection_script, remediation_script, schedule_type, is_enabled
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+      `).run(
+        id, name, description, publisher, target_group_id,
+        detection_script, remediation_script, schedule_type
+      );
+
+      const created = remediationEngine.getRemediationDetails(db, id);
+      broadcastEvent('remediation_created', { id, name, target_group_id });
+
+      sendJson(res, 201, created);
+    } catch (err) {
+      sendJson(res, 500, { error: 'REMEDIATION_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 24. PATCH /api/v1/fleet/remediations/:id
+  router.patch('/api/v1/fleet/remediations/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const body = req.body || {};
+    const id = req.params.id;
+
+    try {
+      const db = getDb();
+      const existing = db.prepare('SELECT * FROM remediations WHERE id = ?').get(id);
+      if (!existing) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Remediation package not found' });
+        return;
+      }
+
+      db.prepare(`
+        UPDATE remediations SET
+          name = COALESCE(?, name),
+          description = COALESCE(?, description),
+          target_group_id = COALESCE(?, target_group_id),
+          detection_script = COALESCE(?, detection_script),
+          remediation_script = COALESCE(?, remediation_script),
+          schedule_type = COALESCE(?, schedule_type),
+          is_enabled = CASE WHEN ? IS NOT NULL THEN ? ELSE is_enabled END,
+          updated_at = DATETIME('now')
+        WHERE id = ?
+      `).run(
+        body.name ?? null,
+        body.description ?? null,
+        body.target_group_id ?? null,
+        body.detection_script ?? null,
+        body.remediation_script ?? null,
+        body.schedule_type ?? null,
+        body.is_enabled !== undefined ? (body.is_enabled ? 1 : 0) : null,
+        body.is_enabled !== undefined ? (body.is_enabled ? 1 : 0) : null,
+        id
+      );
+
+      const updated = remediationEngine.getRemediationDetails(db, id);
+      broadcastEvent('remediation_updated', { id });
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 500, { error: 'REMEDIATION_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 25. DELETE /api/v1/fleet/remediations/:id
+  router.delete('/api/v1/fleet/remediations/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const id = req.params.id;
+
+    try {
+      const db = getDb();
+      const existing = db.prepare('SELECT * FROM remediations WHERE id = ?').get(id);
+      if (!existing) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Remediation package not found' });
+        return;
+      }
+
+      db.prepare('DELETE FROM remediations WHERE id = ?').run(id);
+      broadcastEvent('remediation_deleted', { id });
+      sendJson(res, 200, { success: true, id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'REMEDIATION_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 26. POST /api/v1/fleet/remediations/:id/run-now
+  router.post('/api/v1/fleet/remediations/:id/run-now', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const id = req.params.id;
+
+    try {
+      const db = getDb();
+      const pkg = db.prepare('SELECT * FROM remediations WHERE id = ?').get(id);
+      if (!pkg) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Remediation package not found' });
+        return;
+      }
+
+      // Determine target devices
+      let targetDevices = [];
+      if (!pkg.target_group_id || pkg.target_group_id === 'grp-all') {
+        targetDevices = db.prepare("SELECT id, hostname FROM devices WHERE status != 'quarantined'").all();
+      } else {
+        targetDevices = db.prepare(`
+          SELECT d.id, d.hostname FROM devices d
+          JOIN group_memberships gm ON d.id = gm.device_id
+          WHERE gm.group_id = ? AND d.status != 'quarantined'
+        `).all(pkg.target_group_id);
+      }
+
+      // Queue an action command for each device with detection + remediation logic wrapper
+      const queued = [];
+      const wrapperScript = `
+# LocalPilot Proactive Remediation Runner: ${pkg.name}
+$remId = "${pkg.id}"
+$detScript = @'
+${pkg.detection_script}
+'@
+$fixScript = @'
+${pkg.remediation_script}
+'@
+
+$detOut = ''
+$detErr = ''
+$detCode = 0
+try {
+  $res1 = powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $detScript 2>&1
+  $detCode = $LASTEXITCODE; if ($null -eq $detCode) { $detCode = 0 }
+  $detOut = ($res1 | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) -join [Environment]::NewLine
+  $detErr = ($res1 | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }) -join [Environment]::NewLine
+} catch {
+  $detCode = 1
+  $detErr = $_.Exception.Message
+}
+
+$remCode = $null
+$remOut = $null
+$remErr = $null
+if ($detCode -ne 0) {
+  try {
+    $res2 = powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $fixScript 2>&1
+    $remCode = $LASTEXITCODE; if ($null -eq $remCode) { $remCode = 0 }
+    $remOut = ($res2 | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) -join [Environment]::NewLine
+    $remErr = ($res2 | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }) -join [Environment]::NewLine
+  } catch {
+    $remCode = 1
+    $remErr = $_.Exception.Message
+  }
+}
+
+# Post result back to node remediation result API
+$report = @{
+  remediation_id        = $remId
+  device_id             = $deviceId
+  detection_exit_code   = $detCode
+  detection_stdout      = $detOut
+  detection_stderr      = $detErr
+  remediation_exit_code = $remCode
+  remediation_stdout    = $remOut
+  remediation_stderr    = $remErr
+}
+
+try {
+  Invoke-RestMethod -Uri "$baseUrl/api/v1/nodes/$deviceId/remediation-result" -Method POST -Body ($report | ConvertTo-Json) -Headers $authHeaders -TimeoutSec 10 | Out-Null
+  Write-Host "Proactive Remediation execution completed. Detection: $detCode, Remediation: $remCode"
+} catch {
+  Write-Warning "Failed to report remediation result: $($_.Exception.Message)"
+}
+`;
+
+      const insertCmd = db.prepare(`
+        INSERT INTO device_commands (
+          id, device_id, command_text, created_by, status, created_at
+        ) VALUES (?, ?, ?, 'admin', 'PENDING', DATETIME('now'))
+      `);
+
+      for (const dev of targetDevices) {
+        const cmdId = crypto.randomUUID();
+        insertCmd.run(cmdId, dev.id, wrapperScript);
+        queued.push({ device_id: dev.id, hostname: dev.hostname, command_id: cmdId });
+      }
+
+      broadcastEvent('remediation_triggered', { remediation_id: id, count: queued.length });
+
+      sendJson(res, 200, {
+        success: true,
+        remediation_id: id,
+        remediation_name: pkg.name,
+        target_count: queued.length,
+        dispatched_targets: queued
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: 'REMEDIATION_RUN_NOW_ERROR', message: err.message });
     }
   });
 }

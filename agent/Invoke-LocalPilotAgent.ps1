@@ -346,6 +346,86 @@ if ($Mode -eq 'Heartbeat') {
                     }
                 }
             }
+
+            # ── Proactive Remediations Evaluation ─────────────────────────────
+            if ($resp.remediations) {
+                if (-not (Get-Variable -Name 'LastRemediationRuns' -Scope Script -ErrorAction SilentlyContinue)) {
+                    $script:LastRemediationRuns = @{}
+                }
+                $remList = @($resp.remediations)
+                $now = Get-Date
+
+                foreach ($rem in $remList) {
+                    $remId = $rem.id
+                    $sched = if ($rem.schedule_type) { $rem.schedule_type.ToUpper() } else { 'HEARTBEAT' }
+                    $minIntervalSec = switch ($sched) {
+                        'HOURLY' { 3600 }
+                        'DAILY'  { 86400 }
+                        Default  { 300 } # HEARTBEAT cadence = 5 minutes minimum between runs
+                    }
+
+                    $lastRun = $script:LastRemediationRuns[$remId]
+                    $shouldRun = $false
+                    if ($null -eq $lastRun) {
+                        $shouldRun = $true
+                    } elseif (($now - $lastRun).TotalSeconds -ge $minIntervalSec) {
+                        $shouldRun = $true
+                    }
+
+                    if ($shouldRun) {
+                        Write-AgentLog 'INFO' "Evaluating Proactive Remediation [$remId]: $($rem.name)"
+                        $script:LastRemediationRuns[$remId] = $now
+
+                        $detScript = "`$ProgressPreference = 'SilentlyContinue';`n" + $rem.detection_script
+                        $detEncoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($detScript))
+                        $detRes = powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $detEncoded 2>&1
+                        $detExit = $LASTEXITCODE; if ($null -eq $detExit) { $detExit = 0 }
+                        $detStdout = ($detRes | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) -join "`n"
+                        $detStderr = ($detRes | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }) -join "`n"
+
+                        $remExit = $null
+                        $remStdout = $null
+                        $remStderr = $null
+
+                        if ($detExit -ne 0) {
+                            Write-AgentLog 'WARN' "Issue detected in [$remId] (exit code: $detExit). Executing remediation script..."
+                            $fixScript = "`$ProgressPreference = 'SilentlyContinue';`n" + $rem.remediation_script
+                            $fixEncoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($fixScript))
+                            $remRes = powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $fixEncoded 2>&1
+                            $remExit = $LASTEXITCODE; if ($null -eq $remExit) { $remExit = 0 }
+                            $remStdout = ($remRes | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) -join "`n"
+                            $remStderr = ($remRes | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }) -join "`n"
+                            Write-AgentLog 'INFO' "Remediation executed for [$remId] (exit code: $remExit)"
+                        } else {
+                            Write-AgentLog 'INFO' "Remediation detection healthy for [$remId] (no issue detected)"
+                        }
+
+                        # Report run result back to fleet server
+                        try {
+                            $remPayload = @{
+                                remediation_id        = $remId
+                                device_id             = $deviceId
+                                detection_exit_code   = $detExit
+                                detection_stdout      = $detStdout
+                                detection_stderr      = $detStderr
+                                remediation_exit_code = $remExit
+                                remediation_stdout    = $remStdout
+                                remediation_stderr    = $remStderr
+                            }
+                            Invoke-RestMethod `
+                                -Uri        "$baseUrl/api/v1/nodes/$deviceId/remediation-result" `
+                                -Method     POST `
+                                -Body       ($remPayload | ConvertTo-Json -Compress) `
+                                -Headers    $authHeaders `
+                                -TimeoutSec 10 `
+                                -ErrorAction Stop | Out-Null
+                            Write-AgentLog 'INFO' "Reported remediation run result for [$remId]"
+                        } catch {
+                            Write-AgentLog 'ERROR' "Failed to report remediation run for [$remId]: $($_.Exception.Message)"
+                        }
+                    }
+                }
+            }
         } catch {
             Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
             if (-not $Continuous) { exit 1 }

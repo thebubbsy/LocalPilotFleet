@@ -236,6 +236,45 @@ async function getDeviceCommands(deviceId) {
   return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/commands`);
 }
 
+/* ── Proactive Remediations ────────────────────────────────────────── */
+async function getRemediations() {
+  return apiFetch('/api/v1/fleet/remediations');
+}
+
+async function getRemediationStats() {
+  return apiFetch('/api/v1/fleet/remediations/stats');
+}
+
+async function getRemediationDetails(id) {
+  return apiFetch(`/api/v1/fleet/remediations/${encodeURIComponent(id)}`);
+}
+
+async function createRemediation(data) {
+  return apiFetch('/api/v1/fleet/remediations', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateRemediation(id, data) {
+  return apiFetch(`/api/v1/fleet/remediations/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteRemediation(id) {
+  return apiFetch(`/api/v1/fleet/remediations/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function runRemediationNow(id) {
+  return apiFetch(`/api/v1/fleet/remediations/${encodeURIComponent(id)}/run-now`, {
+    method: 'POST'
+  });
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -256,6 +295,14 @@ window.FleetAPI = {
   runScript,
   getCommandStatus,
   getDeviceCommands,
+  // Proactive Remediations
+  getRemediations,
+  getRemediationStats,
+  getRemediationDetails,
+  createRemediation,
+  updateRemediation,
+  deleteRemediation,
+  runRemediationNow,
   // Groups
   getGroups,
   createGroup,

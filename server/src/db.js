@@ -217,9 +217,43 @@ export function initDb(dbOrPath, options = {}) {
       completed_at TEXT,
       FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
     );
+
+    -- 10. REMEDIATIONS (Intune Proactive Remediation Script Packages)
+    CREATE TABLE IF NOT EXISTS remediations (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      publisher TEXT DEFAULT 'LocalPilot Fleet',
+      target_group_id TEXT DEFAULT 'grp-all',
+      detection_script TEXT NOT NULL,
+      remediation_script TEXT NOT NULL,
+      schedule_type TEXT DEFAULT 'HEARTBEAT' CHECK(schedule_type IN ('HEARTBEAT', 'HOURLY', 'DAILY')),
+      is_enabled INTEGER DEFAULT 1 CHECK(is_enabled IN (0, 1)),
+      created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET NULL
+    );
+
+    -- 11. REMEDIATION_RUNS (Per-device detection and remediation telemetry)
+    CREATE TABLE IF NOT EXISTS remediation_runs (
+      id TEXT PRIMARY KEY NOT NULL,
+      remediation_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      detection_exit_code INTEGER,
+      detection_stdout TEXT,
+      detection_stderr TEXT,
+      detection_status TEXT CHECK(detection_status IN ('NO_ISSUE', 'ISSUE_DETECTED', 'ERROR')),
+      remediation_exit_code INTEGER,
+      remediation_stdout TEXT,
+      remediation_stderr TEXT,
+      remediation_status TEXT CHECK(remediation_status IN ('NOT_NEEDED', 'REMEDIATED', 'FAILED', 'ERROR')),
+      executed_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(remediation_id) REFERENCES remediations(id) ON DELETE CASCADE,
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
   `);
 
-  // 17 Indexes
+  // Indexes
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_devices_status ON devices(status);
     CREATE INDEX IF NOT EXISTS idx_devices_last_seen ON devices(last_seen_at);
@@ -245,6 +279,10 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_events_created ON security_events(created_at DESC);
 
     CREATE INDEX IF NOT EXISTS idx_device_commands_dev_status ON device_commands(device_id, status);
+
+    CREATE INDEX IF NOT EXISTS idx_remediations_target ON remediations(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_remediation_runs_dev ON remediation_runs(device_id, executed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_remediation_runs_rem ON remediation_runs(remediation_id, executed_at DESC);
   `);
 
   if (shouldSeed) {
@@ -444,6 +482,122 @@ export function seedDatabase(db) {
       'Prohibited application "uTorrent" detected on LIVINGROOM-PC',
       JSON.stringify({ app: 'uTorrent', policy: 'Prohibited', detected_at: new Date().toISOString() }),
       0
+    );
+
+    // ── Seed Default Enterprise Remediations ──
+    const insertRem = db.prepare(`
+      INSERT INTO remediations (
+        id, name, description, publisher, target_group_id, detection_script, remediation_script, schedule_type, is_enabled
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+    `);
+
+    insertRem.run(
+      'rem-temp-cleanup',
+      'Auto-Clean Stale Temporary Files & Crash Dumps',
+      'Detects if user or system temporary directories exceed 500 MB of stale files and safely purges files older than 24 hours.',
+      'Microsoft / LocalPilot Core',
+      'grp-all',
+      `$tempPaths = @($env:TEMP, 'C:\\Windows\\Temp')
+$totalBytes = 0
+foreach ($p in $tempPaths) {
+  if (Test-Path $p) {
+    $files = Get-ChildItem -Path $p -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-1) }
+    $totalBytes += ($files | Measure-Object -Property Length -Sum).Sum
+  }
+}
+$totalMb = [math]::Round($totalBytes / 1MB, 1)
+if ($totalMb -gt 500) {
+  Write-Host "Stale temporary files detected: $totalMb MB (threshold: 500 MB)"
+  exit 1
+}
+Write-Host "Temp storage healthy: $totalMb MB stale files (threshold: 500 MB)"
+exit 0`,
+      `$tempPaths = @($env:TEMP, 'C:\\Windows\\Temp')
+$freedBytes = 0
+foreach ($p in $tempPaths) {
+  if (Test-Path $p) {
+    $files = Get-ChildItem -Path $p -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-1) }
+    foreach ($f in $files) {
+      try {
+        $len = $f.Length
+        Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop
+        $freedBytes += $len
+      } catch {}
+    }
+  }
+}
+$freedMb = [math]::Round($freedBytes / 1MB, 1)
+Write-Host "Purged $freedMb MB of stale temporary files."
+exit 0`,
+      'HEARTBEAT'
+    );
+
+    insertRem.run(
+      'rem-spooler-heal',
+      'Self-Healing Print Spooler & Subsystem Services',
+      'Monitors the Windows Print Spooler service; automatically restarts it and corrects startup configuration if stopped or hung.',
+      'Microsoft / LocalPilot Core',
+      'grp-all',
+      `$svc = Get-Service -Name Spooler -ErrorAction SilentlyContinue
+if (-not $svc) { Write-Host "Print Spooler service not found"; exit 0 }
+if ($svc.Status -ne 'Running') {
+  Write-Host "Print Spooler is stopped (Current status: $($svc.Status))"
+  exit 1
+}
+Write-Host "Print Spooler service is running normally"
+exit 0`,
+      `Set-Service -Name Spooler -StartupType Automatic -ErrorAction SilentlyContinue
+Start-Service -Name Spooler -ErrorAction Stop
+Write-Host "Print Spooler service restarted and set to Automatic startup."
+exit 0`,
+      'HEARTBEAT'
+    );
+
+    insertRem.run(
+      'rem-dns-flush',
+      'DNS Client Cache & Intranet Gateway Self-Heal',
+      'Validates network resolution and flushes DNS cache when stale lookup tables degrade local network communication.',
+      'LocalPilot Enterprise',
+      'grp-all',
+      `$dnsTest = Resolve-DnsName -Name "localhost" -ErrorAction SilentlyContinue
+if (-not $dnsTest) {
+  Write-Host "DNS client cache failed resolution test"
+  exit 1
+}
+Write-Host "DNS client resolution operational"
+exit 0`,
+      `Clear-DnsClientCache
+Write-Host "Flushed Windows DNS Client Cache successfully."
+exit 0`,
+      'HOURLY'
+    );
+
+    // Sample Remediation Runs
+    const insertRun = db.prepare(`
+      INSERT INTO remediation_runs (
+        id, remediation_id, device_id, detection_exit_code, detection_stdout, detection_stderr,
+        detection_status, remediation_exit_code, remediation_stdout, remediation_stderr,
+        remediation_status, executed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?))
+    `);
+
+    insertRun.run(
+      'run-sample-01', 'rem-temp-cleanup', 'dev-daddy-pc',
+      0, 'Temp storage healthy: 124.5 MB stale files (threshold: 500 MB)', '',
+      'NO_ISSUE', null, null, null, 'NOT_NEEDED', '-10 minutes'
+    );
+
+    insertRun.run(
+      'run-sample-02', 'rem-temp-cleanup', 'dev-livingroom-pc',
+      1, 'Stale temporary files detected: 840.2 MB (threshold: 500 MB)', '',
+      'ISSUE_DETECTED', 0, 'Purged 840.2 MB of stale temporary files.', '',
+      'REMEDIATED', '-5 minutes'
+    );
+
+    insertRun.run(
+      'run-sample-03', 'rem-spooler-heal', 'dev-daddy-pc',
+      0, 'Print Spooler service is running normally', '',
+      'NO_ISSUE', null, null, null, 'NOT_NEEDED', '-15 minutes'
     );
   }
 }

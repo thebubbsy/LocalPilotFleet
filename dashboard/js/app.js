@@ -89,6 +89,9 @@ const App = {
         const badge = document.getElementById('nav-events-badge');
         if (badge) badge.classList.add('hidden');
         break;
+      case 'remediations':
+        if (window.RemediationsTable) window.RemediationsTable.loadData();
+        break;
       case 'settings':
         this.renderSettings();
         break;
