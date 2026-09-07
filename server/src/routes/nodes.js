@@ -11,6 +11,7 @@ import dynamicGroupsService from '../services/dynamicGroups.js';
 import policyEngine from '../services/policyEngine.js';
 import alertEngine from '../services/alertEngine.js';
 import remediationEngine from '../services/remediationEngine.js';
+import { configProfileEngine } from '../services/configProfileEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -282,12 +283,16 @@ export function registerNodeRoutes(router) {
       // Check for assigned proactive remediations
       const assignedRemediations = remediationEngine.getRemediationsForDevice(db, deviceId);
 
+      // Check for assigned configuration profiles
+      const assignedProfiles = configProfileEngine.getProfilesForDevice(db, deviceId);
+
       sendJson(res, 200, {
         acknowledged: true,
         server_time: new Date().toISOString(),
         commands_pending: pendingCommands.length > 0,
         pending_commands: pendingCommands,
-        remediations: assignedRemediations
+        remediations: assignedRemediations,
+        profiles: assignedProfiles
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -604,6 +609,55 @@ export function registerNodeRoutes(router) {
       });
     } catch (err) {
       sendJson(res, 500, { error: 'REMEDIATION_RESULT_ERROR', message: err.message });
+    }
+  });
+
+  // 9. GET /api/v1/nodes/:id/profiles
+  router.get('/api/v1/nodes/:id/profiles', async (req, res) => {
+    const targetDeviceId = req.params.id;
+    if (!requireFleetKeyOrNodeToken(req, res, targetDeviceId)) return;
+
+    try {
+      const db = getDb();
+      const profiles = configProfileEngine.getProfilesForDevice(db, targetDeviceId);
+      sendJson(res, 200, { profiles });
+    } catch (err) {
+      sendJson(res, 500, { error: 'PROFILES_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 10. POST /api/v1/nodes/:id/profile-compliance
+  router.post('/api/v1/nodes/:id/profile-compliance', async (req, res) => {
+    const targetDeviceId = req.params.id;
+    if (!requireFleetKeyOrNodeToken(req, res, targetDeviceId)) return;
+
+    const body = req.body || {};
+    const { profile_id, setting_results = [] } = body;
+
+    if (!profile_id) {
+      sendJson(res, 400, { error: 'BAD_REQUEST', message: 'profile_id is required' });
+      return;
+    }
+
+    try {
+      const db = getDb();
+      const result = configProfileEngine.recordDeviceCompliance(db, targetDeviceId, profile_id, setting_results);
+
+      broadcastEvent('profile_compliance_updated', {
+        device_id: targetDeviceId,
+        profile_id,
+        compliance_status: result.compliance_status,
+        compliant_count: result.compliant_count,
+        non_compliant_count: result.non_compliant_count,
+        error_count: result.error_count
+      });
+
+      sendJson(res, 200, {
+        success: true,
+        ...result
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: 'PROFILE_COMPLIANCE_ERROR', message: err.message });
     }
   });
 }

@@ -379,6 +379,14 @@
         </div>
       ` : ''}
 
+      <!-- ── Configuration Profiles & Security Baselines ── -->
+      <div class="bc-section" id="bc-profiles-section">
+        <div class="bc-section-title">⚙️ Configuration Profiles &amp; Baselines</div>
+        <div id="bc-profiles-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading configuration compliance…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -436,6 +444,44 @@
           const text = tr.textContent.toLowerCase();
           tr.style.display = text.includes(q) ? '' : 'none';
         });
+      });
+    }
+
+    // Fetch and populate configuration profiles
+    const profListEl = body.querySelector('#bc-profiles-list');
+    if (profListEl && _currentDevice?.id) {
+      window.FleetAPI.getDeviceProfiles(_currentDevice.id).then(res => {
+        const profiles = res.profiles || [];
+        if (profiles.length === 0) {
+          profListEl.innerHTML = '<div style="color:var(--text-muted);">No configuration profiles assigned to this device.</div>';
+          return;
+        }
+
+        profListEl.innerHTML = `
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            ${profiles.map(p => {
+              const isCompliant = p.compliance_status === 'COMPLIANT';
+              const isError = p.compliance_status === 'ERROR';
+              const isPending = p.compliance_status === 'PENDING';
+              const color = isCompliant ? '#10B981' : (isPending ? '#94a3b8' : (isError ? '#F59E0B' : '#EF4444'));
+              const label = isCompliant ? 'Compliant' : (isPending ? 'Pending' : (isError ? 'Error' : 'Non-Compliant'));
+
+              return `
+                <div style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;">
+                  <div>
+                    <div style="font-weight:600;color:var(--text-bright);font-size:13px;">${esc(p.name)}</div>
+                    <div style="font-size:11px;color:var(--text-muted);">${p.settings?.length || 0} settings governed</div>
+                  </div>
+                  <span class="badge" style="background:${color}22;color:${color};border:1px solid ${color}55;font-weight:600;font-size:11px;">
+                    ${label}
+                  </span>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        `;
+      }).catch(err => {
+        profListEl.innerHTML = `<div style="color:#EF4444;font-size:12px;">Failed to load profiles: ${esc(err.message)}</div>`;
       });
     }
   }

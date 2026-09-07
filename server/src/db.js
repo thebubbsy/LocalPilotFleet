@@ -251,6 +251,35 @@ export function initDb(dbOrPath, options = {}) {
       FOREIGN KEY(remediation_id) REFERENCES remediations(id) ON DELETE CASCADE,
       FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
     );
+
+    -- 12. CONFIGURATION_PROFILES (Intune Settings Catalog & Security Baselines)
+    CREATE TABLE IF NOT EXISTS configuration_profiles (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      profile_type TEXT DEFAULT 'SettingsCatalog' CHECK(profile_type IN ('SettingsCatalog', 'SecurityBaseline', 'CustomPolicy')),
+      target_group_id TEXT DEFAULT 'grp-all',
+      settings_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET NULL
+    );
+
+    -- 13. PROFILE_COMPLIANCE (Per-device Configuration Profile Evaluation State)
+    CREATE TABLE IF NOT EXISTS profile_compliance (
+      id TEXT PRIMARY KEY NOT NULL,
+      profile_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      compliance_status TEXT NOT NULL CHECK(compliance_status IN ('COMPLIANT', 'NON_COMPLIANT', 'ERROR', 'PENDING')),
+      compliant_count INTEGER NOT NULL DEFAULT 0,
+      non_compliant_count INTEGER NOT NULL DEFAULT 0,
+      error_count INTEGER NOT NULL DEFAULT 0,
+      setting_results_json TEXT NOT NULL DEFAULT '[]',
+      evaluated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(profile_id) REFERENCES configuration_profiles(id) ON DELETE CASCADE,
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      UNIQUE(profile_id, device_id)
+    );
   `);
 
   // Indexes
@@ -283,6 +312,11 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_remediations_target ON remediations(target_group_id);
     CREATE INDEX IF NOT EXISTS idx_remediation_runs_dev ON remediation_runs(device_id, executed_at DESC);
     CREATE INDEX IF NOT EXISTS idx_remediation_runs_rem ON remediation_runs(remediation_id, executed_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_profiles_target ON configuration_profiles(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_profiles_type ON configuration_profiles(profile_type);
+    CREATE INDEX IF NOT EXISTS idx_compliance_dev ON profile_compliance(device_id, evaluated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_compliance_prof ON profile_compliance(profile_id, compliance_status);
   `);
 
   if (shouldSeed) {
@@ -483,8 +517,11 @@ export function seedDatabase(db) {
       JSON.stringify({ app: 'uTorrent', policy: 'Prohibited', detected_at: new Date().toISOString() }),
       0
     );
+  }
 
-    // ── Seed Default Enterprise Remediations ──
+  // 6. Seed Default Enterprise Remediations
+  const remCount = db.prepare('SELECT COUNT(*) as count FROM remediations').get().count;
+  if (remCount === 0) {
     const insertRem = db.prepare(`
       INSERT INTO remediations (
         id, name, description, publisher, target_group_id, detection_script, remediation_script, schedule_type, is_enabled
@@ -572,32 +609,183 @@ exit 0`,
       'HOURLY'
     );
 
-    // Sample Remediation Runs
-    const insertRun = db.prepare(`
-      INSERT INTO remediation_runs (
-        id, remediation_id, device_id, detection_exit_code, detection_stdout, detection_stderr,
-        detection_status, remediation_exit_code, remediation_stdout, remediation_stderr,
-        remediation_status, executed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?))
+    // Sample runs if sample devices exist
+    const hasSampleDev = db.prepare('SELECT id FROM devices WHERE id = ?').get('dev-daddy-pc');
+    if (hasSampleDev) {
+      const insertRun = db.prepare(`
+        INSERT INTO remediation_runs (
+          id, remediation_id, device_id, detection_exit_code, detection_stdout, detection_stderr,
+          detection_status, remediation_exit_code, remediation_stdout, remediation_stderr,
+          remediation_status, executed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?))
+      `);
+
+      insertRun.run(
+        'run-sample-01', 'rem-temp-cleanup', 'dev-daddy-pc',
+        0, 'Temp storage healthy: 124.5 MB stale files (threshold: 500 MB)', '',
+        'NO_ISSUE', null, null, null, 'NOT_NEEDED', '-10 minutes'
+      );
+
+      insertRun.run(
+        'run-sample-02', 'rem-temp-cleanup', 'dev-livingroom-pc',
+        1, 'Stale temporary files detected: 840.2 MB (threshold: 500 MB)', '',
+        'ISSUE_DETECTED', 0, 'Purged 840.2 MB of stale temporary files.', '',
+        'REMEDIATED', '-5 minutes'
+      );
+
+      insertRun.run(
+        'run-sample-03', 'rem-spooler-heal', 'dev-daddy-pc',
+        0, 'Print Spooler service is running normally', '',
+        'NO_ISSUE', null, null, null, 'NOT_NEEDED', '-15 minutes'
+      );
+    }
+  }
+
+  // 7. Seed Default Configuration Profiles
+  const profCount = db.prepare('SELECT COUNT(*) as count FROM configuration_profiles').get().count;
+  if (profCount === 0) {
+    const insertProfile = db.prepare(`
+      INSERT INTO configuration_profiles (
+        id, name, description, profile_type, target_group_id, settings_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, DATETIME('now', ?), DATETIME('now', ?))
     `);
 
-    insertRun.run(
-      'run-sample-01', 'rem-temp-cleanup', 'dev-daddy-pc',
-      0, 'Temp storage healthy: 124.5 MB stale files (threshold: 500 MB)', '',
-      'NO_ISSUE', null, null, null, 'NOT_NEEDED', '-10 minutes'
+    insertProfile.run(
+      'prof-win11-baseline',
+      'Windows 11 Enterprise Hardened Security Baseline',
+      'Enforces Windows Defender Firewall across all network profiles, User Account Control (UAC) token elevation, and Network Level Authentication (NLA) for Remote Desktop.',
+      'SecurityBaseline',
+      'grp-all',
+      JSON.stringify([
+        {
+          id: 'firewall_all_profiles',
+          category: 'Network & Firewall',
+          name: 'Windows Defender Firewall (All Profiles)',
+          description: 'Enforce Domain, Private, and Public firewall profiles enabled',
+          setting_type: 'boolean',
+          desired_value: true,
+          enforce: true
+        },
+        {
+          id: 'uac_enable_lua',
+          category: 'User Account Control',
+          name: 'UAC Admin Approval Mode (EnableLUA)',
+          description: 'Enforce User Account Control token filtering for administrators',
+          setting_type: 'integer',
+          desired_value: 1,
+          enforce: true
+        },
+        {
+          id: 'rdp_nla',
+          category: 'Remote Access',
+          name: 'Remote Desktop Network Level Authentication (NLA)',
+          description: 'Require Network Level Authentication for remote connections',
+          setting_type: 'integer',
+          desired_value: 1,
+          enforce: true
+        }
+      ]),
+      '-2 days', '-2 days'
     );
 
-    insertRun.run(
-      'run-sample-02', 'rem-temp-cleanup', 'dev-livingroom-pc',
-      1, 'Stale temporary files detected: 840.2 MB (threshold: 500 MB)', '',
-      'ISSUE_DETECTED', 0, 'Purged 840.2 MB of stale temporary files.', '',
-      'REMEDIATED', '-5 minutes'
+    insertProfile.run(
+      'prof-dev-privacy',
+      'Developer Workstation Privacy & Anti-Telemetry Policy',
+      'Suppresses diagnostic telemetry data collection and disables consumer experience advertising IDs.',
+      'SettingsCatalog',
+      'grp-all',
+      JSON.stringify([
+        {
+          id: 'telemetry_level',
+          category: 'System & Telemetry',
+          name: 'Diagnostic Data Collection Level',
+          description: 'Limit Windows telemetry to Security/Minimal (0 = Security, 1 = Basic, 3 = Full)',
+          setting_type: 'integer',
+          desired_value: 0,
+          enforce: true
+        },
+        {
+          id: 'tailored_experiences',
+          category: 'Privacy',
+          name: 'Windows Tailored Diagnostic Experiences',
+          description: 'Prevent Windows from using diagnostic data for personalized tips and recommendations',
+          setting_type: 'integer',
+          desired_value: 0,
+          enforce: true
+        }
+      ]),
+      '-1 day', '-1 day'
     );
 
-    insertRun.run(
-      'run-sample-03', 'rem-spooler-heal', 'dev-daddy-pc',
-      0, 'Print Spooler service is running normally', '',
-      'NO_ISSUE', null, null, null, 'NOT_NEEDED', '-15 minutes'
+    insertProfile.run(
+      'prof-gaming-tuning',
+      'Gaming Rig Low-Latency & Game Mode Optimization',
+      'Optimizes DPC latency and power state by disabling Windows Fast Startup (hybrid sleep) to avoid driver baggage across reboots.',
+      'CustomPolicy',
+      'grp-all',
+      JSON.stringify([
+        {
+          id: 'fast_startup',
+          category: 'System & Power',
+          name: 'Fast Startup (Hiberboot)',
+          description: 'Disable Fast Startup to guarantee true cold kernel reboot and clean DPC state',
+          setting_type: 'integer',
+          desired_value: 0,
+          enforce: true
+        }
+      ]),
+      '-12 hours', '-12 hours'
     );
+
+    // Seed Profile Compliance Records (if sample devices exist)
+    const hasSampleDevForComp = db.prepare('SELECT id FROM devices WHERE id = ?').get('dev-daddy-pc');
+    if (hasSampleDevForComp) {
+      const insertCompliance = db.prepare(`
+        INSERT INTO profile_compliance (
+          id, profile_id, device_id, compliance_status, compliant_count, non_compliant_count, error_count,
+          setting_results_json, evaluated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?))
+      `);
+
+      insertCompliance.run(
+        'comp-01',
+        'prof-win11-baseline',
+        'dev-daddy-pc',
+        'COMPLIANT',
+        3, 0, 0,
+        JSON.stringify([
+          { id: 'firewall_all_profiles', category: 'Network & Firewall', name: 'Windows Defender Firewall (All Profiles)', desired_value: true, current_value: true, status: 'COMPLIANT', message: 'Domain, Private, and Public firewalls active' },
+          { id: 'uac_enable_lua', category: 'User Account Control', name: 'UAC Admin Approval Mode (EnableLUA)', desired_value: 1, current_value: 1, status: 'COMPLIANT', message: 'EnableLUA configured to 1' },
+          { id: 'rdp_nla', category: 'Remote Access', name: 'Remote Desktop Network Level Authentication (NLA)', desired_value: 1, current_value: 1, status: 'COMPLIANT', message: 'NLA enabled on RDP-Tcp' }
+        ]),
+        '-1 hour'
+      );
+
+      insertCompliance.run(
+        'comp-02',
+        'prof-win11-baseline',
+        'dev-livingroom-pc',
+        'NON_COMPLIANT',
+        2, 1, 0,
+        JSON.stringify([
+          { id: 'firewall_all_profiles', category: 'Network & Firewall', name: 'Windows Defender Firewall (All Profiles)', desired_value: true, current_value: true, status: 'COMPLIANT', message: 'Domain, Private, and Public firewalls active' },
+          { id: 'uac_enable_lua', category: 'User Account Control', name: 'UAC Admin Approval Mode (EnableLUA)', desired_value: 1, current_value: 0, status: 'NON_COMPLIANT', message: 'EnableLUA is currently 0 (disabled)' },
+          { id: 'rdp_nla', category: 'Remote Access', name: 'Remote Desktop Network Level Authentication (NLA)', desired_value: 1, current_value: 1, status: 'COMPLIANT', message: 'NLA enabled on RDP-Tcp' }
+        ]),
+        '-30 minutes'
+      );
+
+      insertCompliance.run(
+        'comp-03',
+        'prof-gaming-tuning',
+        'dev-daddy-pc',
+        'COMPLIANT',
+        1, 0, 0,
+        JSON.stringify([
+          { id: 'fast_startup', category: 'System & Power', name: 'Fast Startup (Hiberboot)', desired_value: 0, current_value: 0, status: 'COMPLIANT', message: 'Fast Startup disabled' }
+        ]),
+        '-2 hours'
+      );
+    }
   }
 }

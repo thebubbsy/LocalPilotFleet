@@ -9,6 +9,7 @@ import { requireFleetKey, setFleetKey } from '../utils/auth.js';
 import { sendJson } from '../utils/router.js';
 import dynamicGroupsService from '../services/dynamicGroups.js';
 import remediationEngine from '../services/remediationEngine.js';
+import { configProfileEngine } from '../services/configProfileEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -1048,6 +1049,148 @@ try {
       });
     } catch (err) {
       sendJson(res, 500, { error: 'REMEDIATION_RUN_NOW_ERROR', message: err.message });
+    }
+  });
+
+  /* ── Configuration Profiles (Settings Catalog & Security Baselines) ─ */
+
+  // 26. GET /api/v1/fleet/profiles
+  router.get('/api/v1/fleet/profiles', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const profiles = configProfileEngine.getAllProfiles(db);
+      sendJson(res, 200, { profiles, total_count: profiles.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'PROFILES_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 27. GET /api/v1/fleet/profiles/stats
+  router.get('/api/v1/fleet/profiles/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const stats = configProfileEngine.getFleetProfileStats(db);
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'PROFILES_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 28. GET /api/v1/fleet/profiles/catalog
+  router.get('/api/v1/fleet/profiles/catalog', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const catalog = configProfileEngine.getSettingCatalogLibrary();
+      sendJson(res, 200, { catalog, total_count: catalog.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'SETTINGS_CATALOG_ERROR', message: err.message });
+    }
+  });
+
+  // 29. GET /api/v1/fleet/profiles/:id
+  router.get('/api/v1/fleet/profiles/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const profile = configProfileEngine.getProfileById(db, req.params.id);
+      if (!profile) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Configuration profile not found' });
+        return;
+      }
+      sendJson(res, 200, profile);
+    } catch (err) {
+      sendJson(res, 500, { error: 'PROFILE_DETAIL_ERROR', message: err.message });
+    }
+  });
+
+  // 30. POST /api/v1/fleet/profiles
+  router.post('/api/v1/fleet/profiles', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const body = req.body || {};
+    const { name, description = '', profile_type = 'SettingsCatalog', target_group_id = 'grp-all', settings = [] } = body;
+
+    if (!name || !name.trim()) {
+      sendJson(res, 400, { error: 'BAD_REQUEST', message: 'Profile name is required' });
+      return;
+    }
+
+    try {
+      const db = getDb();
+      const created = configProfileEngine.createProfile(db, {
+        name,
+        description,
+        profile_type,
+        target_group_id,
+        settings
+      });
+
+      broadcastEvent('profile_created', { profile_id: created.id, name: created.name });
+      sendJson(res, 201, created);
+    } catch (err) {
+      sendJson(res, 500, { error: 'PROFILE_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 31. PATCH /api/v1/fleet/profiles/:id
+  router.patch('/api/v1/fleet/profiles/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+
+    try {
+      const db = getDb();
+      const updated = configProfileEngine.updateProfile(db, id, body);
+      if (!updated) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Configuration profile not found' });
+        return;
+      }
+
+      broadcastEvent('profile_updated', { profile_id: id, name: updated.name });
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 500, { error: 'PROFILE_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 32. DELETE /api/v1/fleet/profiles/:id
+  router.delete('/api/v1/fleet/profiles/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+
+    try {
+      const db = getDb();
+      const deleted = configProfileEngine.deleteProfile(db, id);
+      if (!deleted) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Configuration profile not found' });
+        return;
+      }
+
+      broadcastEvent('profile_deleted', { profile_id: id });
+      sendJson(res, 200, { success: true, deleted_id: id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'PROFILE_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 33. GET /api/v1/fleet/devices/:id/profiles
+  router.get('/api/v1/fleet/devices/:id/profiles', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+
+    try {
+      const db = getDb();
+      const device = db.prepare('SELECT id, hostname FROM devices WHERE id = ?').get(id);
+      if (!device) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Device not found' });
+        return;
+      }
+
+      const profiles = configProfileEngine.getProfilesForDevice(db, id);
+      sendJson(res, 200, { device_id: id, hostname: device.hostname, profiles });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_PROFILES_ERROR', message: err.message });
     }
   });
 }

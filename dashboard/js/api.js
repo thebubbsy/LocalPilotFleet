@@ -275,6 +275,47 @@ async function runRemediationNow(id) {
   });
 }
 
+/* ── Configuration Profiles ─────────────────────────────────────────── */
+async function getProfiles() {
+  return apiFetch('/api/v1/fleet/profiles');
+}
+
+async function getProfileStats() {
+  return apiFetch('/api/v1/fleet/profiles/stats');
+}
+
+async function getSettingsCatalog() {
+  return apiFetch('/api/v1/fleet/profiles/catalog');
+}
+
+async function getProfile(id) {
+  return apiFetch(`/api/v1/fleet/profiles/${encodeURIComponent(id)}`);
+}
+
+async function createProfile(data) {
+  return apiFetch('/api/v1/fleet/profiles', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateProfile(id, data) {
+  return apiFetch(`/api/v1/fleet/profiles/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteProfile(id) {
+  return apiFetch(`/api/v1/fleet/profiles/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getDeviceProfiles(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/profiles`);
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -303,6 +344,15 @@ window.FleetAPI = {
   updateRemediation,
   deleteRemediation,
   runRemediationNow,
+  // Configuration Profiles
+  getProfiles,
+  getProfileStats,
+  getSettingsCatalog,
+  getProfile,
+  createProfile,
+  updateProfile,
+  deleteProfile,
+  getDeviceProfiles,
   // Groups
   getGroups,
   createGroup,

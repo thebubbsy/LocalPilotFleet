@@ -92,6 +92,9 @@ const App = {
       case 'remediations':
         if (window.RemediationsTable) window.RemediationsTable.loadData();
         break;
+      case 'profiles':
+        if (window.ConfigurationProfilesTable) window.ConfigurationProfilesTable.loadData();
+        break;
       case 'settings':
         this.renderSettings();
         break;

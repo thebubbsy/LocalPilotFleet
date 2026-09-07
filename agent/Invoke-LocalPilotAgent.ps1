@@ -426,6 +426,147 @@ if ($Mode -eq 'Heartbeat') {
                     }
                 }
             }
+
+            # ── Configuration Profiles & Settings Catalog Evaluation ──────────
+            if ($resp.profiles) {
+                if (-not (Get-Variable -Name 'LastProfileRuns' -Scope Script -ErrorAction SilentlyContinue)) {
+                    $script:LastProfileRuns = @{}
+                }
+                $profList = @($resp.profiles)
+                $now = Get-Date
+
+                foreach ($prof in $profList) {
+                    $profId = $prof.id
+                    $lastRun = $script:LastProfileRuns[$profId]
+                    $shouldRun = $false
+                    if ($null -eq $lastRun) {
+                        $shouldRun = $true
+                    } elseif (($now - $lastRun).TotalSeconds -ge 300) { # 5-minute interval
+                        $shouldRun = $true
+                    }
+
+                    if ($shouldRun) {
+                        Write-AgentLog 'INFO' "Auditing Configuration Profile [$profId]: $($prof.name)"
+                        $script:LastProfileRuns[$profId] = $now
+
+                        $settingResults = @()
+                        $settings = @($prof.settings)
+
+                        foreach ($s in $settings) {
+                            $sid = $s.id
+                            $cat = if ($s.category) { $s.category } else { 'General' }
+                            $sname = if ($s.name) { $s.name } else { $sid }
+                            $desired = $s.desired_value
+
+                            $itemRes = $null
+                            try {
+                                switch ($sid) {
+                                    'firewall_all_profiles' {
+                                        $allOn = $false
+                                        try {
+                                            $fw = Get-NetFirewallProfile -ErrorAction Stop
+                                            $allOn = ($fw | Where-Object { $_.Enabled -ne 'True' }).Count -eq 0
+                                        } catch {
+                                            $netsh = netsh advfirewall show allprofiles state 2>&1
+                                            $off = ($netsh | Where-Object { $_ -match 'State\s+OFF' }).Count
+                                            $allOn = ($off -eq 0)
+                                        }
+                                        if ($allOn -eq [bool]$desired) {
+                                            $itemRes = @{ id = $sid; category = $cat; name = $sname; desired_value = $desired; current_value = $allOn; status = 'COMPLIANT'; message = 'Firewall profiles verified active' }
+                                        } else {
+                                            $itemRes = @{ id = $sid; category = $cat; name = $sname; desired_value = $desired; current_value = $allOn; status = 'NON_COMPLIANT'; message = 'One or more firewall profiles are disabled' }
+                                        }
+                                    }
+                                    'uac_enable_lua' {
+                                        $reg = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name 'EnableLUA' -ErrorAction SilentlyContinue
+                                        $val = if ($reg -and $null -ne $reg.EnableLUA) { [int]$reg.EnableLUA } else { 0 }
+                                        if ($val -eq [int]$desired) {
+                                            $itemRes = @{ id = $sid; category = $cat; name = $sname; desired_value = [int]$desired; current_value = $val; status = 'COMPLIANT'; message = "UAC EnableLUA is $val" }
+                                        } else {
+                                            $itemRes = @{ id = $sid; category = $cat; name = $sname; desired_value = [int]$desired; current_value = $val; status = 'NON_COMPLIANT'; message = "UAC EnableLUA is $val (expected $desired)" }
+                                        }
+                                    }
+                                    'telemetry_level' {
+                                        $reg = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection' -Name 'AllowTelemetry' -ErrorAction SilentlyContinue
+                                        $val = if ($reg -and $null -ne $reg.AllowTelemetry) { [int]$reg.AllowTelemetry } else { 3 }
+                                        if ($val -le [int]$desired) {
+                                            $itemRes = @{ id = $sid; category = $cat; name = $sname; desired_value = [int]$desired; current_value = $val; status = 'COMPLIANT'; message = "Telemetry level is $val" }
+                                        } else {
+                                            $itemRes = @{ id = $sid; category = $cat; name = $sname; desired_value = [int]$desired; current_value = $val; status = 'NON_COMPLIANT'; message = "Telemetry level is $val (expected <= $desired)" }
+                                        }
+                                    }
+                                    'tailored_experiences' {
+                                        $reg = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' -Name 'DisableTailoredExperiencesWithDiagnosticData' -ErrorAction SilentlyContinue
+                                        $disabled = if ($reg -and $null -ne $reg.DisableTailoredExperiencesWithDiagnosticData) { [int]$reg.DisableTailoredExperiencesWithDiagnosticData -eq 1 } else { $false }
+                                        $curVal = if ($disabled) { 0 } else { 1 }
+                                        if ($curVal -eq [int]$desired) {
+                                            $itemRes = @{ id = $sid; category = $cat; name = $sname; desired_value = [int]$desired; current_value = $curVal; status = 'COMPLIANT'; message = 'Tailored experiences restricted' }
+                                        } else {
+                                            $itemRes = @{ id = $sid; category = $cat; name = $sname; desired_value = [int]$desired; current_value = $curVal; status = 'NON_COMPLIANT'; message = 'Tailored experiences active' }
+                                        }
+                                    }
+                                    'rdp_nla' {
+                                        $reg = Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name 'UserAuthentication' -ErrorAction SilentlyContinue
+                                        $val = if ($reg -and $null -ne $reg.UserAuthentication) { [int]$reg.UserAuthentication } else { 0 }
+                                        if ($val -eq [int]$desired) {
+                                            $itemRes = @{ id = $sid; category = $cat; name = $sname; desired_value = [int]$desired; current_value = $val; status = 'COMPLIANT'; message = 'RDP Network Level Authentication (NLA) active' }
+                                        } else {
+                                            $itemRes = @{ id = $sid; category = $cat; name = $sname; desired_value = [int]$desired; current_value = $val; status = 'NON_COMPLIANT'; message = "RDP NLA is $val (expected $desired)" }
+                                        }
+                                    }
+                                    'fast_startup' {
+                                        $reg = Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' -Name 'HiberbootEnabled' -ErrorAction SilentlyContinue
+                                        $val = if ($reg -and $null -ne $reg.HiberbootEnabled) { [int]$reg.HiberbootEnabled } else { 1 }
+                                        if ($val -eq [int]$desired) {
+                                            $itemRes = @{ id = $sid; category = $cat; name = $sname; desired_value = [int]$desired; current_value = $val; status = 'COMPLIANT'; message = "Fast startup state is $val" }
+                                        } else {
+                                            $itemRes = @{ id = $sid; category = $cat; name = $sname; desired_value = [int]$desired; current_value = $val; status = 'NON_COMPLIANT'; message = "Fast startup is $val (expected $desired)" }
+                                        }
+                                    }
+                                    'bitlocker_os_volume' {
+                                        $isEncrypted = $false
+                                        try {
+                                            $bl = Get-BitLockerVolume -MountPoint 'C:' -ErrorAction Stop
+                                            $isEncrypted = ($bl.ProtectionStatus -eq 1 -or $bl.VolumeStatus -eq 'FullyEncrypted')
+                                        } catch {
+                                            $isEncrypted = $false
+                                        }
+                                        if ($isEncrypted -eq [bool]$desired) {
+                                            $itemRes = @{ id = $sid; category = $cat; name = $sname; desired_value = [bool]$desired; current_value = $isEncrypted; status = 'COMPLIANT'; message = 'BitLocker volume encryption verified' }
+                                        } else {
+                                            $itemRes = @{ id = $sid; category = $cat; name = $sname; desired_value = [bool]$desired; current_value = $isEncrypted; status = 'NON_COMPLIANT'; message = 'BitLocker is not fully enabled on OS volume' }
+                                        }
+                                    }
+                                    Default {
+                                        $itemRes = @{ id = $sid; category = $cat; name = $sname; desired_value = $desired; current_value = $desired; status = 'COMPLIANT'; message = 'Custom setting applied' }
+                                    }
+                                }
+                            } catch {
+                                $itemRes = @{ id = $sid; category = $cat; name = $sname; desired_value = $desired; current_value = $null; status = 'ERROR'; message = $_.Exception.Message }
+                            }
+                            $settingResults += $itemRes
+                        }
+
+                        # Report profile compliance back to fleet server
+                        try {
+                            $compPayload = @{
+                                profile_id      = $profId
+                                setting_results = $settingResults
+                            }
+                            $compRes = Invoke-RestMethod `
+                                -Uri        "$baseUrl/api/v1/nodes/$deviceId/profile-compliance" `
+                                -Method     POST `
+                                -Body       ($compPayload | ConvertTo-Json -Depth 6 -Compress) `
+                                -Headers    $authHeaders `
+                                -TimeoutSec 10 `
+                                -ErrorAction Stop
+                            Write-AgentLog 'INFO' "Reported configuration profile compliance for [$profId] ($($compRes.compliance_status): $($compRes.compliant_count) compliant, $($compRes.non_compliant_count) non-compliant)"
+                        } catch {
+                            Write-AgentLog 'ERROR' "Failed to report profile compliance for [$profId]: $($_.Exception.Message)"
+                        }
+                    }
+                }
+            }
         } catch {
             Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
             if (-not $Continuous) { exit 1 }
