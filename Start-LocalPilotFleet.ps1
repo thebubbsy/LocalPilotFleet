@@ -215,6 +215,21 @@ Write-Host ''
 Write-Host '  Press Ctrl+C to stop the server gracefully.' -ForegroundColor DarkGray
 Write-Host ''
 
+# ─── 9b. Check for port collision ─────────────────────────────────────────────
+$activeListen = Get-NetTCPConnection -LocalPort $resolvedPort -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($activeListen) {
+    $proc = Get-Process -Id $activeListen.OwningProcess -ErrorAction SilentlyContinue
+    Write-Warn "Port $resolvedPort is currently in use by PID $($activeListen.OwningProcess) ($($proc.ProcessName))."
+    if ($proc.ProcessName -eq 'node') {
+        Write-Info "Terminating previous orphaned server process (PID $($activeListen.OwningProcess))..."
+        Stop-Process -Id $activeListen.OwningProcess -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 800
+    } else {
+        Write-Fail "Please stop the conflicting process '$($proc.ProcessName)' or specify a different -Port."
+        exit 1
+    }
+}
+
 # ─── 10. Launch Node.js server process ────────────────────────────────────────
 $nodeProc = $null
 try {
