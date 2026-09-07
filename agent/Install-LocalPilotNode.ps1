@@ -309,9 +309,7 @@ $hbTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
 $hbSettings = New-ScheduledTaskSettingsSet `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 2) `
     -MultipleInstances IgnoreNew `
-    -DisallowHardTerminate $false `
-    -StartWhenAvailable `
-    -RunOnlyIfNetworkAvailable $false
+    -StartWhenAvailable
 
 Register-ScheduledTask `
     -TaskName    'LocalPilot-Heartbeat' `
@@ -333,9 +331,7 @@ $telTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
 $telSettings = New-ScheduledTaskSettingsSet `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 10) `
     -MultipleInstances IgnoreNew `
-    -DisallowHardTerminate $false `
-    -StartWhenAvailable `
-    -RunOnlyIfNetworkAvailable $false
+    -StartWhenAvailable
 
 Register-ScheduledTask `
     -TaskName    'LocalPilot-Telemetry' `
