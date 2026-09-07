@@ -419,6 +419,14 @@
         </div>
       </div>
 
+      <!-- ── BitLocker Drive Encryption & Recovery Vault ── -->
+      <div class="bc-section" id="bc-bitlocker-section">
+        <div class="bc-section-title">🔑 BitLocker Drive Encryption &amp; Recovery Keys</div>
+        <div id="bc-bitlocker-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading encryption status…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -776,6 +784,104 @@
         });
       }).catch(err => {
         secListEl.innerHTML = `<div style="color:#EF4444;font-size:12px;">Failed to load Defender status: ${esc(err.message)}</div>`;
+      });
+    }
+
+    // Fetch and populate BitLocker drive encryption & recovery keys
+    const blListEl = body.querySelector('#bc-bitlocker-list');
+    if (blListEl && _currentDevice?.id) {
+      window.FleetAPI.getDeviceBitLocker(_currentDevice.id).then(bl => {
+        if (!bl || !bl.volumes || bl.volumes.length === 0) {
+          blListEl.innerHTML = '<div style="color:var(--text-muted);">No BitLocker volume data reported for this device.</div>';
+          return;
+        }
+
+        const isFullyEncrypted = bl.volumes.every(v => v.protection_status === 'ON');
+        const hasUnprotected = bl.volumes.some(v => v.protection_status === 'OFF');
+
+        blListEl.innerHTML = `
+          <div style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:12px;display:flex;flex-direction:column;gap:10px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <span class="badge ${isFullyEncrypted ? 'badge-success' : hasUnprotected ? 'badge-warning' : 'badge-neutral'}">
+                  ${isFullyEncrypted ? '🔒 Fully Encrypted' : hasUnprotected ? '⚠️ Unprotected Volumes' : 'ℹ️ Unknown'}
+                </span>
+                <span style="margin-left:8px;font-weight:600;font-size:13px;color:var(--text-bright);">
+                  ${bl.volumes.length} volume(s) registered
+                </span>
+              </div>
+              <div style="display:flex;gap:6px;">
+                <button class="intune-btn small primary" id="btn-bc-rotate-keys" style="font-size:11px;padding:3px 8px;">
+                  🔄 Rotate Keys
+                </button>
+                <button class="intune-btn small" id="btn-bc-backup-keys" style="font-size:11px;padding:3px 8px;">
+                  ⚡ Backup to Vault
+                </button>
+              </div>
+            </div>
+
+            <table class="bc-sub-table">
+              <thead><tr><th>Mount</th><th>Type</th><th>Protection</th><th>Status</th><th>Method</th><th>Protectors</th></tr></thead>
+              <tbody>
+                ${bl.volumes.map(v => {
+                  const protOn = v.protection_status === 'ON';
+                  let protectors = [];
+                  try { protectors = typeof v.key_protector_types_json === 'string' ? JSON.parse(v.key_protector_types_json) : (v.key_protector_types_json || []); } catch (_) {}
+                  return `
+                    <tr>
+                      <td class="mono" style="font-weight:600;">${esc(v.mount_point)}</td>
+                      <td>${esc(v.volume_type || 'OperatingSystem')}</td>
+                      <td>
+                        <span class="badge ${protOn ? 'badge-success' : 'badge-error'}" style="font-size:10px;">
+                          ${protOn ? '🔒 ON' : '🔓 OFF'}
+                        </span>
+                      </td>
+                      <td>${esc(v.volume_status || 'FullyEncrypted')} (${v.encryption_percentage ?? 100}%)</td>
+                      <td class="mono" style="font-size:11px;">${esc(v.encryption_method || 'XtsAes128')}</td>
+                      <td style="font-size:11px;color:var(--text-muted);">${protectors.map(p => esc(p)).join(', ') || 'None'}</td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+
+            <div style="border-top:1px solid #334155;padding-top:8px;display:flex;justify-content:space-between;align-items:center;">
+              <div style="font-size:11px;color:var(--text-muted);">
+                Vault Keys Escrowed: <span style="font-weight:600;color:var(--accent-green);">${(bl.recovery_keys || []).length} key(s)</span>
+              </div>
+              <button class="intune-btn small" id="btn-bc-view-vault" style="font-size:11px;padding:2px 8px;">
+                🔑 View in BitLocker Vault &gt;
+              </button>
+            </div>
+          </div>
+        `;
+
+        blListEl.querySelector('#btn-bc-rotate-keys')?.addEventListener('click', async () => {
+          try {
+            await window.FleetAPI.rotateDeviceBitLockerKeys(_currentDevice.id);
+            if (typeof showToast === 'function') showToast('Key Rotation', `Dispatched BitLocker key rotation command to ${_currentDevice.hostname}`, 'info');
+          } catch (err) {
+            if (typeof showToast === 'function') showToast('Rotation Failed', err.message, 'critical');
+          }
+        });
+
+        blListEl.querySelector('#btn-bc-backup-keys')?.addEventListener('click', async () => {
+          try {
+            await window.FleetAPI.backupDeviceBitLockerKeys(_currentDevice.id);
+            if (typeof showToast === 'function') showToast('Key Escrow', `Dispatched BitLocker key escrow command to ${_currentDevice.hostname}`, 'info');
+          } catch (err) {
+            if (typeof showToast === 'function') showToast('Escrow Failed', err.message, 'critical');
+          }
+        });
+
+        blListEl.querySelector('#btn-bc-view-vault')?.addEventListener('click', () => {
+          close();
+          if (window.App && typeof window.App.navigate === 'function') {
+            window.App.navigate('bitlocker');
+          }
+        });
+      }).catch(err => {
+        blListEl.innerHTML = `<div style="color:#EF4444;font-size:12px;">Failed to load BitLocker status: ${esc(err.message)}</div>`;
       });
     }
   }

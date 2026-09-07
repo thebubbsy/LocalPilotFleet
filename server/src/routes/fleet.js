@@ -14,6 +14,7 @@ import { updateRingEngine } from '../services/updateRingEngine.js';
 import { complianceEngine } from '../services/complianceEngine.js';
 import { appManagementEngine } from '../services/appManagementEngine.js';
 import { endpointSecurityEngine } from '../services/endpointSecurityEngine.js';
+import { bitlockerEngine } from '../services/bitlockerEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -1854,6 +1855,223 @@ try {
       sendJson(res, 200, result);
     } catch (err) {
       sendJson(res, 400, { error: 'SIG_UPDATE_DISPATCH_ERROR', message: err.message });
+    }
+  });
+
+  // 70. GET /api/v1/fleet/bitlocker/stats
+  router.get('/api/v1/fleet/bitlocker/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const stats = bitlockerEngine.getBitLockerStats(db);
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'BITLOCKER_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 71. GET /api/v1/fleet/bitlocker/policies
+  router.get('/api/v1/fleet/bitlocker/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const policies = bitlockerEngine.getPolicies(db);
+      sendJson(res, 200, { policies });
+    } catch (err) {
+      sendJson(res, 500, { error: 'BITLOCKER_POLICIES_ERROR', message: err.message });
+    }
+  });
+
+  // 72. GET /api/v1/fleet/bitlocker/policies/:id
+  router.get('/api/v1/fleet/bitlocker/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const policy = bitlockerEngine.getPolicyById(db, id);
+      if (!policy) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'BitLocker policy not found' });
+        return;
+      }
+      sendJson(res, 200, { policy });
+    } catch (err) {
+      sendJson(res, 500, { error: 'BITLOCKER_POLICY_ERROR', message: err.message });
+    }
+  });
+
+  // 73. POST /api/v1/fleet/bitlocker/policies
+  router.post('/api/v1/fleet/bitlocker/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const policy = bitlockerEngine.createPolicy(db, body);
+      broadcastEvent('bitlocker_policy_created', { policy_id: policy.id, name: policy.name });
+      sendJson(res, 201, { policy });
+    } catch (err) {
+      sendJson(res, 400, { error: 'BITLOCKER_POLICY_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 74. PATCH /api/v1/fleet/bitlocker/policies/:id
+  router.patch('/api/v1/fleet/bitlocker/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const policy = bitlockerEngine.updatePolicy(db, id, body);
+      if (!policy) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'BitLocker policy not found' });
+        return;
+      }
+      broadcastEvent('bitlocker_policy_updated', { policy_id: id, name: policy.name });
+      sendJson(res, 200, { policy });
+    } catch (err) {
+      sendJson(res, 400, { error: 'BITLOCKER_POLICY_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 75. DELETE /api/v1/fleet/bitlocker/policies/:id
+  router.delete('/api/v1/fleet/bitlocker/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const deleted = bitlockerEngine.deletePolicy(db, id);
+      if (!deleted) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'BitLocker policy not found' });
+        return;
+      }
+      broadcastEvent('bitlocker_policy_deleted', { policy_id: id });
+      sendJson(res, 200, { success: true, id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'BITLOCKER_POLICY_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 76. GET /api/v1/fleet/bitlocker/keys (List escrowed recovery keys with masked passwords)
+  router.get('/api/v1/fleet/bitlocker/keys', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const url = new URL(req.url, 'http://localhost');
+    const device_id = url.searchParams.get('device_id') || undefined;
+    const query = url.searchParams.get('query') || undefined;
+    const limit = parseInt(url.searchParams.get('limit') || '50', 10);
+    const offset = parseInt(url.searchParams.get('offset') || '0', 10);
+
+    try {
+      const db = getDb();
+      const keys = bitlockerEngine.getRecoveryKeys(db, { device_id, query, limit, offset });
+      sendJson(res, 200, { keys, total: keys.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'BITLOCKER_KEYS_ERROR', message: err.message });
+    }
+  });
+
+  // 77. POST /api/v1/fleet/bitlocker/keys/:id/reveal (Unmask password with audit trail)
+  router.post('/api/v1/fleet/bitlocker/keys/:id/reveal', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const clientIp = req.socket?.remoteAddress || '127.0.0.1';
+      const result = bitlockerEngine.revealRecoveryKey(db, id, {
+        accessed_by: body.accessed_by || 'Fleet Administrator',
+        access_reason: body.access_reason || 'Endpoint BitLocker recovery unlock',
+        ip_address: clientIp
+      });
+
+      broadcastEvent('bitlocker_key_revealed', {
+        key_id: id,
+        device_id: result.device_id,
+        hostname: result.hostname,
+        mount_point: result.volume_mount_point,
+        accessed_by: body.accessed_by || 'Fleet Administrator'
+      });
+
+      sendJson(res, 200, result);
+    } catch (err) {
+      const status = err.message.includes('not found') ? 404 : 400;
+      sendJson(res, status, { error: 'BITLOCKER_KEY_REVEAL_ERROR', message: err.message });
+    }
+  });
+
+  // 78. GET /api/v1/fleet/bitlocker/audit
+  router.get('/api/v1/fleet/bitlocker/audit', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const url = new URL(req.url, 'http://localhost');
+    const device_id = url.searchParams.get('device_id') || undefined;
+    const limit = parseInt(url.searchParams.get('limit') || '50', 10);
+    const offset = parseInt(url.searchParams.get('offset') || '0', 10);
+
+    try {
+      const db = getDb();
+      const logs = bitlockerEngine.getAuditLogs(db, { device_id, limit, offset });
+      sendJson(res, 200, { audit_logs: logs });
+    } catch (err) {
+      sendJson(res, 500, { error: 'BITLOCKER_AUDIT_ERROR', message: err.message });
+    }
+  });
+
+  // 79. GET /api/v1/fleet/devices/:id/bitlocker
+  router.get('/api/v1/fleet/devices/:id/bitlocker', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const posture = bitlockerEngine.getDeviceBitLockerPosture(db, id);
+      if (!posture) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Device not found' });
+        return;
+      }
+      sendJson(res, 200, posture);
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_BITLOCKER_ERROR', message: err.message });
+    }
+  });
+
+  // 80. POST /api/v1/fleet/devices/:id/bitlocker/rotate-keys
+  router.post('/api/v1/fleet/devices/:id/bitlocker/rotate-keys', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const result = bitlockerEngine.queueKeyRotationCommand(db, id, body.mount_point || 'C:');
+      broadcastEvent('bitlocker_rotation_dispatched', { device_id: id, mount_point: result.mount_point, command_id: result.command_id });
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'KEY_ROTATION_DISPATCH_ERROR', message: err.message });
+    }
+  });
+
+  // 81. POST /api/v1/fleet/devices/:id/bitlocker/enable
+  router.post('/api/v1/fleet/devices/:id/bitlocker/enable', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const result = bitlockerEngine.queueEnableBitLockerCommand(db, id, body.mount_point || 'C:', body.encryption_method || 'XtsAes128');
+      broadcastEvent('bitlocker_enable_dispatched', { device_id: id, mount_point: result.mount_point, command_id: result.command_id });
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'BITLOCKER_ENABLE_DISPATCH_ERROR', message: err.message });
+    }
+  });
+
+  // 82. POST /api/v1/fleet/devices/:id/bitlocker/backup-keys
+  router.post('/api/v1/fleet/devices/:id/bitlocker/backup-keys', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const result = bitlockerEngine.queueForceEscrowCommand(db, id);
+      broadcastEvent('bitlocker_escrow_dispatched', { device_id: id, command_id: result.command_id });
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'BITLOCKER_ESCROW_DISPATCH_ERROR', message: err.message });
     }
   });
 }

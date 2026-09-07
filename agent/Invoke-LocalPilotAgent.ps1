@@ -1029,6 +1029,110 @@ if ($Mode -eq 'Heartbeat') {
                     }
                 }
             }
+
+            # ── BitLocker Drive Encryption & Recovery Key Vault Escrow ──────
+            if (-not (Get-Variable -Name 'LastBitLockerAudit' -Scope Script -ErrorAction SilentlyContinue)) {
+                $script:LastBitLockerAudit = $null
+            }
+            $now = Get-Date
+            $shouldAuditBitLocker = $false
+            if ($null -eq $script:LastBitLockerAudit) {
+                $shouldAuditBitLocker = $true
+            } elseif (($now - $script:LastBitLockerAudit).TotalSeconds -ge 300) { # 5-minute interval
+                $shouldAuditBitLocker = $true
+            }
+
+            if ($shouldAuditBitLocker) {
+                $script:LastBitLockerAudit = $now
+                Write-AgentLog 'INFO' 'Auditing BitLocker Drive Encryption posture & Key Escrow...'
+
+                $hasBde = Get-Command -Name Get-BitLockerVolume -ErrorAction SilentlyContinue
+                if ($hasBde) {
+                    try {
+                        $volumes = Get-BitLockerVolume -ErrorAction SilentlyContinue
+                        if ($volumes) {
+                            $hasP = { param($o, $p) return ($null -ne $o -and $null -ne $o.PSObject.Properties[$p]) }
+                            $getP = { param($o, $p, $def) if (& $hasP $o $p -and $null -ne $o.$p) { return $o.$p }; return $def }
+
+                            foreach ($vol in $volumes) {
+                                $mp = [string](& $getP $vol 'MountPoint' 'C:')
+                                $volType = [string](& $getP $vol 'VolumeType' 'OperatingSystem')
+                                $protStat = [string](& $getP $vol 'ProtectionStatus' 'Off')
+                                $volStat = [string](& $getP $vol 'VolumeStatus' 'FullyDecrypted')
+                                $encPct = [double](& $getP $vol 'EncryptionPercentage' 0.0)
+                                $encMethod = [string](& $getP $vol 'EncryptionMethod' 'None')
+                                $lockStat = [string](& $getP $vol 'LockStatus' 'Unlocked')
+
+                                $protectorTypes = @()
+                                if (& $hasP $vol 'KeyProtector' -and $vol.KeyProtector) {
+                                    foreach ($kp in $vol.KeyProtector) {
+                                        $kpType = [string](& $getP $kp 'KeyProtectorType' '')
+                                        if ($kpType) {
+                                            $protectorTypes += $kpType
+                                        }
+                                    }
+                                }
+
+                                # Report volume status to LocalPilotFleet
+                                $volPayload = @{
+                                    mount_point           = $mp
+                                    volume_type           = $volType
+                                    protection_status     = $protStat
+                                    volume_status         = $volStat
+                                    encryption_percentage = $encPct
+                                    encryption_method     = $encMethod
+                                    lock_status           = $lockStat
+                                    key_protector_types   = $protectorTypes
+                                }
+
+                                Invoke-RestMethod `
+                                    -Uri        "$baseUrl/api/v1/nodes/$deviceId/bitlocker-status" `
+                                    -Method     POST `
+                                    -Body       ($volPayload | ConvertTo-Json -Compress) `
+                                    -Headers    $authHeaders `
+                                    -TimeoutSec 10 `
+                                    -ErrorAction SilentlyContinue | Out-Null
+
+                                # Escrow any recovery password protectors found
+                                if (& $hasP $vol 'KeyProtector' -and $vol.KeyProtector) {
+                                    foreach ($kp in $vol.KeyProtector) {
+                                        $kpType = [string](& $getP $kp 'KeyProtectorType' '')
+                                        $kpPw = [string](& $getP $kp 'RecoveryPassword' '')
+                                        $kpId = [string](& $getP $kp 'KeyProtectorId' '')
+
+                                        if ($kpType -eq 'RecoveryPassword' -and $kpPw) {
+                                            $keyPayload = @{
+                                                volume_mount_point = $mp
+                                                volume_type        = $volType
+                                                key_protector_id   = $kpId
+                                                key_protector_type = 'RecoveryPassword'
+                                                recovery_password  = $kpPw
+                                                encryption_method  = $encMethod
+                                            }
+
+                                            Invoke-RestMethod `
+                                                -Uri        "$baseUrl/api/v1/nodes/$deviceId/bitlocker-escrow" `
+                                                -Method     POST `
+                                                -Body       ($keyPayload | ConvertTo-Json -Compress) `
+                                                -Headers    $authHeaders `
+                                                -TimeoutSec 10 `
+                                                -ErrorAction SilentlyContinue | Out-Null
+
+                                            $shortId = if ($kpId.Length -ge 8) { $kpId.Substring(0, 8) } else { $kpId }
+                                            Write-AgentLog 'INFO' "Escrowed BitLocker recovery password for volume $mp (ID: $shortId)"
+                                        }
+                                    }
+                                }
+                            }
+                            Write-AgentLog 'INFO' "Reported BitLocker posture for $($volumes.Count) volume(s)"
+                        }
+                    } catch {
+                        Write-AgentLog 'WARN' "Could not harvest BitLocker volume posture: $($_.Exception.Message)"
+                    }
+                } else {
+                    Write-AgentLog 'INFO' 'BitLocker cmdlets not present on this Windows edition (Home or non-BitLocker OS)'
+                }
+            }
         } catch {
             Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
             if (-not $Continuous) { exit 1 }

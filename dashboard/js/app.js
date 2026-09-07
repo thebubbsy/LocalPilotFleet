@@ -107,6 +107,9 @@ const App = {
       case 'security':
         if (window.EndpointSecurityTable) window.EndpointSecurityTable.loadData();
         break;
+      case 'bitlocker':
+        if (window.BitLockerTable) window.BitLockerTable.init();
+        break;
       case 'settings':
         this.renderSettings();
         break;

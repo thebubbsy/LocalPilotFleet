@@ -179,7 +179,8 @@ export function initDb(dbOrPath, options = {}) {
         'USER_CREATED', 'USER_DELETED', 'ADMIN_ADDED', 'ADMIN_REMOVED',
         'APP_INSTALLED', 'APP_PROHIBITED_DETECTED', 'POLICY_DRIFT',
         'TPM_VIOLATION', 'SECUREBOOT_DISABLED', 'BITLOCKER_OFFLINE', 'WATCHDOG_HEARTBEAT',
-        'MALWARE_THREAT_DETECTED', 'ANTIVIRUS_RTP_DISABLED'
+        'MALWARE_THREAT_DETECTED', 'ANTIVIRUS_RTP_DISABLED',
+        'BITLOCKER_KEY_ESCROWED', 'BITLOCKER_KEY_REVEALED', 'BITLOCKER_ENCRYPTION_TRIGGERED'
       )),
       event_id INTEGER,
       event_source TEXT NOT NULL,
@@ -466,6 +467,74 @@ export function initDb(dbOrPath, options = {}) {
       created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
       FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
     );
+
+    -- 23. BITLOCKER_POLICIES (Disk Encryption & Key Escrow Policies)
+    CREATE TABLE IF NOT EXISTS bitlocker_policies (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      target_group_id TEXT DEFAULT 'grp-all',
+      encryption_method_os TEXT DEFAULT 'XtsAes128' CHECK(encryption_method_os IN ('XtsAes128', 'XtsAes256', 'Aes128', 'Aes256')),
+      encryption_method_fixed TEXT DEFAULT 'XtsAes128' CHECK(encryption_method_fixed IN ('XtsAes128', 'XtsAes256', 'Aes128', 'Aes256')),
+      require_tpm INTEGER DEFAULT 1 CHECK(require_tpm IN (0, 1)),
+      recovery_key_rotation INTEGER DEFAULT 1 CHECK(recovery_key_rotation IN (0, 1)),
+      hide_recovery_options_in_wizard INTEGER DEFAULT 1 CHECK(hide_recovery_options_in_wizard IN (0, 1)),
+      silent_encryption_enabled INTEGER DEFAULT 1 CHECK(silent_encryption_enabled IN (0, 1)),
+      is_enabled INTEGER DEFAULT 1 CHECK(is_enabled IN (0, 1)),
+      created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET NULL
+    );
+
+    -- 24. DEVICE_BITLOCKER_VOLUMES (Per-volume encryption status & protectors)
+    CREATE TABLE IF NOT EXISTS device_bitlocker_volumes (
+      id TEXT PRIMARY KEY NOT NULL,
+      device_id TEXT NOT NULL,
+      mount_point TEXT NOT NULL,
+      volume_type TEXT NOT NULL DEFAULT 'OperatingSystem' CHECK(volume_type IN ('OperatingSystem', 'FixedDataVolume', 'RemovableDataVolume')),
+      protection_status TEXT NOT NULL DEFAULT 'Off' CHECK(protection_status IN ('On', 'Off', 'Unknown')),
+      volume_status TEXT NOT NULL DEFAULT 'FullyDecrypted' CHECK(volume_status IN ('FullyEncrypted', 'FullyDecrypted', 'EncryptionInProgress', 'DecryptionInProgress', 'Unknown')),
+      encryption_percentage REAL DEFAULT 0.0,
+      encryption_method TEXT DEFAULT 'None',
+      lock_status TEXT DEFAULT 'Unlocked' CHECK(lock_status IN ('Locked', 'Unlocked')),
+      key_protector_types_json TEXT DEFAULT '[]',
+      has_recovery_key INTEGER DEFAULT 0 CHECK(has_recovery_key IN (0, 1)),
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      UNIQUE(device_id, mount_point)
+    );
+
+    -- 25. BITLOCKER_RECOVERY_KEYS (Escrowed 48-digit Recovery Passwords)
+    CREATE TABLE IF NOT EXISTS bitlocker_recovery_keys (
+      id TEXT PRIMARY KEY NOT NULL,
+      device_id TEXT NOT NULL,
+      volume_mount_point TEXT NOT NULL,
+      volume_type TEXT DEFAULT 'OperatingSystem',
+      key_protector_id TEXT NOT NULL,
+      key_protector_type TEXT NOT NULL DEFAULT 'RecoveryPassword',
+      recovery_password TEXT NOT NULL,
+      encryption_method TEXT DEFAULT 'XtsAes128',
+      backup_timestamp TEXT NOT NULL DEFAULT (DATETIME('now')),
+      last_accessed_at TEXT,
+      access_count INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      UNIQUE(device_id, key_protector_id)
+    );
+
+    -- 26. BITLOCKER_AUDIT_LOGS (Key Reveal & Access Audit Paper Trail)
+    CREATE TABLE IF NOT EXISTS bitlocker_audit_logs (
+      id TEXT PRIMARY KEY NOT NULL,
+      key_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      accessed_by TEXT NOT NULL DEFAULT 'Administrator',
+      access_reason TEXT DEFAULT 'Troubleshooting / BitLocker Recovery PIN Loss',
+      ip_address TEXT DEFAULT '127.0.0.1',
+      accessed_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(key_id) REFERENCES bitlocker_recovery_keys(id) ON DELETE CASCADE,
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
   `);
 
   // Indexes
@@ -526,12 +595,20 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_threats_dev ON threat_detections(device_id, detected_at DESC);
     CREATE INDEX IF NOT EXISTS idx_threats_status ON threat_detections(remediation_status);
     CREATE INDEX IF NOT EXISTS idx_threats_sev ON threat_detections(severity);
+
+    CREATE INDEX IF NOT EXISTS idx_bit_pol_target ON bitlocker_policies(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_bit_vol_dev ON device_bitlocker_volumes(device_id);
+    CREATE INDEX IF NOT EXISTS idx_bit_vol_prot ON device_bitlocker_volumes(protection_status);
+    CREATE INDEX IF NOT EXISTS idx_bit_keys_dev ON bitlocker_recovery_keys(device_id);
+    CREATE INDEX IF NOT EXISTS idx_bit_keys_prot_id ON bitlocker_recovery_keys(key_protector_id);
+    CREATE INDEX IF NOT EXISTS idx_bit_audit_key ON bitlocker_audit_logs(key_id);
+    CREATE INDEX IF NOT EXISTS idx_bit_audit_time ON bitlocker_audit_logs(accessed_at DESC);
   `);
 
   // Schema migrations for existing databases
   try {
     const tableSqlRow = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'security_events'").get();
-    if (tableSqlRow && tableSqlRow.sql && !tableSqlRow.sql.includes('MALWARE_THREAT_DETECTED')) {
+    if (tableSqlRow && tableSqlRow.sql && !tableSqlRow.sql.includes('BITLOCKER_KEY_ESCROWED')) {
       db.exec(`
         PRAGMA foreign_keys = OFF;
         CREATE TABLE security_events_migrated (
@@ -541,7 +618,8 @@ export function initDb(dbOrPath, options = {}) {
             'USER_CREATED', 'USER_DELETED', 'ADMIN_ADDED', 'ADMIN_REMOVED',
             'APP_INSTALLED', 'APP_PROHIBITED_DETECTED', 'POLICY_DRIFT',
             'TPM_VIOLATION', 'SECUREBOOT_DISABLED', 'BITLOCKER_OFFLINE', 'WATCHDOG_HEARTBEAT',
-            'MALWARE_THREAT_DETECTED', 'ANTIVIRUS_RTP_DISABLED'
+            'MALWARE_THREAT_DETECTED', 'ANTIVIRUS_RTP_DISABLED',
+            'BITLOCKER_KEY_ESCROWED', 'BITLOCKER_KEY_REVEALED', 'BITLOCKER_ENCRYPTION_TRIGGERED'
           )),
           event_id INTEGER,
           event_source TEXT NOT NULL,
@@ -1394,6 +1472,91 @@ exit 0`,
         'MEDIUM', 'PotentiallyUnwantedApp',
         JSON.stringify(['C:\\temp\\miner_bench.exe']),
         'BLOCKED', 'RESOLVED', '-5 days', '-5 days'
+      );
+    }
+  }
+
+  // 12. BitLocker Policies, Volumes & Escrowed Keys
+  const bitPolCount = db.prepare('SELECT COUNT(*) as count FROM bitlocker_policies').get().count;
+  if (bitPolCount === 0) {
+    const insertBitPol = db.prepare(`
+      INSERT OR IGNORE INTO bitlocker_policies (
+        id, name, description, target_group_id, encryption_method_os, encryption_method_fixed,
+        require_tpm, recovery_key_rotation, hide_recovery_options_in_wizard, silent_encryption_enabled, is_enabled
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertBitPol.run(
+      'bit-baseline-enterprise',
+      'Enterprise Silent BitLocker Baseline',
+      'Enforces silent XTS-AES 128-bit hardware encryption for all Windows operating system drives with TPM protector and automated recovery key escrow.',
+      'grp-all',
+      'XtsAes128', 'XtsAes128',
+      1, 1, 1, 1, 1
+    );
+
+    insertBitPol.run(
+      'bit-high-security',
+      'High-Assurance Military Grade BitLocker',
+      'Maximum security configuration requiring XTS-AES 256-bit encryption cipher and strict recovery password vaulting.',
+      'grp-workstations',
+      'XtsAes256', 'XtsAes256',
+      1, 1, 1, 1, 1
+    );
+
+    // Seed BitLocker volumes for sample devices
+    const hasDaddy = db.prepare('SELECT id FROM devices WHERE id = ?').get('dev-daddy-pc');
+    if (hasDaddy) {
+      const insertVol = db.prepare(`
+        INSERT OR IGNORE INTO device_bitlocker_volumes (
+          id, device_id, mount_point, volume_type, protection_status, volume_status,
+          encryption_percentage, encryption_method, lock_status, key_protector_types_json, has_recovery_key, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?))
+      `);
+
+      insertVol.run('vol-daddy-c', 'dev-daddy-pc', 'C:', 'OperatingSystem', 'On', 'FullyEncrypted', 100.0, 'XtsAes128', 'Unlocked', JSON.stringify(['Tpm', 'RecoveryPassword']), 1, '-2 hours');
+      insertVol.run('vol-daddy-d', 'dev-daddy-pc', 'D:', 'FixedDataVolume', 'On', 'FullyEncrypted', 100.0, 'XtsAes128', 'Unlocked', JSON.stringify(['RecoveryPassword']), 1, '-2 hours');
+      insertVol.run('vol-sarah-c', 'dev-sarah-laptop', 'C:', 'OperatingSystem', 'On', 'FullyEncrypted', 100.0, 'XtsAes128', 'Unlocked', JSON.stringify(['Tpm', 'RecoveryPassword']), 1, '-1 day');
+      insertVol.run('vol-living-c', 'dev-livingroom-pc', 'C:', 'OperatingSystem', 'Off', 'FullyDecrypted', 0.0, 'None', 'Unlocked', JSON.stringify([]), 0, '-3 days');
+
+      const insertKey = db.prepare(`
+        INSERT OR IGNORE INTO bitlocker_recovery_keys (
+          id, device_id, volume_mount_point, volume_type, key_protector_id,
+          key_protector_type, recovery_password, encryption_method, backup_timestamp, last_accessed_at, access_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?), ?, ?)
+      `);
+
+      insertKey.run(
+        'key-daddy-c', 'dev-daddy-pc', 'C:', 'OperatingSystem',
+        '{E28B0F25-A2B8-439D-B147-9D72E15C0391}', 'RecoveryPassword',
+        '419204-182940-582910-384910-184920-582910-482910-582910', 'XtsAes128',
+        '-5 days', '2026-09-06 14:20:00', 1
+      );
+
+      insertKey.run(
+        'key-daddy-d', 'dev-daddy-pc', 'D:', 'FixedDataVolume',
+        '{98FA1204-512E-442C-B4A1-28CBA0249210}', 'RecoveryPassword',
+        '629104-582910-184920-384910-482910-182940-582910-384910', 'XtsAes128',
+        '-5 days', null, 0
+      );
+
+      insertKey.run(
+        'key-sarah-c', 'dev-sarah-laptop', 'C:', 'OperatingSystem',
+        '{B3920194-612A-438B-9321-482910482910}', 'RecoveryPassword',
+        '194820-384910-582910-482910-182940-629104-384910-184920', 'XtsAes128',
+        '-2 days', null, 0
+      );
+
+      const insertAudit = db.prepare(`
+        INSERT OR IGNORE INTO bitlocker_audit_logs (
+          id, key_id, device_id, accessed_by, access_reason, ip_address, accessed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, DATETIME('now', ?))
+      `);
+
+      insertAudit.run(
+        'audit-01', 'key-daddy-c', 'dev-daddy-pc',
+        'Tony (Fleet Admin)', 'Scheduled annual disaster recovery drill',
+        '127.0.0.1', '-1 day'
       );
     }
   }

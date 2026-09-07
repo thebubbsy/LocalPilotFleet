@@ -520,6 +520,89 @@ async function triggerSignatureUpdate(deviceId) {
   });
 }
 
+/* ── BitLocker Drive Encryption & Recovery Vault ─────────────────────── */
+async function getBitLockerStats() {
+  return apiFetch('/api/v1/fleet/bitlocker/stats');
+}
+
+async function getBitLockerPolicies() {
+  return apiFetch('/api/v1/fleet/bitlocker/policies');
+}
+
+async function getBitLockerPolicy(id) {
+  return apiFetch(`/api/v1/fleet/bitlocker/policies/${encodeURIComponent(id)}`);
+}
+
+async function createBitLockerPolicy(data) {
+  return apiFetch('/api/v1/fleet/bitlocker/policies', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateBitLockerPolicy(id, data) {
+  return apiFetch(`/api/v1/fleet/bitlocker/policies/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteBitLockerPolicy(id) {
+  return apiFetch(`/api/v1/fleet/bitlocker/policies/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getBitLockerKeys(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.device_id) qs.set('device_id', params.device_id);
+  if (params.query) qs.set('query', params.query);
+  if (params.limit) qs.set('limit', params.limit);
+  if (params.offset) qs.set('offset', params.offset);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/bitlocker/keys${qStr ? '?' + qStr : ''}`);
+}
+
+async function revealBitLockerKey(id, data = {}) {
+  return apiFetch(`/api/v1/fleet/bitlocker/keys/${encodeURIComponent(id)}/reveal`, {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function getBitLockerAuditLogs(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.device_id) qs.set('device_id', params.device_id);
+  if (params.limit) qs.set('limit', params.limit);
+  if (params.offset) qs.set('offset', params.offset);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/bitlocker/audit${qStr ? '?' + qStr : ''}`);
+}
+
+async function getDeviceBitLocker(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/bitlocker`);
+}
+
+async function rotateDeviceBitLockerKey(deviceId, data = {}) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/bitlocker/rotate-keys`, {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function enableDeviceBitLocker(deviceId, data = {}) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/bitlocker/enable`, {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function backupDeviceBitLockerKeys(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/bitlocker/backup-keys`, {
+    method: 'POST'
+  });
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -597,6 +680,20 @@ window.FleetAPI = {
   getDeviceSecurity,
   triggerSecurityScan,
   triggerSignatureUpdate,
+  // BitLocker Drive Encryption & Recovery Vault
+  getBitLockerStats,
+  getBitLockerPolicies,
+  getBitLockerPolicy,
+  createBitLockerPolicy,
+  updateBitLockerPolicy,
+  deleteBitLockerPolicy,
+  getBitLockerKeys,
+  revealBitLockerKey,
+  getBitLockerAuditLogs,
+  getDeviceBitLocker,
+  rotateDeviceBitLockerKey,
+  enableDeviceBitLocker,
+  backupDeviceBitLockerKeys,
   // Groups
   getGroups,
   createGroup,

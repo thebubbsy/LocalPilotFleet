@@ -16,6 +16,7 @@ import { updateRingEngine } from '../services/updateRingEngine.js';
 import { complianceEngine } from '../services/complianceEngine.js';
 import { appManagementEngine } from '../services/appManagementEngine.js';
 import { endpointSecurityEngine } from '../services/endpointSecurityEngine.js';
+import { bitlockerEngine } from '../services/bitlockerEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -302,6 +303,9 @@ export function registerNodeRoutes(router) {
       // Check for assigned endpoint security policy
       const assignedSecurityPolicy = endpointSecurityEngine.getEffectivePolicyForDevice(db, deviceId);
 
+      // Check for assigned BitLocker disk encryption policy
+      const assignedBitLockerPolicy = bitlockerEngine.getEffectivePolicyForDevice(db, deviceId);
+
       sendJson(res, 200, {
         acknowledged: true,
         server_time: new Date().toISOString(),
@@ -312,7 +316,8 @@ export function registerNodeRoutes(router) {
         update_ring: assignedRing,
         compliance_policies: assignedCompliancePolicies,
         assigned_apps: assignedApps,
-        endpoint_security_policy: assignedSecurityPolicy
+        endpoint_security_policy: assignedSecurityPolicy,
+        bitlocker_policy: assignedBitLockerPolicy
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -865,6 +870,72 @@ export function registerNodeRoutes(router) {
       sendJson(res, 201, result);
     } catch (err) {
       sendJson(res, 500, { error: 'NODE_THREAT_DETECTION_ERROR', message: err.message });
+    }
+  });
+
+  // 20. GET /api/v1/nodes/:id/bitlocker-policy
+  router.get('/api/v1/nodes/:id/bitlocker-policy', async (req, res) => {
+    const targetDeviceId = req.params.id;
+    if (!requireFleetKeyOrNodeToken(req, res, targetDeviceId)) return;
+
+    try {
+      const db = getDb();
+      const policy = bitlockerEngine.getEffectivePolicyForDevice(db, targetDeviceId);
+      sendJson(res, 200, { policy });
+    } catch (err) {
+      sendJson(res, 500, { error: 'NODE_BITLOCKER_POLICY_ERROR', message: err.message });
+    }
+  });
+
+  // 21. POST /api/v1/nodes/:id/bitlocker-status (Report volume encryption state)
+  router.post('/api/v1/nodes/:id/bitlocker-status', async (req, res) => {
+    const targetDeviceId = req.params.id;
+    if (!requireFleetKeyOrNodeToken(req, res, targetDeviceId)) return;
+
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const result = bitlockerEngine.recordVolumeStatus(db, targetDeviceId, body);
+
+      broadcastEvent('bitlocker_status_updated', {
+        device_id: targetDeviceId,
+        mount_point: result.mount_point,
+        protection_status: result.protection_status,
+        volume_status: result.volume_status,
+        encryption_percentage: result.encryption_percentage
+      });
+
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 500, { error: 'NODE_BITLOCKER_STATUS_ERROR', message: err.message });
+    }
+  });
+
+  // 22. POST /api/v1/nodes/:id/bitlocker-escrow (Escrow 48-digit recovery password into vault)
+  router.post('/api/v1/nodes/:id/bitlocker-escrow', async (req, res) => {
+    const targetDeviceId = req.params.id;
+    if (!requireFleetKeyOrNodeToken(req, res, targetDeviceId)) return;
+
+    const body = req.body || {};
+    if (!body.key_protector_id || !body.recovery_password) {
+      sendJson(res, 400, { error: 'BAD_REQUEST', message: 'Missing key_protector_id or recovery_password' });
+      return;
+    }
+
+    try {
+      const db = getDb();
+      const result = bitlockerEngine.escrowRecoveryKey(db, targetDeviceId, body);
+
+      broadcastEvent('bitlocker_key_escrowed', {
+        device_id: targetDeviceId,
+        mount_point: result.volume_mount_point,
+        key_id: result.id,
+        key_id_short: result.key_id_short
+      });
+
+      sendJson(res, 201, result);
+    } catch (err) {
+      sendJson(res, 500, { error: 'NODE_BITLOCKER_ESCROW_ERROR', message: err.message });
     }
   });
 }
