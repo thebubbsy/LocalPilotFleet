@@ -403,6 +403,14 @@
         </div>
       </div>
 
+      <!-- ── Intune Managed Applications ── -->
+      <div class="bc-section" id="bc-apps-section">
+        <div class="bc-section-title">📦 Intune Managed Applications &amp; Packaging</div>
+        <div id="bc-apps-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading assigned applications…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -623,6 +631,65 @@
         });
       }).catch(err => {
         compListEl.innerHTML = `<div style="color:#EF4444;font-size:12px;">Failed to load compliance status: ${esc(err.message)}</div>`;
+      });
+    }
+
+    // Fetch and populate assigned applications
+    const appsListEl = body.querySelector('#bc-apps-list');
+    if (appsListEl && _currentDevice?.id) {
+      window.FleetAPI.getDeviceApps(_currentDevice.id).then(apps => {
+        if (!apps || apps.length === 0) {
+          appsListEl.innerHTML = '<div style="color:var(--text-muted);">No applications assigned to this device.</div>';
+          return;
+        }
+
+        appsListEl.innerHTML = `
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            ${apps.map(a => {
+              const isInst = a.install_status === 'INSTALLED';
+              const isFail = a.install_status === 'FAILED';
+              const color = isInst ? '#10b981' : (isFail ? '#ef4444' : '#f59e0b');
+              const label = isInst ? 'Installed' : (isFail ? 'Failed' : (a.install_status === 'INSTALLING' ? 'Installing…' : 'Pending'));
+
+              return `
+                <div style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;">
+                  <div>
+                    <div style="font-weight:600;color:var(--text-bright);font-size:13px;">
+                      ${esc(a.name)}
+                      <span style="font-size:11px;color:var(--text-muted);font-weight:400;margin-left:4px;">(${esc(a.version || 'Latest')})</span>
+                    </div>
+                    <div style="font-size:11px;color:var(--text-muted);">${esc(a.assignment_intent)} | ${esc(a.app_type)}</div>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:8px;">
+                    <span class="badge" style="background:${color}22;color:${color};border:1px solid ${color}55;font-weight:600;font-size:11px;">
+                      ${label}
+                    </span>
+                    ${!isInst ? `
+                      <button class="intune-btn small primary btn-bc-deploy-app" data-app="${esc(a.id)}" style="font-size:11px;padding:2px 6px;">
+                        ⚡ Deploy
+                      </button>
+                    ` : ''}
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        `;
+
+        appsListEl.querySelectorAll('.btn-bc-deploy-app').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const appId = btn.dataset.app;
+            try {
+              await window.FleetAPI.installDeviceApp(_currentDevice.id, appId);
+              if (typeof showToast === 'function') showToast('Deploy Dispatched', 'Application deployment command queued on node.', 'info');
+              open(_currentDevice.id);
+            } catch (err) {
+              if (typeof showToast === 'function') showToast('Deploy Failed', err.message, 'critical');
+            }
+          });
+        });
+      }).catch(err => {
+        appsListEl.innerHTML = `<div style="color:#EF4444;font-size:12px;">Failed to load applications: ${esc(err.message)}</div>`;
       });
     }
   }

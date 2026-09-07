@@ -359,6 +359,46 @@ export function initDb(dbOrPath, options = {}) {
       FOREIGN KEY(policy_id) REFERENCES compliance_policies(id) ON DELETE CASCADE,
       UNIQUE(device_id, policy_id)
     );
+
+    -- 18. APPS (Microsoft Intune Application Management & Win32/Winget Packaging)
+    CREATE TABLE IF NOT EXISTS apps (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      publisher TEXT,
+      version TEXT,
+      category TEXT DEFAULT 'Developer Tools' CHECK(category IN ('Productivity', 'Developer Tools', 'Utilities', 'Security', 'Media', 'System')),
+      app_type TEXT NOT NULL DEFAULT 'WINGET' CHECK(app_type IN ('WINGET', 'WIN32', 'MSI', 'SCRIPT')),
+      package_identifier TEXT,
+      assignment_intent TEXT NOT NULL DEFAULT 'REQUIRED' CHECK(assignment_intent IN ('REQUIRED', 'AVAILABLE', 'UNINSTALL')),
+      target_group_id TEXT DEFAULT 'grp-all',
+      install_command TEXT,
+      uninstall_command TEXT,
+      detection_rules_json TEXT DEFAULT '[]',
+      requirement_rules_json TEXT DEFAULT '{}',
+      icon_url TEXT,
+      is_enabled INTEGER DEFAULT 1 CHECK(is_enabled IN (0, 1)),
+      created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET NULL
+    );
+
+    -- 19. DEVICE_APP_STATUS (Per-device Application Installation Posture & Detection History)
+    CREATE TABLE IF NOT EXISTS device_app_status (
+      id TEXT PRIMARY KEY NOT NULL,
+      device_id TEXT NOT NULL,
+      app_id TEXT NOT NULL,
+      install_status TEXT NOT NULL DEFAULT 'PENDING' CHECK(install_status IN ('INSTALLED', 'PENDING', 'INSTALLING', 'FAILED', 'UNINSTALLED', 'NOT_APPLICABLE')),
+      detection_state INTEGER DEFAULT 0 CHECK(detection_state IN (0, 1)),
+      installed_version TEXT,
+      error_code INTEGER,
+      error_message TEXT,
+      last_attempt_at TEXT,
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(app_id) REFERENCES apps(id) ON DELETE CASCADE,
+      UNIQUE(device_id, app_id)
+    );
   `);
 
   // Indexes
@@ -387,6 +427,7 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_events_created ON security_events(created_at DESC);
 
     CREATE INDEX IF NOT EXISTS idx_device_commands_dev_status ON device_commands(device_id, status);
+    CREATE INDEX IF NOT EXISTS idx_commands_status ON device_commands(status);
 
     CREATE INDEX IF NOT EXISTS idx_remediations_target ON remediations(target_group_id);
     CREATE INDEX IF NOT EXISTS idx_remediation_runs_dev ON remediation_runs(device_id, executed_at DESC);
@@ -404,6 +445,12 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_comp_pol_target ON compliance_policies(target_group_id);
     CREATE INDEX IF NOT EXISTS idx_comp_eval_dev ON device_compliance_evaluations(device_id, evaluated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_comp_eval_status ON device_compliance_evaluations(compliance_status);
+
+    CREATE INDEX IF NOT EXISTS idx_apps_target_group ON apps(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_apps_intent ON apps(assignment_intent);
+    CREATE INDEX IF NOT EXISTS idx_device_app_status_dev ON device_app_status(device_id);
+    CREATE INDEX IF NOT EXISTS idx_device_app_status_app ON device_app_status(app_id);
+    CREATE INDEX IF NOT EXISTS idx_device_app_status_stat ON device_app_status(install_status);
   `);
 
   if (shouldSeed) {
@@ -1031,6 +1078,110 @@ exit 0`,
         ]),
         '-30 minutes'
       );
+    }
+  }
+
+  // 10. Seed Intune Applications & Status
+  const appCount = db.prepare('SELECT COUNT(*) as count FROM apps').get().count;
+  if (appCount === 0) {
+    const insertApp = db.prepare(`
+      INSERT INTO apps (
+        id, name, description, publisher, version, category, app_type,
+        package_identifier, assignment_intent, target_group_id,
+        install_command, uninstall_command, detection_rules_json, requirement_rules_json, is_enabled
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+    `);
+
+    insertApp.run(
+      'app-git',
+      'Git for Windows',
+      'Distributed version control system with Git Bash, Git GUI, and PowerShell CLI integration.',
+      'Git for Windows Project',
+      '2.44.0',
+      'Developer Tools',
+      'WINGET',
+      'Git.Git',
+      'REQUIRED',
+      'grp-all',
+      'winget install --id Git.Git --exact --silent --accept-source-agreements --accept-package-agreements',
+      'winget uninstall --id Git.Git --exact --silent',
+      JSON.stringify([
+        { type: 'FILE', path: 'C:\\Program Files\\Git\\cmd\\git.exe', exists: true },
+        { type: 'WINGET', package_id: 'Git.Git' }
+      ]),
+      JSON.stringify({ min_os_build: '10.0.19041', architecture: 'x64', min_ram_gb: 2, min_disk_free_gb: 2 })
+    );
+
+    insertApp.run(
+      'app-vscode',
+      'Visual Studio Code',
+      'Lightweight but powerful source code editor with built-in support for JavaScript, TypeScript and Node.js.',
+      'Microsoft',
+      '1.98.0',
+      'Developer Tools',
+      'WINGET',
+      'Microsoft.VisualStudioCode',
+      'REQUIRED',
+      'grp-workstations',
+      'winget install --id Microsoft.VisualStudioCode --exact --silent --accept-source-agreements --accept-package-agreements',
+      'winget uninstall --id Microsoft.VisualStudioCode --exact --silent',
+      JSON.stringify([
+        { type: 'FILE', path: 'C:\\Program Files\\Microsoft VS Code\\Code.exe', exists: true },
+        { type: 'WINGET', package_id: 'Microsoft.VisualStudioCode' }
+      ]),
+      JSON.stringify({ min_os_build: '10.0.19041', architecture: 'x64', min_ram_gb: 4, min_disk_free_gb: 5 })
+    );
+
+    insertApp.run(
+      'app-7zip',
+      '7-Zip Archiver',
+      'High compression ratio file archiver with AES-256 encryption and multi-format extraction.',
+      'Igor Pavlov',
+      '24.09',
+      'Utilities',
+      'WINGET',
+      '7zip.7zip',
+      'REQUIRED',
+      'grp-all',
+      'winget install --id 7zip.7zip --exact --silent --accept-source-agreements --accept-package-agreements',
+      'winget uninstall --id 7zip.7zip --exact --silent',
+      JSON.stringify([
+        { type: 'FILE', path: 'C:\\Program Files\\7-Zip\\7z.exe', exists: true },
+        { type: 'REGISTRY', path: 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\7-Zip', exists: true }
+      ]),
+      JSON.stringify({ min_os_build: '10.0.10240', architecture: 'x64', min_ram_gb: 1, min_disk_free_gb: 1 })
+    );
+
+    insertApp.run(
+      'app-sysinternals',
+      'Sysinternals Suite',
+      'Technical troubleshooting utility suite for Windows systems including Process Explorer, ProcMon, and Autoruns.',
+      'Microsoft',
+      '2025.1',
+      'System',
+      'WINGET',
+      'Microsoft.Sysinternals.Suite',
+      'AVAILABLE',
+      'grp-all',
+      'winget install --id Microsoft.Sysinternals.Suite --exact --silent --accept-source-agreements --accept-package-agreements',
+      'winget uninstall --id Microsoft.Sysinternals.Suite --exact --silent',
+      JSON.stringify([
+        { type: 'WINGET', package_id: 'Microsoft.Sysinternals.Suite' }
+      ]),
+      JSON.stringify({ min_os_build: '10.0.19041', architecture: 'x64', min_ram_gb: 2, min_disk_free_gb: 1 })
+    );
+
+    // Sample app statuses if sample devices exist
+    const hasDaddy = db.prepare('SELECT id FROM devices WHERE id = ?').get('dev-daddy-pc');
+    if (hasDaddy) {
+      const insertStatus = db.prepare(`
+        INSERT INTO device_app_status (
+          id, device_id, app_id, install_status, detection_state, installed_version, last_attempt_at
+        ) VALUES (?, ?, ?, ?, ?, ?, DATETIME('now', ?))
+      `);
+      insertStatus.run('app-stat-01', 'dev-daddy-pc', 'app-git', 'INSTALLED', 1, '2.44.0', '-2 hours');
+      insertStatus.run('app-stat-02', 'dev-daddy-pc', 'app-vscode', 'INSTALLED', 1, '1.98.0', '-2 hours');
+      insertStatus.run('app-stat-03', 'dev-daddy-pc', 'app-7zip', 'INSTALLED', 1, '24.09', '-2 hours');
     }
   }
 }

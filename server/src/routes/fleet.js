@@ -12,6 +12,7 @@ import remediationEngine from '../services/remediationEngine.js';
 import { configProfileEngine } from '../services/configProfileEngine.js';
 import { updateRingEngine } from '../services/updateRingEngine.js';
 import { complianceEngine } from '../services/complianceEngine.js';
+import { appManagementEngine } from '../services/appManagementEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -1536,6 +1537,125 @@ try {
       sendJson(res, 200, { success: true, device_id: id, results });
     } catch (err) {
       sendJson(res, 500, { error: 'DEVICE_COMPLIANCE_EVAL_ERROR', message: err.message });
+    }
+  });
+
+  // ══════════════════════════════════════════════════════════════════
+  // INTUNE APPLICATION MANAGEMENT & WIN32/WINGET PACKAGING (50–57)
+  // ══════════════════════════════════════════════════════════════════
+
+  // 50. GET /api/v1/fleet/apps
+  router.get('/api/v1/fleet/apps', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const apps = appManagementEngine.getAllApps(db);
+      sendJson(res, 200, apps);
+    } catch (err) {
+      sendJson(res, 500, { error: 'APPS_QUERY_ERROR', message: err.message });
+    }
+  });
+
+  // 51. GET /api/v1/fleet/apps/stats
+  router.get('/api/v1/fleet/apps/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const stats = appManagementEngine.getAppFleetStats(db);
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'APPS_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 52. GET /api/v1/fleet/apps/:id
+  router.get('/api/v1/fleet/apps/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const app = appManagementEngine.getAppById(db, id);
+      if (!app) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Application package not found' });
+        return;
+      }
+      sendJson(res, 200, app);
+    } catch (err) {
+      sendJson(res, 500, { error: 'APP_QUERY_ERROR', message: err.message });
+    }
+  });
+
+  // 53. POST /api/v1/fleet/apps
+  router.post('/api/v1/fleet/apps', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const created = appManagementEngine.createApp(db, body);
+      broadcastEvent('app_created', { app_id: created.id, name: created.name });
+      sendJson(res, 201, created);
+    } catch (err) {
+      sendJson(res, 400, { error: 'APP_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 54. PATCH /api/v1/fleet/apps/:id
+  router.patch('/api/v1/fleet/apps/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const updated = appManagementEngine.updateApp(db, id, body);
+      broadcastEvent('app_updated', { app_id: updated.id, name: updated.name });
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 400, { error: 'APP_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 55. DELETE /api/v1/fleet/apps/:id
+  router.delete('/api/v1/fleet/apps/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const deleted = appManagementEngine.deleteApp(db, id);
+      if (!deleted) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Application package not found' });
+        return;
+      }
+      broadcastEvent('app_deleted', { app_id: id });
+      sendJson(res, 200, { success: true, deleted_id: id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'APP_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 56. GET /api/v1/fleet/devices/:id/apps
+  router.get('/api/v1/fleet/devices/:id/apps', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const assigned = appManagementEngine.getDeviceAssignedApps(db, id);
+      sendJson(res, 200, assigned);
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_APPS_ERROR', message: err.message });
+    }
+  });
+
+  // 57. POST /api/v1/fleet/devices/:id/apps/:appId/install-now
+  router.post('/api/v1/fleet/devices/:id/apps/:appId/install-now', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id, appId } = req.params;
+    try {
+      const db = getDb();
+      const result = appManagementEngine.queueAppInstallCommand(db, id, appId);
+      broadcastEvent('app_install_dispatched', { device_id: id, app_id: appId, command_id: result.command_id });
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'APP_INSTALL_QUEUE_ERROR', message: err.message });
     }
   });
 }

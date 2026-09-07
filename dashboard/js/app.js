@@ -101,6 +101,9 @@ const App = {
       case 'compliance':
         if (window.CompliancePoliciesTable) window.CompliancePoliciesTable.loadData();
         break;
+      case 'apps':
+        if (window.AppsTable) window.AppsTable.loadData();
+        break;
       case 'settings':
         this.renderSettings();
         break;

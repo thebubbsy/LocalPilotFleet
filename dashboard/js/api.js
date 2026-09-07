@@ -402,6 +402,49 @@ async function evaluateDeviceCompliance(deviceId) {
   });
 }
 
+/* ── Application Management (Win32 & Winget) ────────────────────────── */
+async function getApps() {
+  return apiFetch('/api/v1/fleet/apps');
+}
+
+async function getAppStats() {
+  return apiFetch('/api/v1/fleet/apps/stats');
+}
+
+async function getApp(id) {
+  return apiFetch(`/api/v1/fleet/apps/${encodeURIComponent(id)}`);
+}
+
+async function createApp(data) {
+  return apiFetch('/api/v1/fleet/apps', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateApp(id, data) {
+  return apiFetch(`/api/v1/fleet/apps/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteApp(id) {
+  return apiFetch(`/api/v1/fleet/apps/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getDeviceApps(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/apps`);
+}
+
+async function installDeviceApp(deviceId, appId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/apps/${encodeURIComponent(appId)}/install-now`, {
+    method: 'POST'
+  });
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -457,6 +500,15 @@ window.FleetAPI = {
   deleteCompliancePolicy,
   getDeviceCompliance,
   evaluateDeviceCompliance,
+  // Application Management & Win32/Winget Packaging
+  getApps,
+  getAppStats,
+  getApp,
+  createApp,
+  updateApp,
+  deleteApp,
+  getDeviceApps,
+  installDeviceApp,
   // Groups
   getGroups,
   createGroup,

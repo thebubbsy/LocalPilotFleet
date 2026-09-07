@@ -754,6 +754,127 @@ if ($Mode -eq 'Heartbeat') {
                     }
                 }
             }
+
+            # ── Microsoft Intune Application Management & Packaging Audit ───────
+            if ($resp.assigned_apps) {
+                if (-not (Get-Variable -Name 'LastAppManagementAudit' -Scope Script -ErrorAction SilentlyContinue)) {
+                    $script:LastAppManagementAudit = $null
+                }
+                $now = Get-Date
+                $shouldAuditApps = $false
+                if ($null -eq $script:LastAppManagementAudit) {
+                    $shouldAuditApps = $true
+                } elseif (($now - $script:LastAppManagementAudit).TotalSeconds -ge 300) { # 5-minute interval
+                    $shouldAuditApps = $true
+                }
+
+                if ($shouldAuditApps) {
+                    $appsList = @($resp.assigned_apps)
+                    Write-AgentLog 'INFO' "Auditing Intune Applications against $($appsList.Count) assigned packages"
+                    $script:LastAppManagementAudit = $now
+
+                    foreach ($app in $appsList) {
+                        try {
+                            $appId = $app.id
+                            $isDetected = $false
+                            $detectedVersion = $null
+                            $detRules = @($app.detection_rules)
+
+                            foreach ($rule in $detRules) {
+                                switch ($rule.type) {
+                                    'FILE' {
+                                        if ($rule.path -and (Test-Path -Path $rule.path -ErrorAction SilentlyContinue)) {
+                                            $isDetected = $true
+                                            try {
+                                                $fvi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($rule.path)
+                                                if ($fvi.FileVersion) { $detectedVersion = $fvi.FileVersion }
+                                            } catch {}
+                                        }
+                                    }
+                                    'REGISTRY' {
+                                        if ($rule.path -and (Test-Path -Path $rule.path -ErrorAction SilentlyContinue)) {
+                                            $isDetected = $true
+                                            try {
+                                                $regVal = Get-ItemPropertyValue -Path $rule.path -Name 'DisplayVersion' -ErrorAction SilentlyContinue
+                                                if ($regVal) { $detectedVersion = [string]$regVal }
+                                            } catch {}
+                                        }
+                                    }
+                                    'WINGET' {
+                                        $pkgId = $rule.package_id
+                                        if (-not $pkgId) { $pkgId = $app.package_identifier }
+                                        if ($pkgId) {
+                                            # Fast registry scan for uninstall entry matching Winget package or ID
+                                            $uninstKeys = @(
+                                                'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+                                                'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
+                                                'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*'
+                                            )
+                                            $found = Get-ItemProperty -Path $uninstKeys -ErrorAction SilentlyContinue |
+                                                Where-Object { 
+                                                    $_.DisplayName -like "*$($app.name)*" -or 
+                                                    $_.PSChildName -like "*$pkgId*" 
+                                                } | Select-Object -First 1
+                                            if ($found) {
+                                                $isDetected = $true
+                                                if ($found.DisplayVersion) { $detectedVersion = [string]$found.DisplayVersion }
+                                            }
+                                        }
+                                    }
+                                }
+                                if ($isDetected) { break }
+                            }
+
+                            $installStatus = 'PENDING'
+                            $errorMsg = $null
+
+                            if ($isDetected) {
+                                $installStatus = 'INSTALLED'
+                            } else {
+                                if ($app.assignment_intent -eq 'REQUIRED') {
+                                    $req = $app.requirement_rules
+                                    if ($req) {
+                                        # Check min_os_build
+                                        if ($req.min_os_build -and $osBuild) {
+                                            try {
+                                                if ([version]$osBuild -lt [version]$req.min_os_build) {
+                                                    $installStatus = 'NOT_APPLICABLE'
+                                                    $errorMsg = "OS build $osBuild does not meet requirement ($($req.min_os_build))"
+                                                }
+                                            } catch {}
+                                        }
+                                    }
+                                } elseif ($app.assignment_intent -eq 'AVAILABLE') {
+                                    $installStatus = 'PENDING'
+                                } elseif ($app.assignment_intent -eq 'UNINSTALL') {
+                                    $installStatus = 'UNINSTALLED'
+                                }
+                            }
+
+                            $appStatusPayload = @{
+                                app_id            = $appId
+                                install_status    = $installStatus
+                                detection_state   = if ($isDetected) { 1 } else { 0 }
+                                installed_version = if ($detectedVersion) { $detectedVersion } else { $app.version }
+                                error_message     = $errorMsg
+                                last_attempt_at   = (Get-Date).ToString('o')
+                            }
+
+                            Invoke-RestMethod `
+                                -Uri        "$baseUrl/api/v1/nodes/$deviceId/app-status" `
+                                -Method     POST `
+                                -Body       ($appStatusPayload | ConvertTo-Json -Compress) `
+                                -Headers    $authHeaders `
+                                -TimeoutSec 10 `
+                                -ErrorAction SilentlyContinue | Out-Null
+
+                            Write-AgentLog 'INFO' "Application [$($app.name)]: Status = $installStatus (Detected: $isDetected, Version: $detectedVersion)"
+                        } catch {
+                            Write-AgentLog 'ERROR' "Failed to process app [$($app.name)]: $($_.Exception.Message)"
+                        }
+                    }
+                }
+            }
         } catch {
             Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
             if (-not $Continuous) { exit 1 }

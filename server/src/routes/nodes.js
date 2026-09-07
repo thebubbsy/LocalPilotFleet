@@ -14,6 +14,7 @@ import remediationEngine from '../services/remediationEngine.js';
 import { configProfileEngine } from '../services/configProfileEngine.js';
 import { updateRingEngine } from '../services/updateRingEngine.js';
 import { complianceEngine } from '../services/complianceEngine.js';
+import { appManagementEngine } from '../services/appManagementEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -294,6 +295,9 @@ export function registerNodeRoutes(router) {
       // Check for assigned compliance policies
       const assignedCompliancePolicies = complianceEngine.getPoliciesForDevice(db, deviceId);
 
+      // Check for assigned applications
+      const assignedApps = appManagementEngine.getDeviceAssignedApps(db, deviceId);
+
       sendJson(res, 200, {
         acknowledged: true,
         server_time: new Date().toISOString(),
@@ -302,7 +306,8 @@ export function registerNodeRoutes(router) {
         remediations: assignedRemediations,
         profiles: assignedProfiles,
         update_ring: assignedRing,
-        compliance_policies: assignedCompliancePolicies
+        compliance_policies: assignedCompliancePolicies,
+        assigned_apps: assignedApps
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -746,6 +751,49 @@ export function registerNodeRoutes(router) {
       });
     } catch (err) {
       sendJson(res, 500, { error: 'COMPLIANCE_REPORT_ERROR', message: err.message });
+    }
+  });
+
+  // 15. GET /api/v1/nodes/:id/apps
+  router.get('/api/v1/nodes/:id/apps', async (req, res) => {
+    const targetDeviceId = req.params.id;
+    if (!requireFleetKeyOrNodeToken(req, res, targetDeviceId)) return;
+
+    try {
+      const db = getDb();
+      const apps = appManagementEngine.getDeviceAssignedApps(db, targetDeviceId);
+      sendJson(res, 200, { apps });
+    } catch (err) {
+      sendJson(res, 500, { error: 'NODE_APPS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 16. POST /api/v1/nodes/:id/app-status
+  router.post('/api/v1/nodes/:id/app-status', async (req, res) => {
+    const targetDeviceId = req.params.id;
+    if (!requireFleetKeyOrNodeToken(req, res, targetDeviceId)) return;
+
+    const body = req.body || {};
+    const { app_id, ...statusPayload } = body;
+    if (!app_id) {
+      sendJson(res, 400, { error: 'BAD_REQUEST', message: 'Missing app_id' });
+      return;
+    }
+
+    try {
+      const db = getDb();
+      const result = appManagementEngine.recordAppStatus(db, targetDeviceId, app_id, statusPayload);
+
+      broadcastEvent('device_app_status_updated', {
+        device_id: targetDeviceId,
+        app_id,
+        install_status: result.install_status,
+        detection_state: result.detection_state
+      });
+
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 500, { error: 'NODE_APP_STATUS_ERROR', message: err.message });
     }
   });
 }
