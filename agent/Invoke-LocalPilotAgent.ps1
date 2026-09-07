@@ -1261,6 +1261,73 @@ if ($Mode -eq 'Heartbeat') {
                     }
                 }
             }
+
+            # ── Endpoint Privilege Management (EPM) Governance ───────────────
+            if ($resp.epm_rules) {
+                if (-not (Get-Variable -Name 'LastEpmAudit' -Scope Script -ErrorAction SilentlyContinue)) {
+                    $script:LastEpmAudit = $null
+                }
+                $now = Get-Date
+                $shouldAuditEpm = $false
+                if ($null -eq $script:LastEpmAudit) {
+                    $shouldAuditEpm = $true
+                } elseif (($now - $script:LastEpmAudit).TotalSeconds -ge 120) { # 2-minute interval
+                    $shouldAuditEpm = $true
+                }
+
+                if ($shouldAuditEpm) {
+                    $script:LastEpmAudit = $now
+                    $epmRules = $resp.epm_rules
+                    $epmRulesCount = if ($epmRules) { $epmRules.Count } else { 0 }
+                    Write-AgentLog 'INFO' "Audited EPM rules ($epmRulesCount active rule(s) assigned)..."
+
+                    # Save effective EPM rules to local cache
+                    $epmCacheDir = 'C:\ProgramData\LocalPilotFleet\EPM'
+                    try {
+                        if (-not (Test-Path $epmCacheDir -ErrorAction SilentlyContinue)) {
+                            New-Item -Path $epmCacheDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
+                        }
+                        $epmRules | ConvertTo-Json -Depth 5 | Set-Content -Path "$epmCacheDir\rules.json" -Force -ErrorAction SilentlyContinue
+                    } catch {}
+
+                    # Check for processes matching EPM rules (audit telemetry)
+                    try {
+                        $runningProcs = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path }
+                        foreach ($rule in $epmRules) {
+                            $targetName = $rule.file_name
+                            $procBase = [System.IO.Path]::GetFileNameWithoutExtension($targetName)
+                            $matchingProcs = $runningProcs | Where-Object { $_.ProcessName -eq $procBase }
+                            if ($matchingProcs -and $rule.send_elevation_telemetry) {
+                                foreach ($p in ($matchingProcs | Select-Object -First 2)) {
+                                    $procKey = "EPM_SEEN_$($p.Id)"
+                                    if (-not (Get-Variable -Name $procKey -Scope Script -ErrorAction SilentlyContinue)) {
+                                        Set-Variable -Name $procKey -Value $true -Scope Script
+                                        $elevPayload = @{
+                                            rule_id             = $rule.id
+                                            file_name           = $targetName
+                                            file_path           = $p.Path
+                                            user_name           = $env:USERNAME
+                                            elevation_type      = $rule.elevation_type
+                                            justification       = "Active execution under EPM rule: $($rule.rule_name)"
+                                            process_id          = $p.Id
+                                            parent_process_name = 'explorer.exe'
+                                        }
+                                        try {
+                                            Invoke-RestMethod `
+                                                -Uri        "$baseUrl/api/v1/nodes/$deviceId/epm-elevation" `
+                                                -Method     POST `
+                                                -Body       ($elevPayload | ConvertTo-Json -Compress) `
+                                                -Headers    $authHeaders `
+                                                -TimeoutSec 5 `
+                                                -ErrorAction SilentlyContinue | Out-Null
+                                        } catch {}
+                                    }
+                                }
+                            }
+                        }
+                    } catch {}
+                }
+            }
         } catch {
             Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
             if (-not $Continuous) { exit 1 }

@@ -113,6 +113,9 @@ const App = {
       case 'laps':
         if (window.LapsTable) window.LapsTable.init();
         break;
+      case 'epm':
+        if (window.EpmTable) window.EpmTable.init();
+        break;
       case 'settings':
         this.renderSettings();
         break;

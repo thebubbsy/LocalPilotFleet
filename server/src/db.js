@@ -181,7 +181,8 @@ export function initDb(dbOrPath, options = {}) {
         'TPM_VIOLATION', 'SECUREBOOT_DISABLED', 'BITLOCKER_OFFLINE', 'WATCHDOG_HEARTBEAT',
         'MALWARE_THREAT_DETECTED', 'ANTIVIRUS_RTP_DISABLED',
         'BITLOCKER_KEY_ESCROWED', 'BITLOCKER_KEY_REVEALED', 'BITLOCKER_ENCRYPTION_TRIGGERED',
-        'LAPS_PASSWORD_ESCROWED', 'LAPS_PASSWORD_REVEALED', 'LAPS_PASSWORD_ROTATED'
+        'LAPS_PASSWORD_ESCROWED', 'LAPS_PASSWORD_REVEALED', 'LAPS_PASSWORD_ROTATED',
+        'EPM_ELEVATION_REQUESTED', 'EPM_ELEVATION_APPROVED', 'EPM_ELEVATION_DENIED', 'EPM_PROCESS_ELEVATED'
       )),
       event_id INTEGER,
       event_source TEXT NOT NULL,
@@ -599,6 +600,79 @@ export function initDb(dbOrPath, options = {}) {
       accessed_at TEXT NOT NULL DEFAULT (DATETIME('now')),
       FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
     );
+
+    -- 31. EPM_POLICIES (Endpoint Privilege Management Governance Policies)
+    CREATE TABLE IF NOT EXISTS epm_policies (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      target_group_id TEXT DEFAULT 'grp-all',
+      default_elevation_action TEXT NOT NULL DEFAULT 'DENY' CHECK(default_elevation_action IN ('DENY', 'REQUIRE_JUSTIFICATION', 'AUTO_ELEVATE')),
+      send_elevation_telemetry INTEGER DEFAULT 1 CHECK(send_elevation_telemetry IN (0, 1)),
+      is_enabled INTEGER DEFAULT 1 CHECK(is_enabled IN (0, 1)),
+      created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET NULL
+    );
+
+    -- 32. EPM_ELEVATION_RULES (Granular File, Hash, and Certificate Elevation Rules)
+    CREATE TABLE IF NOT EXISTS epm_elevation_rules (
+      id TEXT PRIMARY KEY NOT NULL,
+      policy_id TEXT NOT NULL,
+      rule_name TEXT NOT NULL,
+      description TEXT,
+      elevation_type TEXT NOT NULL CHECK(elevation_type IN ('AUTOMATIC', 'USER_CONFIRMED', 'SUPPORT_APPROVED')),
+      file_name TEXT NOT NULL,
+      file_path TEXT,
+      file_hash_sha256 TEXT,
+      publisher_certificate TEXT,
+      child_process_rule TEXT NOT NULL DEFAULT 'ELEVATE_NONE' CHECK(child_process_rule IN ('ELEVATE_NONE', 'ELEVATE_ALL_CHILDREN', 'REQUIRE_RULE_MATCH')),
+      min_file_version TEXT,
+      max_file_version TEXT,
+      is_enabled INTEGER DEFAULT 1 CHECK(is_enabled IN (0, 1)),
+      created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(policy_id) REFERENCES epm_policies(id) ON DELETE CASCADE
+    );
+
+    -- 33. EPM_ELEVATION_REQUESTS (Standard User Elevation Requests & Approval Queue)
+    CREATE TABLE IF NOT EXISTS epm_elevation_requests (
+      id TEXT PRIMARY KEY NOT NULL,
+      device_id TEXT NOT NULL,
+      rule_id TEXT,
+      requested_by_user TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      file_hash_sha256 TEXT,
+      file_version TEXT,
+      justification TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'APPROVED', 'DENIED', 'EXPIRED')),
+      reviewed_by TEXT,
+      reviewed_at TEXT,
+      review_notes TEXT,
+      expires_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(rule_id) REFERENCES epm_elevation_rules(id) ON DELETE SET NULL
+    );
+
+    -- 34. EPM_ELEVATION_LOGS (Forensic Process Elevation Execution Audit Trail)
+    CREATE TABLE IF NOT EXISTS epm_elevation_logs (
+      id TEXT PRIMARY KEY NOT NULL,
+      device_id TEXT NOT NULL,
+      rule_id TEXT,
+      user_name TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      file_hash_sha256 TEXT,
+      elevation_type TEXT NOT NULL,
+      justification TEXT,
+      process_id INTEGER,
+      parent_process_name TEXT,
+      executed_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(rule_id) REFERENCES epm_elevation_rules(id) ON DELETE SET NULL
+    );
   `);
 
   // Indexes
@@ -675,12 +749,19 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_laps_hist_dev ON laps_password_history(device_id, rotated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_laps_audit_dev ON laps_audit_logs(device_id, accessed_at DESC);
     CREATE INDEX IF NOT EXISTS idx_laps_audit_action ON laps_audit_logs(action);
+
+    CREATE INDEX IF NOT EXISTS idx_epm_pol_target ON epm_policies(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_epm_rule_pol ON epm_elevation_rules(policy_id);
+    CREATE INDEX IF NOT EXISTS idx_epm_req_dev ON epm_elevation_requests(device_id);
+    CREATE INDEX IF NOT EXISTS idx_epm_req_status ON epm_elevation_requests(status);
+    CREATE INDEX IF NOT EXISTS idx_epm_log_dev ON epm_elevation_logs(device_id);
+    CREATE INDEX IF NOT EXISTS idx_epm_log_exec ON epm_elevation_logs(executed_at DESC);
   `);
 
   // Schema migrations for existing databases
   try {
     const tableSqlRow = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'security_events'").get();
-    if (tableSqlRow && tableSqlRow.sql && !tableSqlRow.sql.includes('LAPS_PASSWORD_ESCROWED')) {
+    if (tableSqlRow && tableSqlRow.sql && !tableSqlRow.sql.includes('EPM_ELEVATION_REQUESTED')) {
       db.exec(`
         PRAGMA foreign_keys = OFF;
         CREATE TABLE security_events_migrated (
@@ -692,7 +773,8 @@ export function initDb(dbOrPath, options = {}) {
             'TPM_VIOLATION', 'SECUREBOOT_DISABLED', 'BITLOCKER_OFFLINE', 'WATCHDOG_HEARTBEAT',
             'MALWARE_THREAT_DETECTED', 'ANTIVIRUS_RTP_DISABLED',
             'BITLOCKER_KEY_ESCROWED', 'BITLOCKER_KEY_REVEALED', 'BITLOCKER_ENCRYPTION_TRIGGERED',
-            'LAPS_PASSWORD_ESCROWED', 'LAPS_PASSWORD_REVEALED', 'LAPS_PASSWORD_ROTATED'
+            'LAPS_PASSWORD_ESCROWED', 'LAPS_PASSWORD_REVEALED', 'LAPS_PASSWORD_ROTATED',
+            'EPM_ELEVATION_REQUESTED', 'EPM_ELEVATION_APPROVED', 'EPM_ELEVATION_DENIED', 'EPM_PROCESS_ELEVATED'
           )),
           event_id INTEGER,
           event_source TEXT NOT NULL,
@@ -1703,6 +1785,120 @@ exit 0`,
         'laps-audit-01', 'dev-daddy-pc', 'Administrator', 'REVEAL',
         'Tony (Fleet Admin)', 'Scheduled maintenance & local service reconfiguration',
         '127.0.0.1', '-1 day'
+      );
+    }
+  }
+
+  // 14. EPM Policies, Rules, Requests & Elevation Logs
+  const epmPolCount = db.prepare('SELECT COUNT(*) as count FROM epm_policies').get().count;
+  if (epmPolCount === 0) {
+    const insertEpmPol = db.prepare(`
+      INSERT OR IGNORE INTO epm_policies (
+        id, name, description, target_group_id, default_elevation_action, send_elevation_telemetry, is_enabled
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertEpmPol.run(
+      'epm-enterprise-baseline',
+      'Enterprise Standard Elevation Policy',
+      'Requires justification for administrative utility elevation and automatically audits elevated child processes.',
+      'grp-all', 'REQUIRE_JUSTIFICATION', 1, 1
+    );
+
+    insertEpmPol.run(
+      'epm-workstations-dev',
+      'Developer & Engineering Rig Elevation Policy',
+      'Auto-elevates approved dev and debugging tools with full hash verification and support-approved approval workflows.',
+      'grp-workstations', 'REQUIRE_JUSTIFICATION', 1, 1
+    );
+
+    const insertEpmRule = db.prepare(`
+      INSERT OR IGNORE INTO epm_elevation_rules (
+        id, policy_id, rule_name, description, elevation_type, file_name, file_path, file_hash_sha256,
+        publisher_certificate, child_process_rule, min_file_version, max_file_version, is_enabled
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertEpmRule.run(
+      'rule-procexp', 'epm-enterprise-baseline',
+      'Sysinternals Process Explorer',
+      'Allows standard users to run Process Explorer elevated with documented justification',
+      'USER_CONFIRMED', 'procexp.exe', 'C:\\Program Files\\Sysinternals\\procexp.exe',
+      'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+      'Microsoft Corporation', 'ELEVATE_ALL_CHILDREN', null, null, 1
+    );
+
+    insertEpmRule.run(
+      'rule-winget', 'epm-enterprise-baseline',
+      'Windows Package Manager CLI',
+      'Automatically elevates winget command line for background package deployment',
+      'AUTOMATIC', 'winget.exe', 'C:\\Program Files\\WindowsApps\\Microsoft.DesktopAppInstaller_*\\winget.exe',
+      null, 'Microsoft Corporation', 'ELEVATE_NONE', null, null, 1
+    );
+
+    insertEpmRule.run(
+      'rule-wireshark', 'epm-workstations-dev',
+      'Wireshark Network Analyzer',
+      'Requires operator support approval before capturing raw packets with Npcap',
+      'SUPPORT_APPROVED', 'Wireshark.exe', 'C:\\Program Files\\Wireshark\\Wireshark.exe',
+      '8f434346648f6b96df89dda901c5176b10e6d05961fc5be67dfb9fb6330742d0',
+      'Wireshark Foundation', 'ELEVATE_NONE', null, null, 1
+    );
+
+    insertEpmRule.run(
+      'rule-afterburner', 'epm-workstations-dev',
+      'MSI Afterburner Hardware Monitor',
+      'Allows hardware tuning and GPU metrics monitoring under user confirmation',
+      'USER_CONFIRMED', 'MSIAfterburner.exe', 'C:\\Program Files (x86)\\MSI Afterburner\\MSIAfterburner.exe',
+      null, 'Micro-Star International Co., Ltd.', 'ELEVATE_NONE', null, null, 1
+    );
+
+    // Seed sample request & log if sample devices exist
+    const hasDaddy = db.prepare('SELECT id FROM devices WHERE id = ?').get('dev-daddy-pc');
+    if (hasDaddy) {
+      const insertReq = db.prepare(`
+        INSERT OR IGNORE INTO epm_elevation_requests (
+          id, device_id, rule_id, requested_by_user, file_path, file_name,
+          file_hash_sha256, file_version, justification, status, reviewed_by, reviewed_at, review_notes, expires_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?), ?, DATETIME('now', ?), DATETIME('now', ?))
+      `);
+
+      insertReq.run(
+        'epm-req-01', 'dev-daddy-pc', 'rule-wireshark', 'Tony',
+        'C:\\Program Files\\Wireshark\\Wireshark.exe', 'Wireshark.exe',
+        '8f434346648f6b96df89dda901c5176b10e6d05961fc5be67dfb9fb6330742d0', '4.2.4',
+        'Investigating intermittent DHCP dropouts on 10GbE network interface',
+        'APPROVED', 'Fleet Master (Auto)', '-1 hour', 'Granted for 4 hours diagnostic window', '+3 hours', '-1 hour'
+      );
+
+      insertReq.run(
+        'epm-req-02', 'dev-sarah-laptop', 'rule-procexp', 'Sarah',
+        'C:\\Program Files\\Sysinternals\\procexp.exe', 'procexp.exe',
+        'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', '17.05',
+        'Need to inspect high background fan noise during photo export',
+        'PENDING', null, null, null, null, '-10 minutes'
+      );
+
+      const insertLog = db.prepare(`
+        INSERT OR IGNORE INTO epm_elevation_logs (
+          id, device_id, rule_id, user_name, file_path, file_name,
+          file_hash_sha256, elevation_type, justification, process_id, parent_process_name, executed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?))
+      `);
+
+      insertLog.run(
+        'epm-log-01', 'dev-daddy-pc', 'rule-procexp', 'Tony',
+        'C:\\Program Files\\Sysinternals\\procexp.exe', 'procexp.exe',
+        'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+        'USER_CONFIRMED', 'Auditing thread affinity on 13900K E-cores',
+        14280, 'explorer.exe', '-2 hours'
+      );
+
+      insertLog.run(
+        'epm-log-02', 'dev-daddy-pc', 'rule-winget', 'Tony',
+        'C:\\Program Files\\WindowsApps\\Microsoft.DesktopAppInstaller_*\\winget.exe', 'winget.exe',
+        null, 'AUTOMATIC', 'Background upgrade of Git for Windows',
+        18944, 'powershell.exe', '-45 minutes'
       );
     }
   }

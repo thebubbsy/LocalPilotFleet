@@ -16,6 +16,7 @@ import { appManagementEngine } from '../services/appManagementEngine.js';
 import { endpointSecurityEngine } from '../services/endpointSecurityEngine.js';
 import { bitlockerEngine } from '../services/bitlockerEngine.js';
 import { lapsEngine } from '../services/lapsEngine.js';
+import * as epmEngine from '../services/epmEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -2275,6 +2276,257 @@ try {
       sendJson(res, 200, { audit_logs: logs, total: logs.length });
     } catch (err) {
       sendJson(res, 500, { error: 'LAPS_AUDIT_ERROR', message: err.message });
+    }
+  });
+
+  /* ── Endpoint Privilege Management (EPM) Endpoints ────────────────── */
+
+  // 95. GET /api/v1/fleet/epm/stats
+  router.get('/api/v1/fleet/epm/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const stats = epmEngine.getEpmStats(db);
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'EPM_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 96. GET /api/v1/fleet/epm/policies
+  router.get('/api/v1/fleet/epm/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const policies = epmEngine.getEpmPolicies(db);
+      sendJson(res, 200, { policies, total: policies.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'EPM_POLICIES_ERROR', message: err.message });
+    }
+  });
+
+  // 97. POST /api/v1/fleet/epm/policies
+  router.post('/api/v1/fleet/epm/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const policy = epmEngine.createEpmPolicy(db, body);
+      broadcastEvent('epm_policy_created', { policy_id: policy.id, name: policy.name });
+      sendJson(res, 201, policy);
+    } catch (err) {
+      sendJson(res, 400, { error: 'EPM_POLICY_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 98. GET /api/v1/fleet/epm/policies/:id
+  router.get('/api/v1/fleet/epm/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const policy = epmEngine.getEpmPolicy(db, id);
+      if (!policy) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'EPM policy not found' });
+        return;
+      }
+      sendJson(res, 200, policy);
+    } catch (err) {
+      sendJson(res, 500, { error: 'EPM_POLICY_GET_ERROR', message: err.message });
+    }
+  });
+
+  // 99. PATCH /api/v1/fleet/epm/policies/:id
+  router.patch('/api/v1/fleet/epm/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const policy = epmEngine.updateEpmPolicy(db, id, body);
+      if (!policy) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'EPM policy not found' });
+        return;
+      }
+      broadcastEvent('epm_policy_updated', { policy_id: id, name: policy.name });
+      sendJson(res, 200, policy);
+    } catch (err) {
+      sendJson(res, 400, { error: 'EPM_POLICY_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 100. DELETE /api/v1/fleet/epm/policies/:id
+  router.delete('/api/v1/fleet/epm/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const success = epmEngine.deleteEpmPolicy(db, id);
+      if (!success) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'EPM policy not found' });
+        return;
+      }
+      broadcastEvent('epm_policy_deleted', { policy_id: id });
+      sendJson(res, 200, { success: true, deleted_id: id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'EPM_POLICY_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 101. GET /api/v1/fleet/epm/rules
+  router.get('/api/v1/fleet/epm/rules', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const url = new URL(req.url, 'http://localhost');
+    const policyId = url.searchParams.get('policy_id') || undefined;
+    const elevationType = url.searchParams.get('elevation_type') || undefined;
+    const search = url.searchParams.get('search') || undefined;
+    try {
+      const db = getDb();
+      const rules = epmEngine.getEpmRules(db, { policyId, elevationType, search });
+      sendJson(res, 200, { rules, total: rules.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'EPM_RULES_GET_ERROR', message: err.message });
+    }
+  });
+
+  // 102. POST /api/v1/fleet/epm/rules
+  router.post('/api/v1/fleet/epm/rules', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const rule = epmEngine.createEpmRule(db, body);
+      broadcastEvent('epm_rule_created', { rule_id: rule.id, name: rule.rule_name });
+      sendJson(res, 201, rule);
+    } catch (err) {
+      sendJson(res, 400, { error: 'EPM_RULE_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 103. GET /api/v1/fleet/epm/rules/:id
+  router.get('/api/v1/fleet/epm/rules/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const rule = epmEngine.getEpmRule(db, id);
+      if (!rule) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'EPM elevation rule not found' });
+        return;
+      }
+      sendJson(res, 200, rule);
+    } catch (err) {
+      sendJson(res, 500, { error: 'EPM_RULE_GET_ERROR', message: err.message });
+    }
+  });
+
+  // 104. PATCH /api/v1/fleet/epm/rules/:id
+  router.patch('/api/v1/fleet/epm/rules/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const rule = epmEngine.updateEpmRule(db, id, body);
+      if (!rule) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'EPM elevation rule not found' });
+        return;
+      }
+      broadcastEvent('epm_rule_updated', { rule_id: id, name: rule.rule_name });
+      sendJson(res, 200, rule);
+    } catch (err) {
+      sendJson(res, 400, { error: 'EPM_RULE_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 105. DELETE /api/v1/fleet/epm/rules/:id
+  router.delete('/api/v1/fleet/epm/rules/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const success = epmEngine.deleteEpmRule(db, id);
+      if (!success) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'EPM elevation rule not found' });
+        return;
+      }
+      broadcastEvent('epm_rule_deleted', { rule_id: id });
+      sendJson(res, 200, { success: true, deleted_id: id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'EPM_RULE_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 106. GET /api/v1/fleet/epm/requests
+  router.get('/api/v1/fleet/epm/requests', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const url = new URL(req.url, 'http://localhost');
+    const deviceId = url.searchParams.get('device_id') || undefined;
+    const status = url.searchParams.get('status') || undefined;
+    const limit = Math.min(200, parseInt(url.searchParams.get('limit') || '50', 10));
+    try {
+      const db = getDb();
+      const requests = epmEngine.getElevationRequests(db, { deviceId, status, limit });
+      sendJson(res, 200, { requests, total: requests.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'EPM_REQUESTS_GET_ERROR', message: err.message });
+    }
+  });
+
+  // 107. POST /api/v1/fleet/epm/requests/:id/review
+  router.post('/api/v1/fleet/epm/requests/:id/review', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const result = epmEngine.reviewElevationRequest(db, id, {
+        decision: body.decision,
+        reviewedBy: body.reviewed_by || 'Fleet Administrator',
+        notes: body.notes,
+        validHours: body.valid_hours || 4
+      });
+      broadcastEvent('epm_request_reviewed', {
+        request_id: id,
+        decision: result.status,
+        device_id: result.device_id,
+        reviewed_by: result.reviewed_by
+      });
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'EPM_REQUEST_REVIEW_ERROR', message: err.message });
+    }
+  });
+
+  // 108. GET /api/v1/fleet/epm/logs
+  router.get('/api/v1/fleet/epm/logs', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const url = new URL(req.url, 'http://localhost');
+    const deviceId = url.searchParams.get('device_id') || undefined;
+    const limit = Math.min(500, parseInt(url.searchParams.get('limit') || '100', 10));
+    try {
+      const db = getDb();
+      const logs = epmEngine.getElevationLogs(db, { deviceId, limit });
+      sendJson(res, 200, { elevation_logs: logs, total: logs.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'EPM_LOGS_GET_ERROR', message: err.message });
+    }
+  });
+
+  // 109. GET /api/v1/fleet/devices/:id/epm
+  router.get('/api/v1/fleet/devices/:id/epm', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const posture = epmEngine.getDeviceEpmPosture(db, id);
+      if (!posture) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Device not found' });
+        return;
+      }
+      sendJson(res, 200, posture);
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_EPM_POSTURE_ERROR', message: err.message });
     }
   });
 }

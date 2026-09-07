@@ -677,6 +677,101 @@ async function getLapsAuditLogs(params = {}) {
   return apiFetch(`/api/v1/fleet/laps/audit${qStr ? '?' + qStr : ''}`);
 }
 
+/* ── Endpoint Privilege Management (EPM) ─────────────────────────── */
+
+async function getEpmStats() {
+  return apiFetch('/api/v1/fleet/epm/stats');
+}
+
+async function getEpmPolicies() {
+  return apiFetch('/api/v1/fleet/epm/policies');
+}
+
+async function getEpmPolicy(id) {
+  return apiFetch(`/api/v1/fleet/epm/policies/${encodeURIComponent(id)}`);
+}
+
+async function createEpmPolicy(data) {
+  return apiFetch('/api/v1/fleet/epm/policies', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateEpmPolicy(id, data) {
+  return apiFetch(`/api/v1/fleet/epm/policies/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteEpmPolicy(id) {
+  return apiFetch(`/api/v1/fleet/epm/policies/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getEpmRules(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.policy_id) qs.set('policy_id', params.policy_id);
+  if (params.elevation_type) qs.set('elevation_type', params.elevation_type);
+  if (params.search) qs.set('search', params.search);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/epm/rules${qStr ? '?' + qStr : ''}`);
+}
+
+async function getEpmRule(id) {
+  return apiFetch(`/api/v1/fleet/epm/rules/${encodeURIComponent(id)}`);
+}
+
+async function createEpmRule(data) {
+  return apiFetch('/api/v1/fleet/epm/rules', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateEpmRule(id, data) {
+  return apiFetch(`/api/v1/fleet/epm/rules/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteEpmRule(id) {
+  return apiFetch(`/api/v1/fleet/epm/rules/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getEpmRequests(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.device_id) qs.set('device_id', params.device_id);
+  if (params.status) qs.set('status', params.status);
+  if (params.limit) qs.set('limit', params.limit);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/epm/requests${qStr ? '?' + qStr : ''}`);
+}
+
+async function reviewEpmRequest(id, data = {}) {
+  return apiFetch(`/api/v1/fleet/epm/requests/${encodeURIComponent(id)}/review`, {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function getEpmElevationLogs(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.device_id) qs.set('device_id', params.device_id);
+  if (params.limit) qs.set('limit', params.limit);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/epm/logs${qStr ? '?' + qStr : ''}`);
+}
+
+async function getDeviceEpm(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/epm`);
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -781,6 +876,22 @@ window.FleetAPI = {
   revealHistoricalLapsPassword,
   rotateDeviceLapsPassword,
   getLapsAuditLogs,
+  // Endpoint Privilege Management (EPM)
+  getEpmStats,
+  getEpmPolicies,
+  getEpmPolicy,
+  createEpmPolicy,
+  updateEpmPolicy,
+  deleteEpmPolicy,
+  getEpmRules,
+  getEpmRule,
+  createEpmRule,
+  updateEpmRule,
+  deleteEpmRule,
+  getEpmRequests,
+  reviewEpmRequest,
+  getEpmElevationLogs,
+  getDeviceEpm,
   // Groups
   getGroups,
   createGroup,

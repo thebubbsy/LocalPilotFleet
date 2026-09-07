@@ -18,6 +18,7 @@ import { appManagementEngine } from '../services/appManagementEngine.js';
 import { endpointSecurityEngine } from '../services/endpointSecurityEngine.js';
 import { bitlockerEngine } from '../services/bitlockerEngine.js';
 import { lapsEngine } from '../services/lapsEngine.js';
+import * as epmEngine from '../services/epmEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -322,7 +323,8 @@ export function registerNodeRoutes(router) {
         assigned_apps: assignedApps,
         endpoint_security_policy: assignedSecurityPolicy,
         bitlocker_policy: assignedBitLockerPolicy,
-        laps_policy: assignedLapsPolicy
+        laps_policy: assignedLapsPolicy,
+        epm_rules: epmEngine.getEffectiveEpmRulesForDevice(db, deviceId)
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -982,6 +984,65 @@ export function registerNodeRoutes(router) {
       sendJson(res, 201, result);
     } catch (err) {
       sendJson(res, 500, { error: 'NODE_LAPS_ESCROW_ERROR', message: err.message });
+    }
+  });
+
+  // 25. GET /api/v1/nodes/:id/epm-rules (Get effective EPM rules for node)
+  router.get('/api/v1/nodes/:id/epm-rules', async (req, res) => {
+    const targetDeviceId = req.params.id;
+    if (!requireFleetKeyOrNodeToken(req, res, targetDeviceId)) return;
+
+    try {
+      const db = getDb();
+      const rules = epmEngine.getEffectiveEpmRulesForDevice(db, targetDeviceId);
+      sendJson(res, 200, { rules, count: rules.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'NODE_EPM_RULES_ERROR', message: err.message });
+    }
+  });
+
+  // 26. POST /api/v1/nodes/:id/epm-request (Submit standard user elevation request)
+  router.post('/api/v1/nodes/:id/epm-request', async (req, res) => {
+    const targetDeviceId = req.params.id;
+    if (!requireFleetKeyOrNodeToken(req, res, targetDeviceId)) return;
+
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const result = epmEngine.requestElevation(db, targetDeviceId, body);
+
+      broadcastEvent('epm_request_submitted', {
+        device_id: targetDeviceId,
+        file_name: result.file_name,
+        status: result.status,
+        request_id: result.request_id
+      });
+
+      sendJson(res, 201, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'NODE_EPM_REQUEST_ERROR', message: err.message });
+    }
+  });
+
+  // 27. POST /api/v1/nodes/:id/epm-elevation (Ingest elevated execution telemetry)
+  router.post('/api/v1/nodes/:id/epm-elevation', async (req, res) => {
+    const targetDeviceId = req.params.id;
+    if (!requireFleetKeyOrNodeToken(req, res, targetDeviceId)) return;
+
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const result = epmEngine.logElevationEvent(db, targetDeviceId, body);
+
+      broadcastEvent('epm_elevation_logged', {
+        device_id: targetDeviceId,
+        file_name: body.file_name,
+        user_name: body.user_name || 'StandardUser'
+      });
+
+      sendJson(res, 201, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'NODE_EPM_ELEVATION_LOG_ERROR', message: err.message });
     }
   });
 }

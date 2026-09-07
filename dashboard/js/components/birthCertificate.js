@@ -435,6 +435,14 @@
         </div>
       </div>
 
+      <!-- ── Endpoint Privilege Management (EPM) Posture ── -->
+      <div class="bc-section" id="bc-epm-section">
+        <div class="bc-section-title">🛡️ Endpoint Privilege Management (EPM)</div>
+        <div id="bc-epm-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading EPM elevation rules…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -992,6 +1000,83 @@
         });
       }).catch(err => {
         lapsListEl.innerHTML = `<div style="color:#EF4444;font-size:12px;">Failed to load LAPS credential posture: ${esc(err.message)}</div>`;
+      });
+    }
+
+    // Fetch and populate EPM posture
+    const epmListEl = body.querySelector('#bc-epm-list');
+    if (epmListEl && _currentDevice?.id) {
+      window.FleetAPI.getDeviceEpm(_currentDevice.id).then(epm => {
+        if (!epm || !epm.effective_rules || epm.effective_rules.length === 0) {
+          epmListEl.innerHTML = `
+            <div style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:12px;display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <span class="badge badge-neutral" style="font-size:11px;">Default Intune Policy</span>
+                <span style="margin-left:8px;color:var(--text-muted);">No specific EPM elevation rules assigned to this device.</span>
+              </div>
+              <button class="intune-btn small" id="btn-bc-view-epm" style="font-size:11px;padding:3px 8px;">
+                🛡️ Manage in EPM &gt;
+              </button>
+            </div>
+          `;
+          epmListEl.querySelector('#btn-bc-view-epm')?.addEventListener('click', () => {
+            close();
+            if (window.App && typeof window.App.navigate === 'function') {
+              window.App.navigate('epm');
+            }
+          });
+          return;
+        }
+
+        epmListEl.innerHTML = `
+          <div style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:12px;display:flex;flex-direction:column;gap:10px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <span class="badge badge-success" style="font-size:11px;">
+                  🛡️ ${epm.rules_count} Active Rule(s)
+                </span>
+                <span style="margin-left:8px;font-weight:600;font-size:13px;color:var(--text-bright);">
+                  ${epm.pending_count > 0 ? `<span style="color:var(--accent-orange, #f59e0b);">⏳ ${epm.pending_count} Pending Elevation Request(s)</span>` : 'Standard User Protection Enforced'}
+                </span>
+              </div>
+              <button class="intune-btn small" id="btn-bc-view-epm" style="font-size:11px;padding:3px 8px;">
+                🛡️ View in EPM Blade &gt;
+              </button>
+            </div>
+
+            <table class="bc-sub-table">
+              <thead><tr><th>Target File</th><th>Elevation Type</th><th>Scope / Policy</th><th>Child Procs</th></tr></thead>
+              <tbody>
+                ${epm.effective_rules.slice(0, 5).map(r => {
+                  const isAuto = r.elevation_type === 'AUTOMATIC';
+                  const isUser = r.elevation_type === 'USER_CONFIRMED';
+                  const color = isAuto ? '#10b981' : (isUser ? '#3b82f6' : '#f59e0b');
+                  return `
+                    <tr>
+                      <td class="mono" style="font-weight:600;">${esc(r.file_name)}</td>
+                      <td>
+                        <span class="badge" style="background:${color}22;color:${color};border:1px solid ${color}55;font-size:10px;">
+                          ${esc(r.elevation_type)}
+                        </span>
+                      </td>
+                      <td style="font-size:11px;color:var(--text-muted);">${esc(r.policy_name)} (${esc(r.group_name)})</td>
+                      <td style="font-size:11px;color:var(--text-muted);">${r.child_process_rule === 'ELEVATE_ALL_CHILDREN' ? 'All Children' : 'None'}</td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+
+        epmListEl.querySelector('#btn-bc-view-epm')?.addEventListener('click', () => {
+          close();
+          if (window.App && typeof window.App.navigate === 'function') {
+            window.App.navigate('epm');
+          }
+        });
+      }).catch(err => {
+        epmListEl.innerHTML = `<div style="color:#EF4444;font-size:12px;">Failed to load EPM rules: ${esc(err.message)}</div>`;
       });
     }
   }
