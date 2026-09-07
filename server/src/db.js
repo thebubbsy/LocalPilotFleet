@@ -320,6 +320,45 @@ export function initDb(dbOrPath, options = {}) {
       FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
       FOREIGN KEY(ring_id) REFERENCES update_rings(id) ON DELETE SET NULL
     );
+
+    -- 16. COMPLIANCE_POLICIES (Microsoft Intune Device Compliance & Conditional Access Rules)
+    CREATE TABLE IF NOT EXISTS compliance_policies (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      target_group_id TEXT DEFAULT 'grp-all',
+      platform TEXT DEFAULT 'Windows11' CHECK(platform IN ('Windows11', 'Windows10', 'AllWindows')),
+      min_os_build TEXT DEFAULT '10.0.22000',
+      max_os_build TEXT,
+      require_bitlocker INTEGER DEFAULT 1 CHECK(require_bitlocker IN (0, 1)),
+      require_secure_boot INTEGER DEFAULT 1 CHECK(require_secure_boot IN (0, 1)),
+      require_tpm INTEGER DEFAULT 1 CHECK(require_tpm IN (0, 1)),
+      require_defender_antivirus INTEGER DEFAULT 1 CHECK(require_defender_antivirus IN (0, 1)),
+      require_defender_rtp INTEGER DEFAULT 1 CHECK(require_defender_rtp IN (0, 1)),
+      require_firewall INTEGER DEFAULT 1 CHECK(require_firewall IN (0, 1)),
+      max_antivirus_signature_age_days INTEGER DEFAULT 7 CHECK(max_antivirus_signature_age_days >= 1 AND max_antivirus_signature_age_days <= 60),
+      grace_period_days INTEGER DEFAULT 3 CHECK(grace_period_days >= 0 AND grace_period_days <= 30),
+      non_compliance_action TEXT DEFAULT 'MARK_NON_COMPLIANT' CHECK(non_compliance_action IN ('MARK_NON_COMPLIANT', 'QUARANTINE', 'ALERT_ONLY')),
+      is_enabled INTEGER DEFAULT 1 CHECK(is_enabled IN (0, 1)),
+      created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET NULL
+    );
+
+    -- 17. DEVICE_COMPLIANCE_EVALUATIONS (Per-device compliance posture & grace periods)
+    CREATE TABLE IF NOT EXISTS device_compliance_evaluations (
+      id TEXT PRIMARY KEY NOT NULL,
+      device_id TEXT NOT NULL,
+      policy_id TEXT NOT NULL,
+      compliance_status TEXT NOT NULL DEFAULT 'COMPLIANT' CHECK(compliance_status IN ('COMPLIANT', 'IN_GRACE_PERIOD', 'NON_COMPLIANT', 'ERROR')),
+      first_failed_at TEXT,
+      grace_period_expires_at TEXT,
+      rule_results_json TEXT DEFAULT '[]',
+      evaluated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(policy_id) REFERENCES compliance_policies(id) ON DELETE CASCADE,
+      UNIQUE(device_id, policy_id)
+    );
   `);
 
   // Indexes
@@ -361,6 +400,10 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_rings_target ON update_rings(target_group_id);
     CREATE INDEX IF NOT EXISTS idx_dev_update_ring ON device_update_status(ring_id);
     CREATE INDEX IF NOT EXISTS idx_dev_update_reboot ON device_update_status(reboot_pending);
+
+    CREATE INDEX IF NOT EXISTS idx_comp_pol_target ON compliance_policies(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_comp_eval_dev ON device_compliance_evaluations(device_id, evaluated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_comp_eval_status ON device_compliance_evaluations(compliance_status);
   `);
 
   if (shouldSeed) {
@@ -902,6 +945,91 @@ exit 0`,
           { hotfix_id: 'KB5041585', description: 'Security Update', installed_on: '2026-08-15' }
         ]),
         'REBOOT_PENDING', '-45 minutes'
+      );
+    }
+  }
+
+  // 9. Seed Default Device Compliance Policies (Microsoft Intune Device Compliance)
+  const compliancePolicyCount = db.prepare('SELECT COUNT(*) as count FROM compliance_policies').get().count;
+  if (compliancePolicyCount === 0) {
+    const insertPol = db.prepare(`
+      INSERT INTO compliance_policies (
+        id, name, description, target_group_id, platform, min_os_build,
+        require_bitlocker, require_secure_boot, require_tpm, require_defender_antivirus,
+        require_defender_rtp, require_firewall, max_antivirus_signature_age_days,
+        grace_period_days, non_compliance_action, is_enabled, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, DATETIME('now', ?), DATETIME('now', ?))
+    `);
+
+    insertPol.run(
+      'pol-enterprise-baseline',
+      'Windows 11 Enterprise Zero-Trust Compliance Policy',
+      'Enforces BitLocker encryption, Secure Boot, TPM 2.0, Windows Defender RTP, and Firewall with a 3-day grace period.',
+      'grp-all',
+      'Windows11',
+      '10.0.22000',
+      1, 1, 1, 1, 1, 1, 7, 3, 'MARK_NON_COMPLIANT',
+      '-3 days', '-3 days'
+    );
+
+    insertPol.run(
+      'pol-strict-quarantine',
+      'Strict Security & Anti-Tamper Policy (Workstations)',
+      'Zero-tolerance anti-tamper policy. Devices missing Defender RTP or Firewall are immediately quarantined from the fleet.',
+      'grp-workstations',
+      'Windows11',
+      '10.0.22621',
+      1, 1, 1, 1, 1, 1, 3, 0, 'QUARANTINE',
+      '-2 days', '-2 days'
+    );
+
+    insertPol.run(
+      'pol-homelab-relaxed',
+      'Homelab & Gaming Rig Relaxed Baseline',
+      'Relaxed policy for personal gaming rigs and disposable test VMs with 7-day grace period and alert-only notifications.',
+      'grp-all',
+      'AllWindows',
+      '10.0.19041',
+      0, 0, 0, 1, 1, 0, 14, 7, 'ALERT_ONLY',
+      '-1 day', '-1 day'
+    );
+
+    // Sample evaluations if sample devices exist
+    const hasSampleDev = db.prepare('SELECT id FROM devices WHERE id = ?').get('dev-daddy-pc');
+    if (hasSampleDev) {
+      const insertEval = db.prepare(`
+        INSERT INTO device_compliance_evaluations (
+          id, device_id, policy_id, compliance_status, first_failed_at,
+          grace_period_expires_at, rule_results_json, evaluated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?))
+      `);
+
+      insertEval.run(
+        'eval-01', 'dev-daddy-pc', 'pol-enterprise-baseline', 'COMPLIANT', null, null,
+        JSON.stringify([
+          { rule: 'min_os_build', expected: '10.0.22000', actual: '10.0.22631', passed: true },
+          { rule: 'require_bitlocker', expected: true, actual: true, passed: true },
+          { rule: 'require_secure_boot', expected: true, actual: true, passed: true },
+          { rule: 'require_tpm', expected: true, actual: true, passed: true },
+          { rule: 'require_defender_rtp', expected: true, actual: true, passed: true },
+          { rule: 'require_firewall', expected: true, actual: true, passed: true }
+        ]),
+        '-1 hour'
+      );
+
+      insertEval.run(
+        'eval-02', 'dev-livingroom-pc', 'pol-enterprise-baseline', 'IN_GRACE_PERIOD',
+        new Date(Date.now() - 86400000).toISOString(),
+        new Date(Date.now() + 2 * 86400000).toISOString(),
+        JSON.stringify([
+          { rule: 'min_os_build', expected: '10.0.22000', actual: '10.0.22631', passed: true },
+          { rule: 'require_bitlocker', expected: true, actual: false, passed: false, error: 'BitLocker is not enabled on OS volume C:' },
+          { rule: 'require_secure_boot', expected: true, actual: true, passed: true },
+          { rule: 'require_tpm', expected: true, actual: true, passed: true },
+          { rule: 'require_defender_rtp', expected: true, actual: true, passed: true },
+          { rule: 'require_firewall', expected: true, actual: true, passed: true }
+        ]),
+        '-30 minutes'
       );
     }
   }

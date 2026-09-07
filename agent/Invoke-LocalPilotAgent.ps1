@@ -656,6 +656,104 @@ if ($Mode -eq 'Heartbeat') {
                     }
                 }
             }
+
+            # ── Microsoft Intune Device Compliance & Zero-Trust Audit ───────────
+            if ($resp.compliance_policies) {
+                if (-not (Get-Variable -Name 'LastComplianceAudit' -Scope Script -ErrorAction SilentlyContinue)) {
+                    $script:LastComplianceAudit = $null
+                }
+                $now = Get-Date
+                $shouldAuditCompliance = $false
+                if ($null -eq $script:LastComplianceAudit) {
+                    $shouldAuditCompliance = $true
+                } elseif (($now - $script:LastComplianceAudit).TotalSeconds -ge 300) { # 5-minute interval
+                    $shouldAuditCompliance = $true
+                }
+
+                if ($shouldAuditCompliance) {
+                    $pols = @($resp.compliance_policies)
+                    Write-AgentLog 'INFO' "Auditing Device Compliance against $($pols.Count) assigned policies"
+                    $script:LastComplianceAudit = $now
+
+                    # Harvest OS build
+                    $osBuild = $null
+                    try {
+                        $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction SilentlyContinue
+                        if ($os) { $osBuild = $os.BuildNumber }
+                    } catch {}
+
+                    # Harvest BitLocker status
+                    $blStatus = 'Disabled'
+                    try {
+                        $bl = Get-BitLockerVolume -MountPoint 'C:' -ErrorAction SilentlyContinue
+                        if ($bl) {
+                            if ($bl.ProtectionStatus -eq 1 -or $bl.VolumeStatus -eq 'FullyEncrypted') {
+                                $blStatus = 'FullyEncrypted'
+                            }
+                        }
+                    } catch {}
+
+                    # Harvest Secure Boot
+                    $sb = $false
+                    try {
+                        $sb = Confirm-SecureBootUEFI -ErrorAction SilentlyContinue
+                        if ($null -eq $sb) { $sb = $false }
+                    } catch { $sb = $false }
+
+                    # Harvest TPM
+                    $tpmPres = $false
+                    $tpmEnab = $false
+                    try {
+                        $tpm = Get-CimInstance -Namespace root\cimv2\Security\MicrosoftTpm -ClassName Win32_Tpm -ErrorAction SilentlyContinue
+                        if ($tpm) {
+                            $tpmPres = [bool]$tpm.IsActivated_InitialValue
+                            $tpmEnab = [bool]$tpm.IsEnabled_InitialValue
+                        }
+                    } catch {}
+
+                    # Harvest Defender RTP
+                    $rtp = $true
+                    try {
+                        $mp = Get-MpComputerStatus -ErrorAction SilentlyContinue
+                        if ($mp) {
+                            $rtp = [bool]$mp.RealTimeProtectionEnabled
+                        }
+                    } catch {}
+
+                    # Harvest Firewall
+                    $fw = $true
+                    try {
+                        $fwProfiles = Get-NetFirewallProfile -Profile Domain,Private,Public -ErrorAction SilentlyContinue
+                        if ($fwProfiles) {
+                            $disabled = $fwProfiles | Where-Object { $_.Enabled -eq $false }
+                            if ($disabled) { $fw = $false }
+                        }
+                    } catch {}
+
+                    try {
+                        $compPayload = @{
+                            os_build             = $osBuild
+                            bitlocker_status     = $blStatus
+                            secure_boot_enabled  = $sb
+                            tpm_present          = $tpmPres
+                            tpm_enabled          = $tpmEnab
+                            defender_rtp_enabled = $rtp
+                            firewall_enabled     = $fw
+                        }
+
+                        $compRes = Invoke-RestMethod `
+                            -Uri        "$baseUrl/api/v1/nodes/$deviceId/compliance-report" `
+                            -Method     POST `
+                            -Body       ($compPayload | ConvertTo-Json -Depth 5 -Compress) `
+                            -Headers    $authHeaders `
+                            -TimeoutSec 10 `
+                            -ErrorAction Stop
+                        Write-AgentLog 'INFO' "Reported Device Compliance evaluations ($($compRes.evaluations.Count) policies evaluated)"
+                    } catch {
+                        Write-AgentLog 'ERROR' "Failed to report device compliance: $($_.Exception.Message)"
+                    }
+                }
+            }
         } catch {
             Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
             if (-not $Continuous) { exit 1 }

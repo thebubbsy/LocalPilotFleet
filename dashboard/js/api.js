@@ -359,6 +359,49 @@ async function getDeviceUpdateStatus(deviceId) {
   return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/update-status`);
 }
 
+/* ── Device Compliance Policies & Conditional Access ───────────────── */
+async function getCompliancePolicies() {
+  return apiFetch('/api/v1/fleet/compliance/policies');
+}
+
+async function getComplianceStats() {
+  return apiFetch('/api/v1/fleet/compliance/stats');
+}
+
+async function getCompliancePolicy(id) {
+  return apiFetch(`/api/v1/fleet/compliance/policies/${encodeURIComponent(id)}`);
+}
+
+async function createCompliancePolicy(data) {
+  return apiFetch('/api/v1/fleet/compliance/policies', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateCompliancePolicy(id, data) {
+  return apiFetch(`/api/v1/fleet/compliance/policies/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteCompliancePolicy(id) {
+  return apiFetch(`/api/v1/fleet/compliance/policies/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getDeviceCompliance(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/compliance`);
+}
+
+async function evaluateDeviceCompliance(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/evaluate-compliance`, {
+    method: 'POST'
+  });
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -405,6 +448,15 @@ window.FleetAPI = {
   deleteUpdateRing,
   scanDeviceUpdates,
   getDeviceUpdateStatus,
+  // Device Compliance & Zero-Trust Policies
+  getCompliancePolicies,
+  getComplianceStats,
+  getCompliancePolicy,
+  createCompliancePolicy,
+  updateCompliancePolicy,
+  deleteCompliancePolicy,
+  getDeviceCompliance,
+  evaluateDeviceCompliance,
   // Groups
   getGroups,
   createGroup,

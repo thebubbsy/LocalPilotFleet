@@ -13,6 +13,7 @@ import alertEngine from '../services/alertEngine.js';
 import remediationEngine from '../services/remediationEngine.js';
 import { configProfileEngine } from '../services/configProfileEngine.js';
 import { updateRingEngine } from '../services/updateRingEngine.js';
+import { complianceEngine } from '../services/complianceEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -290,6 +291,9 @@ export function registerNodeRoutes(router) {
       // Check for assigned update ring
       const assignedRing = updateRingEngine.getRingForDevice(db, deviceId);
 
+      // Check for assigned compliance policies
+      const assignedCompliancePolicies = complianceEngine.getPoliciesForDevice(db, deviceId);
+
       sendJson(res, 200, {
         acknowledged: true,
         server_time: new Date().toISOString(),
@@ -297,7 +301,8 @@ export function registerNodeRoutes(router) {
         pending_commands: pendingCommands,
         remediations: assignedRemediations,
         profiles: assignedProfiles,
-        update_ring: assignedRing
+        update_ring: assignedRing,
+        compliance_policies: assignedCompliancePolicies
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -703,6 +708,44 @@ export function registerNodeRoutes(router) {
       });
     } catch (err) {
       sendJson(res, 500, { error: 'UPDATE_STATUS_RECORD_ERROR', message: err.message });
+    }
+  });
+
+  // 13. GET /api/v1/nodes/:id/compliance-policies
+  router.get('/api/v1/nodes/:id/compliance-policies', async (req, res) => {
+    const targetDeviceId = req.params.id;
+    if (!requireFleetKeyOrNodeToken(req, res, targetDeviceId)) return;
+
+    try {
+      const db = getDb();
+      const policies = complianceEngine.getPoliciesForDevice(db, targetDeviceId);
+      sendJson(res, 200, { policies });
+    } catch (err) {
+      sendJson(res, 500, { error: 'COMPLIANCE_POLICIES_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 14. POST /api/v1/nodes/:id/compliance-report
+  router.post('/api/v1/nodes/:id/compliance-report', async (req, res) => {
+    const targetDeviceId = req.params.id;
+    if (!requireFleetKeyOrNodeToken(req, res, targetDeviceId)) return;
+
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const results = complianceEngine.evaluateDeviceCompliance(db, targetDeviceId, body);
+
+      broadcastEvent('compliance_evaluation_reported', {
+        device_id: targetDeviceId,
+        policies_evaluated: results.length
+      });
+
+      sendJson(res, 200, {
+        success: true,
+        evaluations: results
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: 'COMPLIANCE_REPORT_ERROR', message: err.message });
     }
   });
 }

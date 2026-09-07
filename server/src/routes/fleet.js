@@ -11,6 +11,7 @@ import dynamicGroupsService from '../services/dynamicGroups.js';
 import remediationEngine from '../services/remediationEngine.js';
 import { configProfileEngine } from '../services/configProfileEngine.js';
 import { updateRingEngine } from '../services/updateRingEngine.js';
+import { complianceEngine } from '../services/complianceEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -1381,6 +1382,163 @@ try {
       sendJson(res, 500, { error: 'DEVICE_UPDATE_STATUS_ERROR', message: err.message });
     }
   });
+
+  // 42. GET /api/v1/fleet/compliance/policies
+  router.get('/api/v1/fleet/compliance/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+
+    try {
+      const db = getDb();
+      const policies = complianceEngine.getAllPolicies(db);
+      sendJson(res, 200, { policies, total_count: policies.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'COMPLIANCE_POLICIES_QUERY_ERROR', message: err.message });
+    }
+  });
+
+  // 43. GET /api/v1/fleet/compliance/stats
+  router.get('/api/v1/fleet/compliance/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+
+    try {
+      const db = getDb();
+      const stats = complianceEngine.getFleetComplianceStats(db);
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'COMPLIANCE_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 44. GET /api/v1/fleet/compliance/policies/:id
+  router.get('/api/v1/fleet/compliance/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+
+    try {
+      const db = getDb();
+      const policy = complianceEngine.getPolicyById(db, id);
+      if (!policy) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Compliance policy not found' });
+        return;
+      }
+      sendJson(res, 200, policy);
+    } catch (err) {
+      sendJson(res, 500, { error: 'COMPLIANCE_POLICY_GET_ERROR', message: err.message });
+    }
+  });
+
+  // 45. POST /api/v1/fleet/compliance/policies
+  router.post('/api/v1/fleet/compliance/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const body = req.body || {};
+
+    try {
+      const db = getDb();
+      const created = complianceEngine.createPolicy(db, body);
+      broadcastEvent('compliance_policy_created', { policy_id: created.id, name: created.name });
+      sendJson(res, 201, created);
+    } catch (err) {
+      sendJson(res, 500, { error: 'COMPLIANCE_POLICY_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 46. PATCH /api/v1/fleet/compliance/policies/:id
+  router.patch('/api/v1/fleet/compliance/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+
+    try {
+      const db = getDb();
+      const updated = complianceEngine.updatePolicy(db, id, body);
+      if (!updated) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Compliance policy not found' });
+        return;
+      }
+      broadcastEvent('compliance_policy_updated', { policy_id: id, name: updated.name });
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 500, { error: 'COMPLIANCE_POLICY_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 47. DELETE /api/v1/fleet/compliance/policies/:id
+  router.delete('/api/v1/fleet/compliance/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+
+    try {
+      const db = getDb();
+      const deleted = complianceEngine.deletePolicy(db, id);
+      if (!deleted) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Compliance policy not found' });
+        return;
+      }
+      broadcastEvent('compliance_policy_deleted', { policy_id: id });
+      sendJson(res, 200, { success: true, deleted_id: id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'COMPLIANCE_POLICY_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 48. GET /api/v1/fleet/devices/:id/compliance
+  router.get('/api/v1/fleet/devices/:id/compliance', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+
+    try {
+      const db = getDb();
+      const evals = db.prepare(`
+        SELECT e.*, p.name as policy_name, p.non_compliance_action, p.grace_period_days
+        FROM device_compliance_evaluations e
+        JOIN compliance_policies p ON e.policy_id = p.id
+        WHERE e.device_id = ?
+        ORDER BY e.evaluated_at DESC
+      `).all(id);
+
+      const parsed = evals.map(e => {
+        let rules = [];
+        try { rules = JSON.parse(e.rule_results_json || '[]'); } catch {}
+        return {
+          ...e,
+          rule_results: rules
+        };
+      });
+
+      sendJson(res, 200, { device_id: id, evaluations: parsed });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_COMPLIANCE_QUERY_ERROR', message: err.message });
+    }
+  });
+
+  // 49. POST /api/v1/fleet/devices/:id/evaluate-compliance
+  router.post('/api/v1/fleet/devices/:id/evaluate-compliance', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+
+    try {
+      const db = getDb();
+      const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(id);
+      if (!device) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Device not found' });
+        return;
+      }
+
+      const results = complianceEngine.evaluateDeviceCompliance(db, id, {
+        os_build: device.os_build,
+        bitlocker_status: device.bitlocker_status,
+        secure_boot_enabled: device.secure_boot_enabled,
+        tpm_present: device.tpm_present,
+        tpm_enabled: device.tpm_enabled
+      });
+
+      broadcastEvent('device_compliance_recalculated', { device_id: id, results_count: results.length });
+      sendJson(res, 200, { success: true, device_id: id, results });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_COMPLIANCE_EVAL_ERROR', message: err.message });
+    }
+  });
 }
 
 export default registerFleetRoutes;
+

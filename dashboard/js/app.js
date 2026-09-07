@@ -98,6 +98,9 @@ const App = {
       case 'updates':
         if (window.UpdateRingsTable) window.UpdateRingsTable.loadData();
         break;
+      case 'compliance':
+        if (window.CompliancePoliciesTable) window.CompliancePoliciesTable.loadData();
+        break;
       case 'settings':
         this.renderSettings();
         break;

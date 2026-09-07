@@ -395,6 +395,14 @@
         </div>
       </div>
 
+      <!-- ── Device Compliance & Zero-Trust Posture ── -->
+      <div class="bc-section" id="bc-compliance-section">
+        <div class="bc-section-title">🛡️ Device Compliance &amp; Zero-Trust Posture</div>
+        <div id="bc-compliance-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading compliance posture…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -546,6 +554,75 @@
         });
       }).catch(err => {
         updListEl.innerHTML = `<div style="color:#EF4444;font-size:12px;">Failed to load update status: ${esc(err.message)}</div>`;
+      });
+    }
+
+    // Fetch and populate compliance posture
+    const compListEl = body.querySelector('#bc-compliance-list');
+    if (compListEl && _currentDevice?.id) {
+      window.FleetAPI.getDeviceCompliance(_currentDevice.id).then(evals => {
+        if (!evals || evals.length === 0) {
+          compListEl.innerHTML = '<div style="color:var(--text-muted);">No compliance policies assigned or evaluated yet.</div>';
+          return;
+        }
+
+        compListEl.innerHTML = `
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            ${evals.map(ev => {
+              const isCompliant = ev.compliance_status === 'COMPLIANT';
+              const isInGrace = ev.compliance_status === 'IN_GRACE_PERIOD';
+              const isQuarantined = ev.device_status === 'quarantined' || ev.action_taken === 'QUARANTINE';
+              const color = isCompliant ? '#10B981' : (isInGrace ? '#F59E0B' : '#EF4444');
+              const label = isCompliant ? 'Compliant' : (isInGrace ? 'Grace Period' : (isQuarantined ? 'Quarantined' : 'Non-Compliant'));
+
+              let graceText = '';
+              if (isInGrace && ev.grace_period_expires_at) {
+                const diffMs = new Date(ev.grace_period_expires_at).getTime() - Date.now();
+                const diffHours = Math.max(0, Math.round(diffMs / (1000 * 60 * 60)));
+                graceText = `<div style="font-size:11px;color:#f59e0b;margin-top:4px;">⏳ Grace period expires in ~${diffHours}h</div>`;
+              }
+
+              const failedRules = (ev.rule_evaluations || []).filter(r => !r.passed);
+
+              return `
+                <div style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;">
+                  <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <div>
+                      <div style="font-weight:600;color:var(--text-bright);font-size:13px;">${esc(ev.policy_name)}</div>
+                      <div style="font-size:11px;color:var(--text-muted);">Action: ${esc(ev.action_taken || 'MARK_NON_COMPLIANT')}</div>
+                    </div>
+                    <span class="badge" style="background:${color}22;color:${color};border:1px solid ${color}55;font-weight:600;font-size:11px;">
+                      ${label}
+                    </span>
+                  </div>
+                  ${graceText}
+                  ${failedRules.length > 0 ? `
+                    <div style="font-size:11px;color:#f87171;background:#450a0a44;padding:4px 8px;border-radius:4px;border:1px solid #7f1d1d;">
+                      <strong>Failed rules:</strong> ${failedRules.map(r => esc(r.rule_name)).join(', ')}
+                    </div>
+                  ` : ''}
+                </div>
+              `;
+            }).join('')}
+            <div style="text-align:right;margin-top:4px;">
+              <button class="intune-btn small primary" id="btn-bc-eval-compliance" style="font-size:11px;padding:2px 8px;">
+                ⚡ Re-evaluate Compliance
+              </button>
+            </div>
+          </div>
+        `;
+
+        compListEl.querySelector('#btn-bc-eval-compliance')?.addEventListener('click', async () => {
+          try {
+            await window.FleetAPI.evaluateDeviceCompliance(_currentDevice.id);
+            if (typeof showToast === 'function') showToast('Compliance Evaluated', 'Zero-trust compliance rules evaluated against latest telemetry.', 'success');
+            open(_currentDevice.id);
+          } catch (err) {
+            if (typeof showToast === 'function') showToast('Evaluation Failed', err.message, 'critical');
+          }
+        });
+      }).catch(err => {
+        compListEl.innerHTML = `<div style="color:#EF4444;font-size:12px;">Failed to load compliance status: ${esc(err.message)}</div>`;
       });
     }
   }
