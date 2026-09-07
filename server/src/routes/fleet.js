@@ -15,6 +15,7 @@ import { complianceEngine } from '../services/complianceEngine.js';
 import { appManagementEngine } from '../services/appManagementEngine.js';
 import { endpointSecurityEngine } from '../services/endpointSecurityEngine.js';
 import { bitlockerEngine } from '../services/bitlockerEngine.js';
+import { lapsEngine } from '../services/lapsEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -2061,7 +2062,7 @@ try {
     }
   });
 
-  // 82. POST /api/v1/fleet/devices/:id/bitlocker/backup-keys
+    // 82. POST /api/v1/fleet/devices/:id/bitlocker/backup-keys
   router.post('/api/v1/fleet/devices/:id/bitlocker/backup-keys', (req, res) => {
     if (!requireFleetKey(req, res)) return;
     const { id } = req.params;
@@ -2072,6 +2073,208 @@ try {
       sendJson(res, 200, result);
     } catch (err) {
       sendJson(res, 400, { error: 'BITLOCKER_ESCROW_DISPATCH_ERROR', message: err.message });
+    }
+  });
+
+  // 83. GET /api/v1/fleet/laps/stats (Fleet-wide LAPS metrics)
+  router.get('/api/v1/fleet/laps/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const stats = lapsEngine.getLapsStats(db);
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'LAPS_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 84. GET /api/v1/fleet/laps/policies (List all LAPS policies)
+  router.get('/api/v1/fleet/laps/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const policies = lapsEngine.getPolicies(db);
+      sendJson(res, 200, { policies });
+    } catch (err) {
+      sendJson(res, 500, { error: 'LAPS_POLICIES_ERROR', message: err.message });
+    }
+  });
+
+  // 85. POST /api/v1/fleet/laps/policies (Create new LAPS policy)
+  router.post('/api/v1/fleet/laps/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const created = lapsEngine.createPolicy(db, body);
+      broadcastEvent('laps_policy_created', { policy_id: created.id, name: created.name });
+      sendJson(res, 201, created);
+    } catch (err) {
+      sendJson(res, 400, { error: 'LAPS_POLICY_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 86. GET /api/v1/fleet/laps/policies/:id (Get single LAPS policy)
+  router.get('/api/v1/fleet/laps/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const policy = lapsEngine.getPolicyById(db, id);
+      if (!policy) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'LAPS policy not found' });
+        return;
+      }
+      sendJson(res, 200, policy);
+    } catch (err) {
+      sendJson(res, 500, { error: 'LAPS_POLICY_GET_ERROR', message: err.message });
+    }
+  });
+
+  // 87. PATCH /api/v1/fleet/laps/policies/:id (Update LAPS policy)
+  router.patch('/api/v1/fleet/laps/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const updated = lapsEngine.updatePolicy(db, id, body);
+      if (!updated) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'LAPS policy not found' });
+        return;
+      }
+      broadcastEvent('laps_policy_updated', { policy_id: id, name: updated.name });
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 400, { error: 'LAPS_POLICY_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 88. DELETE /api/v1/fleet/laps/policies/:id (Delete LAPS policy)
+  router.delete('/api/v1/fleet/laps/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const deleted = lapsEngine.deletePolicy(db, id);
+      if (!deleted) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'LAPS policy not found' });
+        return;
+      }
+      broadcastEvent('laps_policy_deleted', { policy_id: id });
+      sendJson(res, 200, { success: true, deleted_id: id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'LAPS_POLICY_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 89. GET /api/v1/fleet/laps/passwords (List all managed passwords - zero-trust masked)
+  router.get('/api/v1/fleet/laps/passwords', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const url = new URL(req.url, 'http://localhost');
+    const search = url.searchParams.get('query') || url.searchParams.get('search') || '';
+    const status = url.searchParams.get('status') || '';
+    try {
+      const db = getDb();
+      const passwords = lapsEngine.getAllPasswords(db, { search, status });
+      sendJson(res, 200, { passwords, total: passwords.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'LAPS_PASSWORDS_ERROR', message: err.message });
+    }
+  });
+
+  // 90. GET /api/v1/fleet/devices/:id/laps (Get device LAPS posture & history)
+  router.get('/api/v1/fleet/devices/:id/laps', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const posture = lapsEngine.getDeviceLapsPosture(db, id);
+      sendJson(res, 200, posture);
+    } catch (err) {
+      sendJson(res, 404, { error: 'NOT_FOUND', message: err.message });
+    }
+  });
+
+  // 91. POST /api/v1/fleet/devices/:id/laps/reveal (Reveal active password with audit)
+  router.post('/api/v1/fleet/devices/:id/laps/reveal', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const clientIp = req.socket?.remoteAddress || '127.0.0.1';
+      const result = lapsEngine.revealPassword(db, id, {
+        accessed_by: body.accessed_by || 'Administrator',
+        access_reason: body.access_reason || '',
+        ip_address: clientIp
+      });
+
+      broadcastEvent('laps_password_revealed', {
+        device_id: id,
+        hostname: result.hostname,
+        account_name: result.account_name,
+        accessed_by: body.accessed_by || 'Administrator'
+      });
+
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'LAPS_REVEAL_ERROR', message: err.message });
+    }
+  });
+
+  // 92. POST /api/v1/fleet/laps/history/:id/reveal (Reveal historical password with audit)
+  router.post('/api/v1/fleet/laps/history/:id/reveal', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const clientIp = req.socket?.remoteAddress || '127.0.0.1';
+      const result = lapsEngine.revealHistoricalPassword(db, id, {
+        accessed_by: body.accessed_by || 'Administrator',
+        access_reason: body.access_reason || '',
+        ip_address: clientIp
+      });
+
+      broadcastEvent('laps_history_revealed', {
+        history_id: id,
+        device_id: result.device_id,
+        accessed_by: body.accessed_by || 'Administrator'
+      });
+
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'LAPS_HISTORY_REVEAL_ERROR', message: err.message });
+    }
+  });
+
+  // 93. POST /api/v1/fleet/devices/:id/laps/rotate (Trigger immediate on-demand rotation)
+  router.post('/api/v1/fleet/devices/:id/laps/rotate', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const result = lapsEngine.queuePasswordRotation(db, id, body.requested_by || 'Administrator');
+      broadcastEvent('laps_rotation_dispatched', { device_id: id, command_id: result.command_id });
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'LAPS_ROTATION_DISPATCH_ERROR', message: err.message });
+    }
+  });
+
+  // 94. GET /api/v1/fleet/laps/audit (Get LAPS audit trail)
+  router.get('/api/v1/fleet/laps/audit', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const url = new URL(req.url, 'http://localhost');
+    const limit = Math.min(500, parseInt(url.searchParams.get('limit') || '100', 10));
+    try {
+      const db = getDb();
+      const logs = lapsEngine.getAuditLogs(db, limit);
+      sendJson(res, 200, { audit_logs: logs, total: logs.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'LAPS_AUDIT_ERROR', message: err.message });
     }
   });
 }

@@ -180,7 +180,8 @@ export function initDb(dbOrPath, options = {}) {
         'APP_INSTALLED', 'APP_PROHIBITED_DETECTED', 'POLICY_DRIFT',
         'TPM_VIOLATION', 'SECUREBOOT_DISABLED', 'BITLOCKER_OFFLINE', 'WATCHDOG_HEARTBEAT',
         'MALWARE_THREAT_DETECTED', 'ANTIVIRUS_RTP_DISABLED',
-        'BITLOCKER_KEY_ESCROWED', 'BITLOCKER_KEY_REVEALED', 'BITLOCKER_ENCRYPTION_TRIGGERED'
+        'BITLOCKER_KEY_ESCROWED', 'BITLOCKER_KEY_REVEALED', 'BITLOCKER_ENCRYPTION_TRIGGERED',
+        'LAPS_PASSWORD_ESCROWED', 'LAPS_PASSWORD_REVEALED', 'LAPS_PASSWORD_ROTATED'
       )),
       event_id INTEGER,
       event_source TEXT NOT NULL,
@@ -535,6 +536,69 @@ export function initDb(dbOrPath, options = {}) {
       FOREIGN KEY(key_id) REFERENCES bitlocker_recovery_keys(id) ON DELETE CASCADE,
       FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
     );
+
+    -- 27. LAPS_POLICIES (Windows Local Administrator Password Solution Governance)
+    CREATE TABLE IF NOT EXISTS laps_policies (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      target_group_id TEXT DEFAULT 'grp-all',
+      admin_account_name TEXT NOT NULL DEFAULT 'Administrator',
+      password_complexity TEXT NOT NULL DEFAULT 'COMPLEX' CHECK(password_complexity IN ('NUMERIC', 'ALPHABETICAL', 'ALPHANUMERIC', 'COMPLEX')),
+      password_length INTEGER NOT NULL DEFAULT 16 CHECK(password_length >= 12 AND password_length <= 64),
+      password_age_days INTEGER NOT NULL DEFAULT 30 CHECK(password_age_days >= 1 AND password_age_days <= 365),
+      post_auth_reset_enabled INTEGER NOT NULL DEFAULT 0 CHECK(post_auth_reset_enabled IN (0, 1)),
+      post_auth_reset_delay_hours INTEGER NOT NULL DEFAULT 4,
+      auto_enable_account INTEGER NOT NULL DEFAULT 1 CHECK(auto_enable_account IN (0, 1)),
+      is_enabled INTEGER NOT NULL DEFAULT 1 CHECK(is_enabled IN (0, 1)),
+      created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET NULL
+    );
+
+    -- 28. LAPS_PASSWORDS (Encrypted Local Administrator Credentials & Expiration Tracking)
+    CREATE TABLE IF NOT EXISTS laps_passwords (
+      id TEXT PRIMARY KEY NOT NULL,
+      device_id TEXT NOT NULL UNIQUE,
+      account_name TEXT NOT NULL DEFAULT 'Administrator',
+      encrypted_password TEXT NOT NULL,
+      password_length INTEGER NOT NULL DEFAULT 16,
+      complexity_level TEXT NOT NULL DEFAULT 'COMPLEX',
+      last_rotated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      expires_at TEXT NOT NULL,
+      rotation_status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(rotation_status IN ('ACTIVE', 'ROTATION_PENDING', 'EXPIRED')),
+      last_accessed_at TEXT,
+      access_count INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    -- 29. LAPS_PASSWORD_HISTORY (Forensic Credential Archive & Rollback Vault)
+    CREATE TABLE IF NOT EXISTS laps_password_history (
+      id TEXT PRIMARY KEY NOT NULL,
+      device_id TEXT NOT NULL,
+      account_name TEXT NOT NULL,
+      encrypted_password TEXT NOT NULL,
+      password_length INTEGER NOT NULL,
+      complexity_level TEXT NOT NULL,
+      rotated_at TEXT NOT NULL,
+      retired_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      rotation_reason TEXT NOT NULL DEFAULT 'SCHEDULED' CHECK(rotation_reason IN ('INITIAL_ENROLLMENT', 'SCHEDULED_EXPIRATION', 'MANUAL_REQUEST', 'POST_AUTH_RESET')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    -- 30. LAPS_AUDIT_LOGS (Access, Reveal & Rotation Paper Trail)
+    CREATE TABLE IF NOT EXISTS laps_audit_logs (
+      id TEXT PRIMARY KEY NOT NULL,
+      device_id TEXT NOT NULL,
+      account_name TEXT NOT NULL DEFAULT 'Administrator',
+      action TEXT NOT NULL CHECK(action IN ('REVEAL', 'ROTATE_REQUEST', 'ESCROW', 'HISTORY_REVEAL')),
+      accessed_by TEXT NOT NULL DEFAULT 'Administrator',
+      access_reason TEXT DEFAULT 'Emergency Maintenance / LAPS Password Recovery',
+      ip_address TEXT DEFAULT '127.0.0.1',
+      accessed_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
   `);
 
   // Indexes
@@ -603,12 +667,20 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_bit_keys_prot_id ON bitlocker_recovery_keys(key_protector_id);
     CREATE INDEX IF NOT EXISTS idx_bit_audit_key ON bitlocker_audit_logs(key_id);
     CREATE INDEX IF NOT EXISTS idx_bit_audit_time ON bitlocker_audit_logs(accessed_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_laps_pol_target ON laps_policies(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_laps_pwd_dev ON laps_passwords(device_id);
+    CREATE INDEX IF NOT EXISTS idx_laps_pwd_status ON laps_passwords(rotation_status);
+    CREATE INDEX IF NOT EXISTS idx_laps_pwd_expires ON laps_passwords(expires_at);
+    CREATE INDEX IF NOT EXISTS idx_laps_hist_dev ON laps_password_history(device_id, rotated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_laps_audit_dev ON laps_audit_logs(device_id, accessed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_laps_audit_action ON laps_audit_logs(action);
   `);
 
   // Schema migrations for existing databases
   try {
     const tableSqlRow = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'security_events'").get();
-    if (tableSqlRow && tableSqlRow.sql && !tableSqlRow.sql.includes('BITLOCKER_KEY_ESCROWED')) {
+    if (tableSqlRow && tableSqlRow.sql && !tableSqlRow.sql.includes('LAPS_PASSWORD_ESCROWED')) {
       db.exec(`
         PRAGMA foreign_keys = OFF;
         CREATE TABLE security_events_migrated (
@@ -619,7 +691,8 @@ export function initDb(dbOrPath, options = {}) {
             'APP_INSTALLED', 'APP_PROHIBITED_DETECTED', 'POLICY_DRIFT',
             'TPM_VIOLATION', 'SECUREBOOT_DISABLED', 'BITLOCKER_OFFLINE', 'WATCHDOG_HEARTBEAT',
             'MALWARE_THREAT_DETECTED', 'ANTIVIRUS_RTP_DISABLED',
-            'BITLOCKER_KEY_ESCROWED', 'BITLOCKER_KEY_REVEALED', 'BITLOCKER_ENCRYPTION_TRIGGERED'
+            'BITLOCKER_KEY_ESCROWED', 'BITLOCKER_KEY_REVEALED', 'BITLOCKER_ENCRYPTION_TRIGGERED',
+            'LAPS_PASSWORD_ESCROWED', 'LAPS_PASSWORD_REVEALED', 'LAPS_PASSWORD_ROTATED'
           )),
           event_id INTEGER,
           event_source TEXT NOT NULL,
@@ -1556,6 +1629,79 @@ exit 0`,
       insertAudit.run(
         'audit-01', 'key-daddy-c', 'dev-daddy-pc',
         'Tony (Fleet Admin)', 'Scheduled annual disaster recovery drill',
+        '127.0.0.1', '-1 day'
+      );
+    }
+  }
+
+  // 13. LAPS Policies, Passwords & Audit Logs
+  const lapsPolCount = db.prepare('SELECT COUNT(*) as count FROM laps_policies').get().count;
+  if (lapsPolCount === 0) {
+    const insertLapsPol = db.prepare(`
+      INSERT OR IGNORE INTO laps_policies (
+        id, name, description, target_group_id, admin_account_name, password_complexity,
+        password_length, password_age_days, post_auth_reset_enabled, post_auth_reset_delay_hours, auto_enable_account, is_enabled
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertLapsPol.run(
+      'laps-enterprise-baseline',
+      'Windows 11 Enterprise LAPS Baseline',
+      'Enforces 16-character complex password rotation every 30 days on built-in Administrator account with automated escrow and zero-trust masking.',
+      'grp-all', 'Administrator', 'COMPLEX', 16, 30, 0, 4, 1, 1
+    );
+
+    insertLapsPol.run(
+      'laps-workstations-strict',
+      'High-Assurance Workstation LAPS',
+      'Maximum complexity 24-character password rotated every 14 days with post-authentication reset for dedicated developer and gaming rigs.',
+      'grp-workstations', 'Administrator', 'COMPLEX', 24, 14, 1, 2, 1, 1
+    );
+
+    insertLapsPol.run(
+      'laps-family-standard',
+      'Family Fleet Standard Admin LAPS',
+      'Rotates custom LocalAdmin account every 60 days with 14-character alphanumeric password for shared family laptops.',
+      'grp-family-laptops', 'LocalAdmin', 'ALPHANUMERIC', 14, 60, 0, 4, 1, 1
+    );
+
+    // Seed sample LAPS credentials if sample devices exist
+    const hasDaddy = db.prepare('SELECT id FROM devices WHERE id = ?').get('dev-daddy-pc');
+    if (hasDaddy) {
+      const insertPwd = db.prepare(`
+        INSERT OR IGNORE INTO laps_passwords (
+          id, device_id, account_name, encrypted_password, password_length,
+          complexity_level, last_rotated_at, expires_at, rotation_status, last_accessed_at, access_count, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, DATETIME('now', ?), DATETIME('now', ?), ?, DATETIME('now', ?), ?, DATETIME('now'))
+      `);
+
+      insertPwd.run(
+        'laps-pwd-daddy', 'dev-daddy-pc', 'Administrator',
+        'Kp9#mX2$vL5*qR8!', 16, 'COMPLEX',
+        '-5 days', '+25 days', 'ACTIVE', '-1 day', 1
+      );
+
+      insertPwd.run(
+        'laps-pwd-sarah', 'dev-sarah-laptop', 'LocalAdmin',
+        '7nK3#pW9@xR2$vM8', 16, 'COMPLEX',
+        '-28 days', '+2 days', 'ACTIVE', null, 0
+      );
+
+      insertPwd.run(
+        'laps-pwd-living', 'dev-livingroom-pc', 'Administrator',
+        '9vL2#mK8$pX5*qR3', 16, 'COMPLEX',
+        '-45 days', '-15 days', 'EXPIRED', null, 0
+      );
+
+      const insertLapsAudit = db.prepare(`
+        INSERT OR IGNORE INTO laps_audit_logs (
+          id, device_id, account_name, action, accessed_by, access_reason, ip_address, accessed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?))
+      `);
+
+      insertLapsAudit.run(
+        'laps-audit-01', 'dev-daddy-pc', 'Administrator', 'REVEAL',
+        'Tony (Fleet Admin)', 'Scheduled maintenance & local service reconfiguration',
         '127.0.0.1', '-1 day'
       );
     }

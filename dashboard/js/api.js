@@ -603,6 +603,80 @@ async function backupDeviceBitLockerKeys(deviceId) {
   });
 }
 
+/* ── Windows LAPS (Local Administrator Password Solution) ────────── */
+
+async function getLapsStats() {
+  return apiFetch('/api/v1/fleet/laps/stats');
+}
+
+async function getLapsPolicies() {
+  return apiFetch('/api/v1/fleet/laps/policies');
+}
+
+async function getLapsPolicy(id) {
+  return apiFetch(`/api/v1/fleet/laps/policies/${encodeURIComponent(id)}`);
+}
+
+async function createLapsPolicy(data) {
+  return apiFetch('/api/v1/fleet/laps/policies', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateLapsPolicy(id, data) {
+  return apiFetch(`/api/v1/fleet/laps/policies/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteLapsPolicy(id) {
+  return apiFetch(`/api/v1/fleet/laps/policies/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getLapsPasswords(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.query) qs.set('query', params.query);
+  if (params.status) qs.set('status', params.status);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/laps/passwords${qStr ? '?' + qStr : ''}`);
+}
+
+async function getDeviceLaps(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/laps`);
+}
+
+async function revealLapsPassword(deviceId, data = {}) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/laps/reveal`, {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function revealHistoricalLapsPassword(historyId, data = {}) {
+  return apiFetch(`/api/v1/fleet/laps/history/${encodeURIComponent(historyId)}/reveal`, {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function rotateDeviceLapsPassword(deviceId, data = {}) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/laps/rotate`, {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function getLapsAuditLogs(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.limit) qs.set('limit', params.limit);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/laps/audit${qStr ? '?' + qStr : ''}`);
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -694,6 +768,19 @@ window.FleetAPI = {
   rotateDeviceBitLockerKey,
   enableDeviceBitLocker,
   backupDeviceBitLockerKeys,
+  // Windows LAPS (Local Administrator Password Solution)
+  getLapsStats,
+  getLapsPolicies,
+  getLapsPolicy,
+  createLapsPolicy,
+  updateLapsPolicy,
+  deleteLapsPolicy,
+  getLapsPasswords,
+  getDeviceLaps,
+  revealLapsPassword,
+  revealHistoricalLapsPassword,
+  rotateDeviceLapsPassword,
+  getLapsAuditLogs,
   // Groups
   getGroups,
   createGroup,

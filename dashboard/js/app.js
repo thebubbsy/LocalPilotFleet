@@ -110,6 +110,9 @@ const App = {
       case 'bitlocker':
         if (window.BitLockerTable) window.BitLockerTable.init();
         break;
+      case 'laps':
+        if (window.LapsTable) window.LapsTable.init();
+        break;
       case 'settings':
         this.renderSettings();
         break;

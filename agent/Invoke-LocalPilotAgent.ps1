@@ -1133,6 +1133,134 @@ if ($Mode -eq 'Heartbeat') {
                     Write-AgentLog 'INFO' 'BitLocker cmdlets not present on this Windows edition (Home or non-BitLocker OS)'
                 }
             }
+
+            # ── Windows LAPS (Local Administrator Password Solution) Governance ─
+            if ($resp.laps_policy) {
+                if (-not (Get-Variable -Name 'LastLapsAudit' -Scope Script -ErrorAction SilentlyContinue)) {
+                    $script:LastLapsAudit = $null
+                }
+                $now = Get-Date
+                $shouldAuditLaps = $false
+                if ($null -eq $script:LastLapsAudit) {
+                    $shouldAuditLaps = $true
+                } elseif (($now - $script:LastLapsAudit).TotalSeconds -ge 300) { # 5-minute interval
+                    $shouldAuditLaps = $true
+                }
+
+                if ($shouldAuditLaps) {
+                    $script:LastLapsAudit = $now
+                    $lapsPol = $resp.laps_policy
+                    $accountName = if ($lapsPol.admin_account_name) { $lapsPol.admin_account_name } else { 'Administrator' }
+                    Write-AgentLog 'INFO' "Auditing Windows LAPS posture for account [$accountName]..."
+
+                    $isAdmin = $false
+                    try {
+                        $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+                    } catch {}
+
+                    $lapsRegPath = 'HKLM:\SOFTWARE\LocalPilotFleet\LAPS'
+                    $lastRotated = $null
+                    if (Test-Path $lapsRegPath -ErrorAction SilentlyContinue) {
+                        try {
+                            $regVal = Get-ItemPropertyValue -Path $lapsRegPath -Name 'LastRotated' -ErrorAction SilentlyContinue
+                            if ($regVal) { $lastRotated = [datetime]$regVal }
+                        } catch {}
+                    }
+
+                    $maxAgeDays = if ($lapsPol.password_age_days) { [int]$lapsPol.password_age_days } else { 30 }
+                    $isExpired = $false
+                    if ($null -eq $lastRotated) {
+                        $isExpired = $true
+                    } elseif (($now - $lastRotated).TotalDays -ge $maxAgeDays) {
+                        $isExpired = $true
+                    }
+
+                    if ($isAdmin -and ($isExpired -or $null -eq $lastRotated)) {
+                        $pwdLen = if ($lapsPol.password_length -and [int]$lapsPol.password_length -ge 12) { [int]$lapsPol.password_length } else { 16 }
+                        $complexity = if ($lapsPol.password_complexity) { $lapsPol.password_complexity } else { 'COMPLEX' }
+
+                        $charsUpper = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
+                        $charsLower = 'abcdefghijkmnopqrstuvwxyz'
+                        $charsDigits = '23456789'
+                        $charsSpecial = '!@#$%^&*()_+~|}{[]:;?><,./-='
+
+                        $charPool = $charsUpper + $charsLower + $charsDigits
+                        if ($complexity -eq 'COMPLEX') {
+                            $charPool += $charsSpecial
+                        }
+
+                        $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+                        $bytes = [byte[]]::new($pwdLen)
+                        $rng.GetBytes($bytes)
+                        $newPwdArr = [char[]]::new($pwdLen)
+                        for ($i = 0; $i -lt $pwdLen; $i++) {
+                            $newPwdArr[$i] = $charPool[$bytes[$i] % $charPool.Length]
+                        }
+                        $newPwdArr[0] = $charsUpper[$bytes[0] % $charsUpper.Length]
+                        $newPwdArr[1] = $charsLower[$bytes[1] % $charsLower.Length]
+                        $newPwdArr[2] = $charsDigits[$bytes[2] % $charsDigits.Length]
+                        if ($complexity -eq 'COMPLEX') {
+                            $newPwdArr[3] = $charsSpecial[$bytes[3] % $charsSpecial.Length]
+                        }
+                        $newPassword = -join $newPwdArr
+
+                        $applied = $false
+                        try {
+                            $userObj = [ADSI]"WinNT://$env:COMPUTERNAME/$accountName,user"
+                            if ($null -ne $userObj -and $null -ne $userObj.Name) {
+                                if ($lapsPol.auto_enable_account -and ($userObj.UserFlags.Value -band 2)) {
+                                    $userObj.UserFlags = $userObj.UserFlags.Value -bxor 2
+                                    $userObj.SetInfo()
+                                    Write-AgentLog 'INFO' "Auto-enabled account [$accountName] per LAPS policy"
+                                }
+                                $userObj.SetPassword($newPassword)
+                                $applied = $true
+                            }
+                        } catch {
+                            try {
+                                $secPwd = ConvertTo-SecureString $newPassword -AsPlainText -Force
+                                Set-LocalUser -Name $accountName -Password $secPwd -ErrorAction Stop
+                                $applied = $true
+                            } catch {
+                                Write-AgentLog 'WARN' "Could not update local user password: $($_.Exception.Message)"
+                            }
+                        }
+
+                        if ($applied) {
+                            try {
+                                $escrowPayload = @{
+                                    account_name     = $accountName
+                                    password         = $newPassword
+                                    password_length  = $pwdLen
+                                    complexity_level = $complexity
+                                    rotation_reason  = if ($null -eq $lastRotated) { 'INITIAL_ENROLLMENT' } else { 'SCHEDULED_EXPIRATION' }
+                                }
+                                Invoke-RestMethod `
+                                    -Uri        "$baseUrl/api/v1/nodes/$deviceId/laps-escrow" `
+                                    -Method     POST `
+                                    -Body       ($escrowPayload | ConvertTo-Json -Compress) `
+                                    -Headers    $authHeaders `
+                                    -TimeoutSec 10 `
+                                    -ErrorAction Stop | Out-Null
+
+                                try {
+                                    if (-not (Test-Path $lapsRegPath -ErrorAction SilentlyContinue)) {
+                                        New-Item -Path $lapsRegPath -Force | Out-Null
+                                    }
+                                    Set-ItemProperty -Path $lapsRegPath -Name 'LastRotated' -Value ($now.ToString('o'))
+                                    Set-ItemProperty -Path $lapsRegPath -Name 'AccountName' -Value $accountName
+                                } catch {}
+
+                                Write-AgentLog 'INFO' "Successfully rotated and escrowed LAPS password for [$accountName]"
+                            } catch {
+                                Write-AgentLog 'ERROR' "Failed to escrow LAPS password: $($_.Exception.Message)"
+                            }
+                        }
+                    } elseif (-not $isAdmin) {
+                        Write-AgentLog 'INFO' "LAPS password rotation requires administrative elevation (agent running in standard user context)"
+                    }
+                }
+            }
         } catch {
             Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
             if (-not $Continuous) { exit 1 }

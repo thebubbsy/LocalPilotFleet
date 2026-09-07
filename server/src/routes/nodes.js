@@ -17,6 +17,7 @@ import { complianceEngine } from '../services/complianceEngine.js';
 import { appManagementEngine } from '../services/appManagementEngine.js';
 import { endpointSecurityEngine } from '../services/endpointSecurityEngine.js';
 import { bitlockerEngine } from '../services/bitlockerEngine.js';
+import { lapsEngine } from '../services/lapsEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -306,6 +307,9 @@ export function registerNodeRoutes(router) {
       // Check for assigned BitLocker disk encryption policy
       const assignedBitLockerPolicy = bitlockerEngine.getEffectivePolicyForDevice(db, deviceId);
 
+      // Check for assigned LAPS policy
+      const assignedLapsPolicy = lapsEngine.getEffectivePolicyForDevice(db, deviceId);
+
       sendJson(res, 200, {
         acknowledged: true,
         server_time: new Date().toISOString(),
@@ -317,7 +321,8 @@ export function registerNodeRoutes(router) {
         compliance_policies: assignedCompliancePolicies,
         assigned_apps: assignedApps,
         endpoint_security_policy: assignedSecurityPolicy,
-        bitlocker_policy: assignedBitLockerPolicy
+        bitlocker_policy: assignedBitLockerPolicy,
+        laps_policy: assignedLapsPolicy
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -936,6 +941,47 @@ export function registerNodeRoutes(router) {
       sendJson(res, 201, result);
     } catch (err) {
       sendJson(res, 500, { error: 'NODE_BITLOCKER_ESCROW_ERROR', message: err.message });
+    }
+  });
+
+  // 23. GET /api/v1/nodes/:id/laps-policy (Get effective LAPS policy for node)
+  router.get('/api/v1/nodes/:id/laps-policy', async (req, res) => {
+    const targetDeviceId = req.params.id;
+    if (!requireFleetKeyOrNodeToken(req, res, targetDeviceId)) return;
+
+    try {
+      const db = getDb();
+      const policy = lapsEngine.getEffectivePolicyForDevice(db, targetDeviceId);
+      sendJson(res, 200, { policy });
+    } catch (err) {
+      sendJson(res, 500, { error: 'NODE_LAPS_POLICY_ERROR', message: err.message });
+    }
+  });
+
+  // 24. POST /api/v1/nodes/:id/laps-escrow (Escrow newly rotated local admin password)
+  router.post('/api/v1/nodes/:id/laps-escrow', async (req, res) => {
+    const targetDeviceId = req.params.id;
+    if (!requireFleetKeyOrNodeToken(req, res, targetDeviceId)) return;
+
+    const body = req.body || {};
+    if (!body.password) {
+      sendJson(res, 400, { error: 'BAD_REQUEST', message: 'Missing password in escrow payload' });
+      return;
+    }
+
+    try {
+      const db = getDb();
+      const result = lapsEngine.escrowPassword(db, targetDeviceId, body);
+
+      broadcastEvent('laps_password_escrowed', {
+        device_id: targetDeviceId,
+        account_name: result.account_name,
+        expires_at: result.expires_at
+      });
+
+      sendJson(res, 201, result);
+    } catch (err) {
+      sendJson(res, 500, { error: 'NODE_LAPS_ESCROW_ERROR', message: err.message });
     }
   });
 }

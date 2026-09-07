@@ -427,6 +427,14 @@
         </div>
       </div>
 
+      <!-- ── Windows LAPS Administrator Password ── -->
+      <div class="bc-section" id="bc-laps-section">
+        <div class="bc-section-title">🔐 Windows LAPS Administrator Password</div>
+        <div id="bc-laps-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading LAPS credential posture…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -882,6 +890,108 @@
         });
       }).catch(err => {
         blListEl.innerHTML = `<div style="color:#EF4444;font-size:12px;">Failed to load BitLocker status: ${esc(err.message)}</div>`;
+      });
+    }
+
+    // Fetch and populate LAPS credential posture
+    const lapsListEl = body.querySelector('#bc-laps-list');
+    if (lapsListEl && _currentDevice?.id) {
+      window.FleetAPI.getDeviceLaps(_currentDevice.id).then(laps => {
+        if (!laps || !laps.credentials || laps.credentials.length === 0) {
+          lapsListEl.innerHTML = `
+            <div style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:12px;display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <span class="badge badge-neutral" style="font-size:11px;">Not Configured</span>
+                <span style="margin-left:8px;color:var(--text-muted);">No LAPS administrator passwords escrowed for this device.</span>
+              </div>
+              <button class="intune-btn small primary" id="btn-bc-laps-rotate-init" style="font-size:11px;padding:3px 8px;">
+                🔄 Rotate / Initialize
+              </button>
+            </div>
+          `;
+          lapsListEl.querySelector('#btn-bc-laps-rotate-init')?.addEventListener('click', async () => {
+            try {
+              await window.FleetAPI.rotateDeviceLapsPassword(_currentDevice.id, { reason: 'Initial manual rotation from Device Drawer' });
+              if (typeof showToast === 'function') showToast('Rotation Queued', `LAPS rotation command queued for ${_currentDevice.hostname}`, 'info');
+            } catch (err) {
+              if (typeof showToast === 'function') showToast('Rotation Failed', err.message, 'critical');
+            }
+          });
+          return;
+        }
+
+        const cred = laps.credentials[0];
+        const isExpiringSoon = cred.is_expired || (cred.expires_in_days !== null && cred.expires_in_days <= 3);
+        const statusColor = cred.is_expired ? '#ef4444' : (isExpiringSoon ? '#f59e0b' : '#10b981');
+        const statusLabel = cred.is_expired ? 'EXPIRED' : (isExpiringSoon ? `Expires in ${cred.expires_in_days}d` : 'ACTIVE');
+
+        lapsListEl.innerHTML = `
+          <div style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:12px;display:flex;flex-direction:column;gap:10px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <span class="badge" style="background:${statusColor}22;color:${statusColor};border:1px solid ${statusColor}55;font-weight:600;font-size:11px;">
+                  ${statusLabel}
+                </span>
+                <span style="margin-left:8px;font-weight:600;font-size:13px;color:var(--text-bright);">
+                  Account: <span class="mono">${esc(cred.account_name)}</span>
+                </span>
+              </div>
+              <div style="display:flex;gap:6px;">
+                <button class="intune-btn small primary" id="btn-bc-laps-reveal" style="font-size:11px;padding:3px 8px;">
+                  👁️ Reveal Password
+                </button>
+                <button class="intune-btn small" id="btn-bc-laps-rotate" style="font-size:11px;padding:3px 8px;">
+                  🔄 Rotate
+                </button>
+              </div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;">
+              <div><span style="color:var(--text-muted);">Current Password:</span> <span class="mono" id="bc-laps-pwd-display" style="background:#0f172a;padding:2px 6px;border-radius:4px;border:1px solid #334155;">${esc(cred.masked_password || '••••••••••••••••')}</span></div>
+              <div><span style="color:var(--text-muted);">Complexity:</span> <span class="badge badge-neutral" style="font-size:10px;">${esc(cred.complexity_level || 'COMPLEX')}</span> (${cred.password_length} chars)</div>
+              <div><span style="color:var(--text-muted);">Last Rotated:</span> ${cred.last_rotated_at ? new Date(cred.last_rotated_at).toLocaleString() : 'Never'}</div>
+              <div><span style="color:var(--text-muted);">Access Count:</span> ${cred.access_count || 0} audited access(es)</div>
+            </div>
+
+            <div style="border-top:1px solid #334155;padding-top:8px;display:flex;justify-content:space-between;align-items:center;">
+              <div style="font-size:11px;color:var(--text-muted);">
+                Policy: <span style="color:var(--text-bright);font-weight:500;">${esc(laps.policy ? laps.policy.name : 'Default Fleet Policy')}</span>
+                ${(laps.history || []).length > 0 ? ` (${laps.history.length} historical version(s) archived)` : ''}
+              </div>
+              <button class="intune-btn small" id="btn-bc-view-laps-vault" style="font-size:11px;padding:2px 8px;">
+                🔐 View in LAPS Vault &gt;
+              </button>
+            </div>
+          </div>
+        `;
+
+        lapsListEl.querySelector('#btn-bc-laps-reveal')?.addEventListener('click', () => {
+          if (window.LapsTable && typeof window.LapsTable.reveal === 'function') {
+            window.LapsTable.reveal(_currentDevice.id, _currentDevice.hostname, cred.account_name);
+          } else {
+            prompt('Device LAPS Password', 'Please use the LAPS Vault tab to reveal passwords with audit justification.');
+          }
+        });
+
+        lapsListEl.querySelector('#btn-bc-laps-rotate')?.addEventListener('click', async () => {
+          const reason = prompt(`Enter justification for rotating LAPS password on ${_currentDevice.hostname}:`, 'Scheduled administrative rotation');
+          if (!reason) return;
+          try {
+            await window.FleetAPI.rotateDeviceLapsPassword(_currentDevice.id, { reason, account_name: cred.account_name });
+            if (typeof showToast === 'function') showToast('Rotation Dispatched', `Queued LAPS rotation command for ${_currentDevice.hostname}`, 'info');
+          } catch (err) {
+            if (typeof showToast === 'function') showToast('Rotation Failed', err.message, 'critical');
+          }
+        });
+
+        lapsListEl.querySelector('#btn-bc-view-laps-vault')?.addEventListener('click', () => {
+          close();
+          if (window.App && typeof window.App.navigate === 'function') {
+            window.App.navigate('laps');
+          }
+        });
+      }).catch(err => {
+        lapsListEl.innerHTML = `<div style="color:#EF4444;font-size:12px;">Failed to load LAPS credential posture: ${esc(err.message)}</div>`;
       });
     }
   }
