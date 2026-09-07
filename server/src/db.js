@@ -182,7 +182,8 @@ export function initDb(dbOrPath, options = {}) {
         'MALWARE_THREAT_DETECTED', 'ANTIVIRUS_RTP_DISABLED',
         'BITLOCKER_KEY_ESCROWED', 'BITLOCKER_KEY_REVEALED', 'BITLOCKER_ENCRYPTION_TRIGGERED',
         'LAPS_PASSWORD_ESCROWED', 'LAPS_PASSWORD_REVEALED', 'LAPS_PASSWORD_ROTATED',
-        'EPM_ELEVATION_REQUESTED', 'EPM_ELEVATION_APPROVED', 'EPM_ELEVATION_DENIED', 'EPM_PROCESS_ELEVATED'
+        'EPM_ELEVATION_REQUESTED', 'EPM_ELEVATION_APPROVED', 'EPM_ELEVATION_DENIED', 'EPM_PROCESS_ELEVATED',
+        'AUTOPILOT_DEVICE_IMPORTED', 'AUTOPILOT_PROFILE_ASSIGNED', 'AUTOPILOT_PROVISIONING_STARTED', 'AUTOPILOT_PROVISIONING_COMPLETED', 'AUTOPILOT_PROVISIONING_FAILED'
       )),
       event_id INTEGER,
       event_source TEXT NOT NULL,
@@ -673,6 +674,80 @@ export function initDb(dbOrPath, options = {}) {
       FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
       FOREIGN KEY(rule_id) REFERENCES epm_elevation_rules(id) ON DELETE SET NULL
     );
+
+    -- 35. AUTOPILOT_PROFILES (Windows Autopilot OOBE Deployment Profiles)
+    CREATE TABLE IF NOT EXISTS autopilot_profiles (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL UNIQUE,
+      description TEXT,
+      deployment_mode TEXT NOT NULL DEFAULT 'USER_DRIVEN' CHECK(deployment_mode IN ('USER_DRIVEN', 'SELF_DEPLOYING')),
+      join_type TEXT NOT NULL DEFAULT 'WORKGROUP_LOCAL' CHECK(join_type IN ('WORKGROUP_LOCAL', 'ENTRA_CLOUD', 'HYBRID_DOMAIN')),
+      account_type TEXT NOT NULL DEFAULT 'STANDARD' CHECK(account_type IN ('STANDARD', 'ADMINISTRATOR')),
+      language_locale TEXT NOT NULL DEFAULT 'os-default',
+      keyboard_layout TEXT NOT NULL DEFAULT 'os-default',
+      device_name_template TEXT DEFAULT 'FLEET-%RAND:4%',
+      skip_eula INTEGER NOT NULL DEFAULT 1 CHECK(skip_eula IN (0, 1)),
+      skip_privacy_settings INTEGER NOT NULL DEFAULT 1 CHECK(skip_privacy_settings IN (0, 1)),
+      skip_user_licensing INTEGER NOT NULL DEFAULT 1 CHECK(skip_user_licensing IN (0, 1)),
+      target_group_id TEXT DEFAULT 'grp-all',
+      is_default INTEGER NOT NULL DEFAULT 0 CHECK(is_default IN (0, 1)),
+      created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET NULL
+    );
+
+    -- 36. AUTOPILOT_DEVICES (Pre-provisioned Hardware Hashes & Lifecycle Registry)
+    CREATE TABLE IF NOT EXISTS autopilot_devices (
+      id TEXT PRIMARY KEY NOT NULL,
+      serial_number TEXT NOT NULL UNIQUE,
+      hardware_hash TEXT NOT NULL,
+      windows_product_id TEXT DEFAULT '',
+      model TEXT DEFAULT 'Generic PC',
+      manufacturer TEXT DEFAULT 'OEM',
+      group_tag TEXT DEFAULT '',
+      assigned_user TEXT DEFAULT '',
+      profile_id TEXT,
+      deployment_status TEXT NOT NULL DEFAULT 'UNASSIGNED' CHECK(deployment_status IN ('UNASSIGNED', 'ASSIGNED', 'PROVISIONING', 'ENROLLED', 'FAILED')),
+      device_id TEXT,
+      last_contact_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(profile_id) REFERENCES autopilot_profiles(id) ON DELETE SET NULL,
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE SET NULL
+    );
+
+    -- 37. ENROLLMENT_STATUS_PAGE_POLICIES (ESP Progress, App Blocker & Timeout Governance)
+    CREATE TABLE IF NOT EXISTS enrollment_status_page_policies (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL UNIQUE,
+      description TEXT,
+      show_progress INTEGER NOT NULL DEFAULT 1 CHECK(show_progress IN (0, 1)),
+      block_until_completed INTEGER NOT NULL DEFAULT 1 CHECK(block_until_completed IN (0, 1)),
+      allow_user_reset_on_failure INTEGER NOT NULL DEFAULT 1 CHECK(allow_user_reset_on_failure IN (0, 1)),
+      timeout_minutes INTEGER NOT NULL DEFAULT 60 CHECK(timeout_minutes >= 10 AND timeout_minutes <= 1440),
+      required_app_ids_json TEXT NOT NULL DEFAULT '[]',
+      required_script_ids_json TEXT NOT NULL DEFAULT '[]',
+      target_group_id TEXT DEFAULT 'grp-all',
+      is_default INTEGER NOT NULL DEFAULT 0 CHECK(is_default IN (0, 1)),
+      created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET NULL
+    );
+
+    -- 38. AUTOPILOT_PROVISIONING_EVENTS (ESP Phase Progression & Hardware Telemetry Log)
+    CREATE TABLE IF NOT EXISTS autopilot_provisioning_events (
+      id TEXT PRIMARY KEY NOT NULL,
+      autopilot_device_id TEXT NOT NULL,
+      device_id TEXT,
+      phase TEXT NOT NULL CHECK(phase IN ('DEVICE_PREPARATION', 'DEVICE_SETUP', 'ACCOUNT_SETUP')),
+      step_name TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('IN_PROGRESS', 'COMPLETED', 'FAILED', 'SKIPPED')),
+      error_code TEXT,
+      details TEXT,
+      timestamp TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(autopilot_device_id) REFERENCES autopilot_devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE SET NULL
+    );
   `);
 
   // Indexes
@@ -756,12 +831,23 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_epm_req_status ON epm_elevation_requests(status);
     CREATE INDEX IF NOT EXISTS idx_epm_log_dev ON epm_elevation_logs(device_id);
     CREATE INDEX IF NOT EXISTS idx_epm_log_exec ON epm_elevation_logs(executed_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_ap_prof_target ON autopilot_profiles(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_ap_dev_serial ON autopilot_devices(serial_number);
+    CREATE INDEX IF NOT EXISTS idx_ap_dev_status ON autopilot_devices(deployment_status);
+    CREATE INDEX IF NOT EXISTS idx_ap_dev_group_tag ON autopilot_devices(group_tag);
+    CREATE INDEX IF NOT EXISTS idx_ap_dev_profile ON autopilot_devices(profile_id);
+    CREATE INDEX IF NOT EXISTS idx_ap_dev_device_id ON autopilot_devices(device_id);
+    CREATE INDEX IF NOT EXISTS idx_ap_esp_target ON enrollment_status_page_policies(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_ap_prov_dev ON autopilot_provisioning_events(autopilot_device_id);
+    CREATE INDEX IF NOT EXISTS idx_ap_prov_phase ON autopilot_provisioning_events(phase);
+    CREATE INDEX IF NOT EXISTS idx_ap_prov_time ON autopilot_provisioning_events(timestamp DESC);
   `);
 
   // Schema migrations for existing databases
   try {
     const tableSqlRow = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'security_events'").get();
-    if (tableSqlRow && tableSqlRow.sql && !tableSqlRow.sql.includes('EPM_ELEVATION_REQUESTED')) {
+    if (tableSqlRow && tableSqlRow.sql && !tableSqlRow.sql.includes('AUTOPILOT_DEVICE_IMPORTED')) {
       db.exec(`
         PRAGMA foreign_keys = OFF;
         CREATE TABLE security_events_migrated (
@@ -774,7 +860,8 @@ export function initDb(dbOrPath, options = {}) {
             'MALWARE_THREAT_DETECTED', 'ANTIVIRUS_RTP_DISABLED',
             'BITLOCKER_KEY_ESCROWED', 'BITLOCKER_KEY_REVEALED', 'BITLOCKER_ENCRYPTION_TRIGGERED',
             'LAPS_PASSWORD_ESCROWED', 'LAPS_PASSWORD_REVEALED', 'LAPS_PASSWORD_ROTATED',
-            'EPM_ELEVATION_REQUESTED', 'EPM_ELEVATION_APPROVED', 'EPM_ELEVATION_DENIED', 'EPM_PROCESS_ELEVATED'
+            'EPM_ELEVATION_REQUESTED', 'EPM_ELEVATION_APPROVED', 'EPM_ELEVATION_DENIED', 'EPM_PROCESS_ELEVATED',
+            'AUTOPILOT_DEVICE_IMPORTED', 'AUTOPILOT_PROFILE_ASSIGNED', 'AUTOPILOT_PROVISIONING_STARTED', 'AUTOPILOT_PROVISIONING_COMPLETED', 'AUTOPILOT_PROVISIONING_FAILED'
           )),
           event_id INTEGER,
           event_source TEXT NOT NULL,
@@ -1901,5 +1988,97 @@ exit 0`,
         18944, 'powershell.exe', '-45 minutes'
       );
     }
+  }
+
+  // 15. Autopilot Profiles, Devices, ESP Policies & Provisioning Events
+  const apProfCount = db.prepare('SELECT COUNT(*) as count FROM autopilot_profiles').get().count;
+  if (apProfCount === 0) {
+    const insertApProf = db.prepare(`
+      INSERT OR IGNORE INTO autopilot_profiles (
+        id, name, description, deployment_mode, join_type, account_type,
+        language_locale, keyboard_layout, device_name_template,
+        skip_eula, skip_privacy_settings, skip_user_licensing,
+        target_group_id, is_default
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertApProf.run(
+      'ap-prof-standard',
+      'Standard Enterprise Workstation',
+      'User-driven deployment with standard user privileges, automated naming, and streamlined OOBE privacy skips.',
+      'USER_DRIVEN', 'WORKGROUP_LOCAL', 'STANDARD',
+      'en-US', '0409:00000409', 'FLEET-WK-%RAND:4%',
+      1, 1, 1, 'grp-all', 1
+    );
+
+    insertApProf.run(
+      'ap-prof-kiosk',
+      'Self-Deploying Lab & Kiosk Rig',
+      'Zero-touch self-deploying profile granting local administrative privileges for homelab virtualization and automated testing rigs.',
+      'SELF_DEPLOYING', 'WORKGROUP_LOCAL', 'ADMINISTRATOR',
+      'en-US', '0409:00000409', 'FLEET-LAB-%RAND:4%',
+      1, 1, 1, 'grp-workstations', 0
+    );
+
+    const insertEsp = db.prepare(`
+      INSERT OR IGNORE INTO enrollment_status_page_policies (
+        id, name, description, show_progress, block_until_completed,
+        allow_user_reset_on_failure, timeout_minutes, required_app_ids_json, required_script_ids_json,
+        target_group_id, is_default
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertEsp.run(
+      'esp-default',
+      'Default Fleet Provisioning ESP',
+      'Standard 60-minute blocking enrollment status page displaying preparation, device setup, and account setup phases.',
+      1, 1, 1, 60, '[]', '[]', 'grp-all', 1
+    );
+
+    const insertApDev = db.prepare(`
+      INSERT OR IGNORE INTO autopilot_devices (
+        id, serial_number, hardware_hash, windows_product_id, model, manufacturer,
+        group_tag, assigned_user, profile_id, deployment_status, device_id, last_contact_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?))
+    `);
+
+    const hasDaddy = db.prepare('SELECT id, serial_number FROM devices WHERE id = ?').get('dev-daddy-pc');
+    const daddySerial = (hasDaddy && hasDaddy.serial_number) ? hasDaddy.serial_number : 'System Serial Number';
+
+    insertApDev.run(
+      'ap-dev-01', daddySerial,
+      'T1BSR1VJRDAwMDEyMzQ1Njc4OTAqKipXRUJfSEFSRFdBUkVfSEFTSF9TQU1QTEVfQ0VSVElGSUVEKioqT0VBX0hBU0g=',
+      '00330-80000-00000-AAOEM', 'Custom Gaming Workstation', 'ASUSTeK COMPUTER INC.',
+      'Workstations', 'tony@localpilot.fleet', 'ap-prof-standard',
+      hasDaddy ? 'ENROLLED' : 'ASSIGNED', hasDaddy ? hasDaddy.id : null, '-10 minutes'
+    );
+
+    insertApDev.run(
+      'ap-dev-02', 'VMW-99210-LAB',
+      'VjEtMS4wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=',
+      '00331-10000-00000-AAOEM', 'VMware Virtual Platform', 'VMware, Inc.',
+      'Homelab', 'lab-admin@localpilot.fleet', 'ap-prof-kiosk',
+      'ASSIGNED', null, '-2 hours'
+    );
+
+    insertApDev.run(
+      'ap-dev-03', 'DELL-XPS-78213',
+      'VjEtMi4wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=',
+      '00330-50000-00000-AAOEM', 'XPS 15 9530', 'Dell Inc.',
+      'Executive', '', null,
+      'UNASSIGNED', null, null
+    );
+
+    const insertProvEvent = db.prepare(`
+      INSERT OR IGNORE INTO autopilot_provisioning_events (
+        id, autopilot_device_id, device_id, phase, step_name, status, error_code, details, timestamp
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?))
+    `);
+
+    insertProvEvent.run('ap-ev-01', 'ap-dev-01', hasDaddy ? hasDaddy.id : null, 'DEVICE_PREPARATION', 'Hardware Attestation & TPM 2.0 Validation', 'COMPLETED', null, 'TPM 2.0 endorsement key verified', '-3 hours');
+    insertProvEvent.run('ap-ev-02', 'ap-dev-01', hasDaddy ? hasDaddy.id : null, 'DEVICE_PREPARATION', 'Zero-Trust Host Identity Issuance', 'COMPLETED', null, 'Node token generated and TLS certificate bound', '-2 hours 55 minutes');
+    insertProvEvent.run('ap-ev-03', 'ap-dev-01', hasDaddy ? hasDaddy.id : null, 'DEVICE_SETUP', 'Security Baselines & BitLocker Encryption', 'COMPLETED', null, 'Applied enterprise baseline policy', '-2 hours 45 minutes');
+    insertProvEvent.run('ap-ev-04', 'ap-dev-01', hasDaddy ? hasDaddy.id : null, 'DEVICE_SETUP', 'Required Core Applications', 'COMPLETED', null, 'Installed 3 required packages', '-2 hours 30 minutes');
+    insertProvEvent.run('ap-ev-05', 'ap-dev-01', hasDaddy ? hasDaddy.id : null, 'ACCOUNT_SETUP', 'Primary User Account & LAPS Provisioning', 'COMPLETED', null, 'Created standard user profile and escrowed admin LAPS password', '-2 hours 15 minutes');
   }
 }

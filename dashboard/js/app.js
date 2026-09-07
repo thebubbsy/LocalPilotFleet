@@ -116,6 +116,9 @@ const App = {
       case 'epm':
         if (window.EpmTable) window.EpmTable.init();
         break;
+      case 'autopilot':
+        if (window.AutopilotTable) window.AutopilotTable.init();
+        break;
       case 'settings':
         this.renderSettings();
         break;

@@ -1328,6 +1328,37 @@ if ($Mode -eq 'Heartbeat') {
                     } catch {}
                 }
             }
+
+            # ── Windows Autopilot Hardware Identity & ESP Provisioning ─────────
+            if ($resp.autopilot) {
+                if (-not (Get-Variable -Name 'LastAutopilotAudit' -Scope Script -ErrorAction SilentlyContinue)) {
+                    $script:LastAutopilotAudit = $null
+                }
+                $now = Get-Date
+                $shouldAuditAutopilot = $false
+                if ($null -eq $script:LastAutopilotAudit) {
+                    $shouldAuditAutopilot = $true
+                } elseif (($now - $script:LastAutopilotAudit).TotalSeconds -ge 300) { # 5-minute interval
+                    $shouldAuditAutopilot = $true
+                }
+
+                if ($shouldAuditAutopilot) {
+                    $script:LastAutopilotAudit = $now
+                    $apData = $resp.autopilot
+                    $isReg = [bool]$apData.is_registered
+                    $statusStr = if ($isReg -and $apData.autopilot_device) { $apData.autopilot_device.deployment_status } else { 'UNREGISTERED' }
+                    Write-AgentLog 'INFO' "Audited Autopilot provisioning state: $statusStr (Registered: $isReg)"
+
+                    # Cache profile and ESP to ProgramData
+                    $apCacheDir = 'C:\ProgramData\LocalPilotFleet\Autopilot'
+                    try {
+                        if (-not (Test-Path $apCacheDir -ErrorAction SilentlyContinue)) {
+                            New-Item -Path $apCacheDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
+                        }
+                        $apData | ConvertTo-Json -Depth 6 | Set-Content -Path "$apCacheDir\posture.json" -Force -ErrorAction SilentlyContinue
+                    } catch {}
+                }
+            }
         } catch {
             Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
             if (-not $Continuous) { exit 1 }

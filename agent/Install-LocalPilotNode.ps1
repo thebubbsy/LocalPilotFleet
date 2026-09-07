@@ -180,6 +180,35 @@ function Get-ActiveLoggedInUser {
     return 'Unknown'
 }
 
+# Windows Autopilot Hardware Hash Harvesting
+function Get-AutopilotHardwareData {
+    try {
+        $devDetail = Get-CimInstance -Namespace root/cimv2/mdm/dmmap -ClassName MDM_DevDetail_Ext01 -Filter "InstanceID='Ext' AND ParentID='./DevDetail'" -ErrorAction Stop
+        if ($devDetail -and $devDetail.DeviceHardwareData) {
+            return [string]$devDetail.DeviceHardwareData
+        }
+    } catch {}
+
+    try {
+        $cs = Get-CimInstance Win32_ComputerSystemProduct -ErrorAction SilentlyContinue
+        $biosObj = Get-CimInstance Win32_BIOS -ErrorAction SilentlyContinue
+        $bbObj = Get-CimInstance Win32_BaseBoard -ErrorAction SilentlyContinue
+        $cpuObj = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
+
+        $uId = if ($cs -and $cs.UUID) { $cs.UUID } else { '00000000-0000-0000-0000-000000000000' }
+        $bSn = if ($biosObj -and $biosObj.SerialNumber) { $biosObj.SerialNumber } else { 'UNKNOWN-BIOS-SN' }
+        $bbSn = if ($bbObj -and $bbObj.SerialNumber) { $bbObj.SerialNumber } else { 'UNKNOWN-BB-SN' }
+        $cpId = if ($cpuObj -and $cpuObj.ProcessorId) { $cpuObj.ProcessorId } else { 'CPU-0' }
+
+        $rawSeed = "OA3:$uId:$bSn:$bbSn:$cpId"
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        $hashBytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($rawSeed))
+        return "OA3_SYNTH_$([Convert]::ToBase64String($hashBytes))"
+    } catch {
+        return 'OA3_FALLBACK_HARDWARE_HASH_DATA'
+    }
+}
+
 # Tags: include the group and 'managed'
 $tags = @($Group, 'managed') | Where-Object { $_ -ne '' }
 
@@ -187,6 +216,7 @@ $enrollBody = @{
     hostname            = $env:COMPUTERNAME
     friendly_name       = $DeviceName
     serial_number       = $serialNumber
+    hardware_hash       = Get-AutopilotHardwareData
     uuid                = $uuid
     mac_address         = $macAddress
     tags                = $tags

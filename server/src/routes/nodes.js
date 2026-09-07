@@ -19,6 +19,7 @@ import { endpointSecurityEngine } from '../services/endpointSecurityEngine.js';
 import { bitlockerEngine } from '../services/bitlockerEngine.js';
 import { lapsEngine } from '../services/lapsEngine.js';
 import * as epmEngine from '../services/epmEngine.js';
+import * as autopilotEngine from '../services/autopilotEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -194,6 +195,14 @@ export function registerNodeRoutes(router) {
       // Re-evaluate dynamic groups
       const assignedGroups = dynamicGroupsService.reevaluateDeviceMemberships(db, deviceId);
 
+      // Synchronize with Windows Autopilot hardware hash registry if applicable
+      let autopilotInfo = null;
+      try {
+        autopilotInfo = autopilotEngine.syncDeviceWithAutopilot(db, deviceId, serial_number, body.hardware_hash);
+      } catch (apErr) {
+        console.warn('[Autopilot Sync Warning]:', apErr.message);
+      }
+
       broadcastEvent('node_enrolled', {
         device_id: deviceId,
         hostname,
@@ -207,7 +216,8 @@ export function registerNodeRoutes(router) {
         node_token: tokenData.token,
         heartbeat_interval_sec: 60,
         telemetry_interval_min: 15,
-        assigned_groups: assignedGroups
+        assigned_groups: assignedGroups,
+        autopilot: autopilotInfo ? { registered: true, profile_id: autopilotInfo.profile_id, deployment_status: autopilotInfo.deployment_status } : { registered: false }
       });
     } catch (err) {
       sendJson(res, 500, { error: 'ENROLLMENT_ERROR', message: err.message });
@@ -324,7 +334,8 @@ export function registerNodeRoutes(router) {
         endpoint_security_policy: assignedSecurityPolicy,
         bitlocker_policy: assignedBitLockerPolicy,
         laps_policy: assignedLapsPolicy,
-        epm_rules: epmEngine.getEffectiveEpmRulesForDevice(db, deviceId)
+        epm_rules: epmEngine.getEffectiveEpmRulesForDevice(db, deviceId),
+        autopilot: autopilotEngine.getDeviceAutopilotPosture(db, deviceId)
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -1043,6 +1054,64 @@ export function registerNodeRoutes(router) {
       sendJson(res, 201, result);
     } catch (err) {
       sendJson(res, 400, { error: 'NODE_EPM_ELEVATION_LOG_ERROR', message: err.message });
+    }
+  });
+
+  // 28. GET /api/v1/nodes/:id/autopilot-profile (Fetch assigned Autopilot profile and ESP)
+  router.get('/api/v1/nodes/:id/autopilot-profile', async (req, res) => {
+    const targetDeviceId = req.params.id;
+    if (!requireFleetKeyOrNodeToken(req, res, targetDeviceId)) return;
+
+    try {
+      const db = getDb();
+      const posture = autopilotEngine.getDeviceAutopilotPosture(db, targetDeviceId);
+      if (!posture || !posture.is_registered) {
+        sendJson(res, 404, { error: 'NOT_REGISTERED', message: 'Device is not registered in Windows Autopilot' });
+        return;
+      }
+      sendJson(res, 200, posture);
+    } catch (err) {
+      sendJson(res, 500, { error: 'NODE_AUTOPILOT_PROFILE_ERROR', message: err.message });
+    }
+  });
+
+  // 29. POST /api/v1/nodes/:id/provisioning-event (Ingest OOBE/ESP phase progression)
+  router.post('/api/v1/nodes/:id/provisioning-event', async (req, res) => {
+    const targetDeviceId = req.params.id;
+    if (!requireFleetKeyOrNodeToken(req, res, targetDeviceId)) return;
+
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const apDev = db.prepare('SELECT id FROM autopilot_devices WHERE device_id = ?').get(targetDeviceId);
+      const autopilotDeviceId = apDev ? apDev.id : body.autopilot_device_id;
+
+      if (!autopilotDeviceId) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'No registered Autopilot device record associated with this node' });
+        return;
+      }
+
+      const result = autopilotEngine.logProvisioningEvent(db, {
+        autopilot_device_id: autopilotDeviceId,
+        device_id: targetDeviceId,
+        phase: body.phase,
+        step_name: body.step_name,
+        status: body.status,
+        error_code: body.error_code,
+        details: body.details
+      });
+
+      broadcastEvent('autopilot_provisioning_event', {
+        device_id: targetDeviceId,
+        autopilot_device_id: autopilotDeviceId,
+        phase: result.phase,
+        status: result.status,
+        step_name: body.step_name
+      });
+
+      sendJson(res, 201, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'NODE_PROVISIONING_EVENT_ERROR', message: err.message });
     }
   });
 }

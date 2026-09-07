@@ -443,6 +443,14 @@
         </div>
       </div>
 
+      <!-- ── Windows Autopilot & Hardware Provisioning ── -->
+      <div class="bc-section" id="bc-autopilot-section">
+        <div class="bc-section-title">🚀 Windows Autopilot &amp; Provisioning</div>
+        <div id="bc-autopilot-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading Autopilot provisioning posture…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -1077,6 +1085,95 @@
         });
       }).catch(err => {
         epmListEl.innerHTML = `<div style="color:#EF4444;font-size:12px;">Failed to load EPM rules: ${esc(err.message)}</div>`;
+      });
+    }
+
+    // Fetch and populate Autopilot posture
+    const apListEl = body.querySelector('#bc-autopilot-list');
+    if (apListEl && _currentDevice?.id) {
+      window.FleetAPI.getDeviceAutopilot(_currentDevice.id).then(ap => {
+        if (!ap || !ap.autopilot_device) {
+          apListEl.innerHTML = `
+            <div style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:12px;display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <span class="badge badge-neutral" style="font-size:11px;">Unregistered</span>
+                <span style="margin-left:8px;color:var(--text-muted);">This device is not registered in the Windows Autopilot hardware database.</span>
+              </div>
+              <button class="intune-btn small primary" id="btn-bc-ap-register" style="font-size:11px;padding:3px 8px;">
+                🚀 Register in Autopilot
+              </button>
+            </div>
+          `;
+          apListEl.querySelector('#btn-bc-ap-register')?.addEventListener('click', async () => {
+            try {
+              await window.FleetAPI.registerAutopilotDevice({
+                serial_number: _currentDevice.serial_number || `SN-${_currentDevice.id.slice(0, 8)}`,
+                hardware_hash: 'SYNTHESIZED-HASH-' + _currentDevice.id,
+                device_id: _currentDevice.id,
+                group_tag: 'Self-Enrolled'
+              });
+              if (typeof showToast === 'function') showToast('Autopilot Registered', `${_currentDevice.hostname} registered in Autopilot registry.`, 'success');
+              open(_currentDevice.id);
+            } catch (err) {
+              if (typeof showToast === 'function') showToast('Registration Failed', err.message, 'critical');
+            }
+          });
+          return;
+        }
+
+        const dev = ap.autopilot_device;
+        const prof = ap.assigned_profile;
+        const esp = ap.effective_esp;
+        const events = ap.recent_events || [];
+
+        const isEnrolled = dev.deployment_status === 'ENROLLED';
+        const isAssigned = dev.deployment_status === 'ASSIGNED';
+        const isFailed = dev.deployment_status === 'FAILED';
+        const statusColor = isEnrolled ? '#10b981' : (isAssigned ? '#3b82f6' : (isFailed ? '#ef4444' : '#94a3b8'));
+
+        apListEl.innerHTML = `
+          <div style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:12px;display:flex;flex-direction:column;gap:10px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <span class="badge" style="background:${statusColor}22;color:${statusColor};border:1px solid ${statusColor}55;font-weight:600;font-size:11px;">
+                  🚀 ${esc(dev.deployment_status)}
+                </span>
+                <span style="margin-left:8px;font-weight:600;font-size:13px;color:var(--text-bright);">
+                  ${prof ? esc(prof.name) : '<span style="color:var(--text-muted);">No Profile Assigned</span>'}
+                </span>
+              </div>
+              <button class="intune-btn small" id="btn-bc-view-ap" style="font-size:11px;padding:3px 8px;">
+                🚀 Manage in Autopilot &gt;
+              </button>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;">
+              <div><span style="color:var(--text-muted);">Group Tag:</span> <span class="mono badge badge-neutral" style="font-size:10px;">${esc(dev.group_tag || 'Standard')}</span></div>
+              <div><span style="color:var(--text-muted);">Mode:</span> <span style="color:var(--text-bright);">${prof ? esc(prof.deployment_mode) : '—'}</span></div>
+              <div><span style="color:var(--text-muted);">Join Type:</span> <span style="color:var(--text-bright);">${prof ? esc(prof.join_type) : '—'}</span></div>
+              <div><span style="color:var(--text-muted);">ESP Policy:</span> <span style="color:var(--text-bright);">${esp ? esc(esp.name) : 'Default ESP'}</span></div>
+            </div>
+
+            ${events.length > 0 ? `
+              <div style="border-top:1px solid #334155;padding-top:8px;">
+                <div style="font-weight:600;color:var(--text-bright);font-size:12px;margin-bottom:4px;">Latest Provisioning Step:</div>
+                <div style="font-size:11px;color:var(--text-muted);display:flex;justify-content:space-between;">
+                  <span>${esc(events[0].step_name || events[0].phase)} (${esc(events[0].phase)})</span>
+                  <span class="badge ${events[0].status === 'COMPLETED' ? 'badge-success' : events[0].status === 'FAILED' ? 'badge-error' : 'badge-warning'}">${esc(events[0].status)}</span>
+                </div>
+              </div>
+            ` : ''}
+          </div>
+        `;
+
+        apListEl.querySelector('#btn-bc-view-ap')?.addEventListener('click', () => {
+          close();
+          if (window.App && typeof window.App.navigate === 'function') {
+            window.App.navigate('autopilot');
+          }
+        });
+      }).catch(err => {
+        apListEl.innerHTML = `<div style="color:#EF4444;font-size:12px;">Failed to load Autopilot posture: ${esc(err.message)}</div>`;
       });
     }
   }

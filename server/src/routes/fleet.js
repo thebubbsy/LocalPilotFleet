@@ -17,6 +17,7 @@ import { endpointSecurityEngine } from '../services/endpointSecurityEngine.js';
 import { bitlockerEngine } from '../services/bitlockerEngine.js';
 import { lapsEngine } from '../services/lapsEngine.js';
 import * as epmEngine from '../services/epmEngine.js';
+import * as autopilotEngine from '../services/autopilotEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -2527,6 +2528,321 @@ try {
       sendJson(res, 200, posture);
     } catch (err) {
       sendJson(res, 500, { error: 'DEVICE_EPM_POSTURE_ERROR', message: err.message });
+    }
+  });
+
+  /* ── Windows Autopilot & Hardware Provisioning Endpoints ─────────── */
+
+  // 110. GET /api/v1/fleet/autopilot/stats
+  router.get('/api/v1/fleet/autopilot/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const stats = autopilotEngine.getAutopilotStats(db);
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'AUTOPILOT_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 111. GET /api/v1/fleet/autopilot/devices
+  router.get('/api/v1/fleet/autopilot/devices', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const url = new URL(req.url, 'http://localhost');
+    const status = url.searchParams.get('status') || undefined;
+    const groupTag = url.searchParams.get('group_tag') || undefined;
+    const profileId = url.searchParams.get('profile_id') || undefined;
+    const search = url.searchParams.get('search') || undefined;
+    try {
+      const db = getDb();
+      const devices = autopilotEngine.getAutopilotDevices(db, { status, groupTag, profileId, search });
+      sendJson(res, 200, { devices, total: devices.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'AUTOPILOT_DEVICES_GET_ERROR', message: err.message });
+    }
+  });
+
+  // 112. POST /api/v1/fleet/autopilot/devices
+  router.post('/api/v1/fleet/autopilot/devices', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const device = autopilotEngine.registerAutopilotDevice(db, body);
+      broadcastEvent('autopilot_device_registered', { device_id: device.id, serial_number: device.serial_number });
+      sendJson(res, 201, device);
+    } catch (err) {
+      sendJson(res, 400, { error: 'AUTOPILOT_DEVICE_REGISTER_ERROR', message: err.message });
+    }
+  });
+
+  // 113. POST /api/v1/fleet/autopilot/devices/import-csv
+  router.post('/api/v1/fleet/autopilot/devices/import-csv', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const body = req.body || {};
+    const csvContent = body.csv_content || (typeof body === 'string' ? body : '');
+    try {
+      const db = getDb();
+      const result = autopilotEngine.importAutopilotCsv(db, csvContent);
+      broadcastEvent('autopilot_csv_imported', { imported: result.imported_count, updated: result.updated_count });
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'AUTOPILOT_CSV_IMPORT_ERROR', message: err.message });
+    }
+  });
+
+  // 114. GET /api/v1/fleet/autopilot/devices/export-csv
+  router.get('/api/v1/fleet/autopilot/devices/export-csv', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const url = new URL(req.url, 'http://localhost');
+    const filterStatus = url.searchParams.get('status') || undefined;
+    const groupTag = url.searchParams.get('group_tag') || undefined;
+    try {
+      const db = getDb();
+      const csvData = autopilotEngine.exportAutopilotCsv(db, { filterStatus, groupTag });
+      res.writeHead(200, {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': 'attachment; filename="AutopilotDevices.csv"',
+        'Access-Control-Allow-Origin': '*'
+      });
+      res.end(csvData);
+    } catch (err) {
+      sendJson(res, 500, { error: 'AUTOPILOT_CSV_EXPORT_ERROR', message: err.message });
+    }
+  });
+
+  // 115. GET /api/v1/fleet/autopilot/devices/:id
+  router.get('/api/v1/fleet/autopilot/devices/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const device = autopilotEngine.getAutopilotDevice(db, id);
+      if (!device) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Autopilot device not found' });
+        return;
+      }
+      sendJson(res, 200, device);
+    } catch (err) {
+      sendJson(res, 500, { error: 'AUTOPILOT_DEVICE_GET_ERROR', message: err.message });
+    }
+  });
+
+  // 116. PATCH /api/v1/fleet/autopilot/devices/:id
+  router.patch('/api/v1/fleet/autopilot/devices/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const device = autopilotEngine.updateAutopilotDevice(db, id, body);
+      broadcastEvent('autopilot_device_updated', { device_id: id, serial_number: device.serial_number });
+      sendJson(res, 200, device);
+    } catch (err) {
+      sendJson(res, 400, { error: 'AUTOPILOT_DEVICE_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 117. DELETE /api/v1/fleet/autopilot/devices/:id
+  router.delete('/api/v1/fleet/autopilot/devices/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const result = autopilotEngine.deleteAutopilotDevice(db, id);
+      broadcastEvent('autopilot_device_deleted', { device_id: id });
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'AUTOPILOT_DEVICE_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 118. POST /api/v1/fleet/autopilot/devices/:id/assign-profile
+  router.post('/api/v1/fleet/autopilot/devices/:id/assign-profile', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const result = autopilotEngine.assignProfileToAutopilotDevice(db, id, body.profile_id);
+      broadcastEvent('autopilot_profile_assigned', { device_id: id, profile_id: body.profile_id });
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'AUTOPILOT_PROFILE_ASSIGN_ERROR', message: err.message });
+    }
+  });
+
+  // 119. GET /api/v1/fleet/autopilot/devices/:id/events
+  router.get('/api/v1/fleet/autopilot/devices/:id/events', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const events = autopilotEngine.getProvisioningEvents(db, id);
+      sendJson(res, 200, { events, total: events.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'AUTOPILOT_EVENTS_GET_ERROR', message: err.message });
+    }
+  });
+
+  // 120. GET /api/v1/fleet/autopilot/profiles
+  router.get('/api/v1/fleet/autopilot/profiles', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const profiles = autopilotEngine.getAutopilotProfiles(db);
+      sendJson(res, 200, { profiles, total: profiles.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'AUTOPILOT_PROFILES_GET_ERROR', message: err.message });
+    }
+  });
+
+  // 121. POST /api/v1/fleet/autopilot/profiles
+  router.post('/api/v1/fleet/autopilot/profiles', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const profile = autopilotEngine.createAutopilotProfile(db, body);
+      broadcastEvent('autopilot_profile_created', { profile_id: profile.id, name: profile.name });
+      sendJson(res, 201, profile);
+    } catch (err) {
+      sendJson(res, 400, { error: 'AUTOPILOT_PROFILE_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 122. GET /api/v1/fleet/autopilot/profiles/:id
+  router.get('/api/v1/fleet/autopilot/profiles/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const profile = autopilotEngine.getAutopilotProfile(db, id);
+      if (!profile) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Autopilot profile not found' });
+        return;
+      }
+      sendJson(res, 200, profile);
+    } catch (err) {
+      sendJson(res, 500, { error: 'AUTOPILOT_PROFILE_GET_ERROR', message: err.message });
+    }
+  });
+
+  // 123. PATCH /api/v1/fleet/autopilot/profiles/:id
+  router.patch('/api/v1/fleet/autopilot/profiles/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const profile = autopilotEngine.updateAutopilotProfile(db, id, body);
+      broadcastEvent('autopilot_profile_updated', { profile_id: id, name: profile.name });
+      sendJson(res, 200, profile);
+    } catch (err) {
+      sendJson(res, 400, { error: 'AUTOPILOT_PROFILE_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 124. DELETE /api/v1/fleet/autopilot/profiles/:id
+  router.delete('/api/v1/fleet/autopilot/profiles/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const result = autopilotEngine.deleteAutopilotProfile(db, id);
+      broadcastEvent('autopilot_profile_deleted', { profile_id: id });
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'AUTOPILOT_PROFILE_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 125. GET /api/v1/fleet/autopilot/esp-policies
+  router.get('/api/v1/fleet/autopilot/esp-policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const policies = autopilotEngine.getEspPolicies(db);
+      sendJson(res, 200, { esp_policies: policies, total: policies.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'ESP_POLICIES_GET_ERROR', message: err.message });
+    }
+  });
+
+  // 126. POST /api/v1/fleet/autopilot/esp-policies
+  router.post('/api/v1/fleet/autopilot/esp-policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const policy = autopilotEngine.createEspPolicy(db, body);
+      broadcastEvent('esp_policy_created', { policy_id: policy.id, name: policy.name });
+      sendJson(res, 201, policy);
+    } catch (err) {
+      sendJson(res, 400, { error: 'ESP_POLICY_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 127. GET /api/v1/fleet/autopilot/esp-policies/:id
+  router.get('/api/v1/fleet/autopilot/esp-policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const policy = autopilotEngine.getEspPolicy(db, id);
+      if (!policy) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'ESP policy not found' });
+        return;
+      }
+      sendJson(res, 200, policy);
+    } catch (err) {
+      sendJson(res, 500, { error: 'ESP_POLICY_GET_ERROR', message: err.message });
+    }
+  });
+
+  // 128. PATCH /api/v1/fleet/autopilot/esp-policies/:id
+  router.patch('/api/v1/fleet/autopilot/esp-policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const policy = autopilotEngine.updateEspPolicy(db, id, body);
+      broadcastEvent('esp_policy_updated', { policy_id: id, name: policy.name });
+      sendJson(res, 200, policy);
+    } catch (err) {
+      sendJson(res, 400, { error: 'ESP_POLICY_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 129. DELETE /api/v1/fleet/autopilot/esp-policies/:id
+  router.delete('/api/v1/fleet/autopilot/esp-policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const result = autopilotEngine.deleteEspPolicy(db, id);
+      broadcastEvent('esp_policy_deleted', { policy_id: id });
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'ESP_POLICY_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 130. GET /api/v1/fleet/devices/:id/autopilot
+  router.get('/api/v1/fleet/devices/:id/autopilot', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const posture = autopilotEngine.getDeviceAutopilotPosture(db, id);
+      if (!posture) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Device not found' });
+        return;
+      }
+      sendJson(res, 200, posture);
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_AUTOPILOT_POSTURE_ERROR', message: err.message });
     }
   });
 }

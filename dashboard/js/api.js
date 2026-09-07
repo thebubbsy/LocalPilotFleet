@@ -772,6 +772,127 @@ async function getDeviceEpm(deviceId) {
   return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/epm`);
 }
 
+/* ── Windows Autopilot & Hardware Provisioning ───────────────────────── */
+async function getAutopilotStats() {
+  return apiFetch('/api/v1/fleet/autopilot/stats');
+}
+
+async function getAutopilotDevices(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.status) qs.set('status', params.status);
+  if (params.group_tag) qs.set('group_tag', params.group_tag);
+  if (params.profile_id) qs.set('profile_id', params.profile_id);
+  if (params.search) qs.set('search', params.search);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/autopilot/devices${qStr ? '?' + qStr : ''}`);
+}
+
+async function getAutopilotDevice(id) {
+  return apiFetch(`/api/v1/fleet/autopilot/devices/${encodeURIComponent(id)}`);
+}
+
+async function registerAutopilotDevice(data) {
+  return apiFetch('/api/v1/fleet/autopilot/devices', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateAutopilotDevice(id, data) {
+  return apiFetch(`/api/v1/fleet/autopilot/devices/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteAutopilotDevice(id) {
+  return apiFetch(`/api/v1/fleet/autopilot/devices/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function assignAutopilotProfile(deviceId, profileId) {
+  return apiFetch(`/api/v1/fleet/autopilot/devices/${encodeURIComponent(deviceId)}/assign-profile`, {
+    method: 'POST',
+    body: JSON.stringify({ profile_id: profileId })
+  });
+}
+
+async function importAutopilotCsv(csvContent) {
+  return apiFetch('/api/v1/fleet/autopilot/devices/import-csv', {
+    method: 'POST',
+    body: JSON.stringify({ csv_content: csvContent })
+  });
+}
+
+function getAutopilotExportCsvUrl(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.status) qs.set('status', params.status);
+  if (params.group_tag) qs.set('group_tag', params.group_tag);
+  const qStr = qs.toString();
+  return `/api/v1/fleet/autopilot/devices/export-csv${qStr ? '?' + qStr : ''}`;
+}
+
+async function getAutopilotProfiles() {
+  return apiFetch('/api/v1/fleet/autopilot/profiles');
+}
+
+async function getAutopilotProfile(id) {
+  return apiFetch(`/api/v1/fleet/autopilot/profiles/${encodeURIComponent(id)}`);
+}
+
+async function createAutopilotProfile(data) {
+  return apiFetch('/api/v1/fleet/autopilot/profiles', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateAutopilotProfile(id, data) {
+  return apiFetch(`/api/v1/fleet/autopilot/profiles/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteAutopilotProfile(id) {
+  return apiFetch(`/api/v1/fleet/autopilot/profiles/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getEspPolicies() {
+  return apiFetch('/api/v1/fleet/autopilot/esp-policies');
+}
+
+async function getEspPolicy(id) {
+  return apiFetch(`/api/v1/fleet/autopilot/esp-policies/${encodeURIComponent(id)}`);
+}
+
+async function createEspPolicy(data) {
+  return apiFetch('/api/v1/fleet/autopilot/esp-policies', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateEspPolicy(id, data) {
+  return apiFetch(`/api/v1/fleet/autopilot/esp-policies/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteEspPolicy(id) {
+  return apiFetch(`/api/v1/fleet/autopilot/esp-policies/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getDeviceAutopilot(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/autopilot`);
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -892,6 +1013,27 @@ window.FleetAPI = {
   reviewEpmRequest,
   getEpmElevationLogs,
   getDeviceEpm,
+  // Windows Autopilot & Hardware Provisioning
+  getAutopilotStats,
+  getAutopilotDevices,
+  getAutopilotDevice,
+  registerAutopilotDevice,
+  updateAutopilotDevice,
+  deleteAutopilotDevice,
+  assignAutopilotProfile,
+  importAutopilotCsv,
+  getAutopilotExportCsvUrl,
+  getAutopilotProfiles,
+  getAutopilotProfile,
+  createAutopilotProfile,
+  updateAutopilotProfile,
+  deleteAutopilotProfile,
+  getEspPolicies,
+  getEspPolicy,
+  createEspPolicy,
+  updateEspPolicy,
+  deleteEspPolicy,
+  getDeviceAutopilot,
   // Groups
   getGroups,
   createGroup,
