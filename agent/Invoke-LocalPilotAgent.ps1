@@ -812,12 +812,12 @@ if ($Mode -eq 'Heartbeat') {
                                             )
                                             $found = Get-ItemProperty -Path $uninstKeys -ErrorAction SilentlyContinue |
                                                 Where-Object { 
-                                                    $_.DisplayName -like "*$($app.name)*" -or 
-                                                    $_.PSChildName -like "*$pkgId*" 
+                                                    ($_.PSObject.Properties['DisplayName'] -and $_.DisplayName -like "*$($app.name)*") -or 
+                                                    ($_.PSObject.Properties['PSChildName'] -and $_.PSChildName -like "*$pkgId*")
                                                 } | Select-Object -First 1
                                             if ($found) {
                                                 $isDetected = $true
-                                                if ($found.DisplayVersion) { $detectedVersion = [string]$found.DisplayVersion }
+                                                if ($found.PSObject.Properties['DisplayVersion'] -and $found.DisplayVersion) { $detectedVersion = [string]$found.DisplayVersion }
                                             }
                                         }
                                     }
@@ -872,6 +872,160 @@ if ($Mode -eq 'Heartbeat') {
                         } catch {
                             Write-AgentLog 'ERROR' "Failed to process app [$($app.name)]: $($_.Exception.Message)"
                         }
+                    }
+                }
+            }
+
+            # ── Microsoft Defender Antivirus & Endpoint Security Audit ─────────
+            if (-not (Get-Variable -Name 'LastSecurityAudit' -Scope Script -ErrorAction SilentlyContinue)) {
+                $script:LastSecurityAudit = $null
+            }
+            $now = Get-Date
+            $shouldAuditSecurity = $false
+            if ($null -eq $script:LastSecurityAudit) {
+                $shouldAuditSecurity = $true
+            } elseif (($now - $script:LastSecurityAudit).TotalSeconds -ge 300) { # 5-minute interval
+                $shouldAuditSecurity = $true
+            }
+
+            if ($shouldAuditSecurity) {
+                $script:LastSecurityAudit = $now
+                Write-AgentLog 'INFO' 'Auditing Microsoft Defender Antivirus & Endpoint Security posture...'
+
+                # Harvest Defender Status
+                $hasMp = Get-Command -Name Get-MpComputerStatus -ErrorAction SilentlyContinue
+                if ($hasMp) {
+                    try {
+                        $mp = Get-MpComputerStatus -ErrorAction SilentlyContinue
+                        if ($mp) {
+                            $pref = $null
+                            try { $pref = Get-MpPreference -ErrorAction SilentlyContinue } catch {}
+
+                            $hasP = { param($o, $p) return ($null -ne $o -and $null -ne $o.PSObject.Properties[$p]) }
+                            $getP = {
+                                param($o, $p, $def)
+                                if (& $hasP $o $p -and $null -ne $o.$p) { return $o.$p }
+                                return $def
+                            }
+
+                            $toIso = {
+                                param($dt)
+                                try {
+                                    if ($null -ne $dt -and $dt -is [System.DateTime] -and $dt.Year -gt 1970) {
+                                        return $dt.ToString('o')
+                                    }
+                                } catch {}
+                                return $null
+                            }
+
+                            $toAgeDays = {
+                                param($val)
+                                try {
+                                    if ($null -eq $val) { return 0 }
+                                    $v = [int64]$val
+                                    if ($v -ge 4294967295 -or $v -lt 0 -or $v -gt 2147483647) { return 0 }
+                                    return [int]$v
+                                } catch {
+                                    return 0
+                                }
+                            }
+
+                            $sigAge = & $toAgeDays (& $getP $mp 'AntivirusSignatureAge' 0)
+                            $sigUpdated = if (& $hasP $mp 'AntivirusSignatureLastUpdated') { & $toIso $mp.AntivirusSignatureLastUpdated } else { $null }
+                            $sigVer = [string](& $getP $mp 'AntivirusSignatureVersion' '')
+                            $engVer = [string](& $getP $mp 'AMEngineVersion' '')
+                            $prodVer = [string](& $getP $mp 'AMProductVersion' '')
+                            $avEnab = [bool](& $getP $mp 'AntivirusEnabled' $true)
+                            $rtp = [bool](& $getP $mp 'RealTimeProtectionEnabled' $true)
+                            $pua = $false
+                            if (& $hasP $pref 'PUAProtection') {
+                                $pua = ([int64]$pref.PUAProtection -eq 1)
+                            }
+                            $cfa = [int](& $getP $pref 'EnableControlledFolderAccess' 0)
+                            $netProt = if ([int64](& $getP $pref 'EnableNetworkProtection' 0) -gt 0) { 1 } else { 0 }
+                            $maps = [int64](& $getP $pref 'MAPSReporting' 2)
+                            $cloudProt = if ($maps -gt 0) { 1 } else { 0 }
+                            $quickScanAt = if (& $hasP $mp 'QuickScanEndTime') { & $toIso $mp.QuickScanEndTime } else { $null }
+                            $fullScanAt = if (& $hasP $mp 'FullScanEndTime') { & $toIso $mp.FullScanEndTime } else { $null }
+                            $quickScanAge = & $toAgeDays (& $getP $mp 'QuickScanAge' 0)
+                            $fullScanAge = & $toAgeDays (& $getP $mp 'FullScanAge' 0)
+                            $isTamper = [bool](& $getP $mp 'IsTamperProtected' $false)
+                            $ioav = [bool](& $getP $mp 'IoavProtectionEnabled' $true)
+                            $antispy = [bool](& $getP $mp 'AntispywareEnabled' $true)
+                            $behav = [bool](& $getP $mp 'BehaviorMonitorEnabled' $true)
+
+                            $avPayload = @{
+                                antivirus_enabled                = if ($avEnab) { 1 } else { 0 }
+                                engine_version                   = $engVer
+                                product_version                  = $prodVer
+                                signature_version                = $sigVer
+                                signature_last_updated           = $sigUpdated
+                                signature_age_days               = $sigAge
+                                real_time_protection_enabled     = if ($rtp) { 1 } else { 0 }
+                                cloud_protection_enabled         = $cloudProt
+                                pua_protection_enabled           = if ($pua) { 1 } else { 0 }
+                                controlled_folder_access_enabled = $cfa
+                                network_protection_enabled       = $netProt
+                                tamper_protection_enabled        = if ($isTamper) { 1 } else { 0 }
+                                antispyware_enabled              = if ($antispy) { 1 } else { 0 }
+                                behavior_monitor_enabled         = if ($behav) { 1 } else { 0 }
+                                ioav_protection_enabled          = if ($ioav) { 1 } else { 0 }
+                                last_quick_scan_at               = $quickScanAt
+                                last_full_scan_at                = $fullScanAt
+                                quick_scan_age_days              = $quickScanAge
+                                full_scan_age_days               = $fullScanAge
+                            }
+
+                            Invoke-RestMethod `
+                                -Uri        "$baseUrl/api/v1/nodes/$deviceId/antivirus-status" `
+                                -Method     POST `
+                                -Body       ($avPayload | ConvertTo-Json -Compress) `
+                                -Headers    $authHeaders `
+                                -TimeoutSec 10 `
+                                -ErrorAction SilentlyContinue | Out-Null
+
+                            Write-AgentLog 'INFO' "Reported Defender status (Sig: $sigVer, Age: $sigAge days, RTP: $rtp, CFA: $cfa)"
+                        }
+                    } catch {
+                        Write-AgentLog 'WARN' "Could not harvest Get-MpComputerStatus: $($_.Exception.Message)"
+                    }
+
+                    # Harvest Active/Recent Threat Detections
+                    try {
+                        $threatCmd = Get-Command -Name Get-MpThreatDetection -ErrorAction SilentlyContinue
+                        if ($threatCmd) {
+                            $threats = Get-MpThreatDetection -ErrorAction SilentlyContinue | Select-Object -First 5
+                            if ($threats) {
+                                foreach ($t in $threats) {
+                                    $actionSuccess = if (& $hasP $t 'ActionSuccess') { [bool]$t.ActionSuccess } else { $true }
+                                    $actionStr = if ($actionSuccess) { 'QUARANTINED' } else { 'BLOCKED' }
+                                    $tName = if (& $hasP $t 'ThreatName' -and $t.ThreatName) { [string]$t.ThreatName } else { 'Unknown.Threat' }
+                                    $tId = if (& $hasP $t 'ThreatID' -and $null -ne $t.ThreatID) { [string]$t.ThreatID } else { '0' }
+                                    $resList = if (& $hasP $t 'Resources' -and $null -ne $t.Resources) { @($t.Resources) } else { @() }
+                                    $detTime = if (& $hasP $t 'InitialDetectionTime' -and $null -ne $t.InitialDetectionTime) { & $toIso $t.InitialDetectionTime } else { $null }
+
+                                    $tPayload = @{
+                                        threat_name        = $tName
+                                        threat_id          = $tId
+                                        severity           = 'HIGH'
+                                        category           = 'Malware'
+                                        resources          = $resList
+                                        action_taken       = $actionStr
+                                        remediation_status = 'RESOLVED'
+                                        detected_at        = $detTime
+                                    }
+                                    Invoke-RestMethod `
+                                        -Uri        "$baseUrl/api/v1/nodes/$deviceId/threat-detection" `
+                                        -Method     POST `
+                                        -Body       ($tPayload | ConvertTo-Json -Compress) `
+                                        -Headers    $authHeaders `
+                                        -TimeoutSec 10 `
+                                        -ErrorAction SilentlyContinue | Out-Null
+                                }
+                            }
+                        }
+                    } catch {
+                        Write-AgentLog 'WARN' "Could not harvest Get-MpThreatDetection: $($_.Exception.Message)"
                     }
                 }
             }

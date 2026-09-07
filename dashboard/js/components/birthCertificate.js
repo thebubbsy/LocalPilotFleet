@@ -411,6 +411,14 @@
         </div>
       </div>
 
+      <!-- ── Microsoft Defender Antivirus & Endpoint Security ── -->
+      <div class="bc-section" id="bc-security-section">
+        <div class="bc-section-title">🛡️ Microsoft Defender &amp; Endpoint Security</div>
+        <div id="bc-security-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading Defender posture…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -692,6 +700,84 @@
         appsListEl.innerHTML = `<div style="color:#EF4444;font-size:12px;">Failed to load applications: ${esc(err.message)}</div>`;
       });
     }
+
+    // Fetch and populate Defender security status
+    const secListEl = body.querySelector('#bc-security-list');
+    if (secListEl && _currentDevice?.id) {
+      window.FleetAPI.getDeviceSecurity(_currentDevice.id).then(sec => {
+        if (!sec) {
+          secListEl.innerHTML = '<div style="color:var(--text-muted);">No Defender telemetry reported.</div>';
+          return;
+        }
+
+        const isHealthy = sec.health_status === 'HEALTHY';
+        const isCritical = sec.health_status === 'CRITICAL';
+        const rtpOn = sec.real_time_protection_enabled === 1;
+        const sigAge = sec.signature_age_days ?? 0;
+
+        secListEl.innerHTML = `
+          <div style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:12px;display:flex;flex-direction:column;gap:10px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <span class="badge ${isHealthy ? 'badge-success' : isCritical ? 'badge-error' : 'badge-warning'}">
+                  ${isHealthy ? '✔ Healthy' : isCritical ? '✖ Critical' : '⚠️ Needs Attention'}
+                </span>
+                <span style="margin-left:8px;font-weight:600;font-size:13px;color:var(--text-bright);">
+                  ${rtpOn ? '<span style="color:var(--accent-green);">Real-Time Protection: Active</span>' : '<span style="color:var(--accent-red);">Real-Time Protection: Disabled</span>'}
+                </span>
+              </div>
+              <div style="display:flex;gap:6px;">
+                <button class="intune-btn small primary" id="btn-bc-quick-scan" style="font-size:11px;padding:3px 8px;">
+                  ⚡ Quick Scan
+                </button>
+                <button class="intune-btn small" id="btn-bc-update-sigs" style="font-size:11px;padding:3px 8px;">
+                  🔄 Update Sigs
+                </button>
+              </div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;">
+              <div><span style="color:var(--text-muted);">Signatures:</span> <span class="mono">${esc(sec.signature_version || '—')}</span> (${sigAge}d old)</div>
+              <div><span style="color:var(--text-muted);">Engine:</span> <span class="mono">${esc(sec.engine_version || '—')}</span></div>
+              <div><span style="color:var(--text-muted);">Ransomware Shield:</span> ${sec.controlled_folder_access_enabled === 1 ? '✔ Enforced' : (sec.controlled_folder_access_enabled === 2 ? 'Audit' : 'Off')}</div>
+              <div><span style="color:var(--text-muted);">Last Scan:</span> ${sec.last_quick_scan_at ? new Date(sec.last_quick_scan_at).toLocaleDateString() : 'Never'}</div>
+            </div>
+
+            ${(sec.recent_threats || []).length > 0 ? `
+              <div style="border-top:1px solid #334155;padding-top:8px;">
+                <div style="font-weight:600;color:var(--accent-red);font-size:12px;margin-bottom:4px;">⚠️ Active/Recent Threats:</div>
+                ${sec.recent_threats.slice(0, 3).map(t => `
+                  <div style="font-size:11px;color:var(--text-muted);display:flex;justify-content:space-between;">
+                    <span>${esc(t.threat_name)}</span>
+                    <span class="badge ${t.remediation_status === 'ACTIVE' ? 'badge-error' : 'badge-success'}">${esc(t.remediation_status)}</span>
+                  </div>
+                `).join('')}
+              </div>
+            ` : ''}
+          </div>
+        `;
+
+        secListEl.querySelector('#btn-bc-quick-scan')?.addEventListener('click', async () => {
+          try {
+            await window.FleetAPI.triggerSecurityScan(_currentDevice.id, 'QuickScan');
+            if (typeof showToast === 'function') showToast('Defender Scan', `Quick scan initiated on ${_currentDevice.hostname}`, 'info');
+          } catch (err) {
+            if (typeof showToast === 'function') showToast('Scan Failed', err.message, 'critical');
+          }
+        });
+
+        secListEl.querySelector('#btn-bc-update-sigs')?.addEventListener('click', async () => {
+          try {
+            await window.FleetAPI.triggerSignatureUpdate(_currentDevice.id);
+            if (typeof showToast === 'function') showToast('Signatures Syncing', `Updating signatures on ${_currentDevice.hostname}`, 'info');
+          } catch (err) {
+            if (typeof showToast === 'function') showToast('Update Failed', err.message, 'critical');
+          }
+        });
+      }).catch(err => {
+        secListEl.innerHTML = `<div style="color:#EF4444;font-size:12px;">Failed to load Defender status: ${esc(err.message)}</div>`;
+      });
+    }
   }
 
   /* ── Bind close button & overlay click ─────────────────────────── */
@@ -752,7 +838,7 @@
     btnScan?.addEventListener('click', async () => {
       if (!_currentDevice) return;
       try {
-        await window.FleetAPI.runScript(_currentDevice.id, 'Start-MpScan -ScanType QuickScan');
+        await window.FleetAPI.triggerSecurityScan(_currentDevice.id, 'QuickScan');
         if (typeof showToast === 'function') showToast('Defender Scan', `Windows Defender quick scan initiated on ${_currentDevice.hostname}`, 'info');
       } catch (err) {
         if (typeof showToast === 'function') showToast('Scan Failed', err.message, 'critical');

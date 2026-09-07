@@ -445,6 +445,81 @@ async function installDeviceApp(deviceId, appId) {
   });
 }
 
+/* ── Endpoint Security & Microsoft Defender Antivirus ────────────────── */
+async function getSecurityPolicies() {
+  return apiFetch('/api/v1/fleet/security/policies');
+}
+
+async function getSecurityPolicy(id) {
+  return apiFetch(`/api/v1/fleet/security/policies/${encodeURIComponent(id)}`);
+}
+
+async function createSecurityPolicy(data) {
+  return apiFetch('/api/v1/fleet/security/policies', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateSecurityPolicy(id, data) {
+  return apiFetch(`/api/v1/fleet/security/policies/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteSecurityPolicy(id) {
+  return apiFetch(`/api/v1/fleet/security/policies/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getSecurityStats() {
+  return apiFetch('/api/v1/fleet/security/stats');
+}
+
+async function getAntivirusStatuses(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const query = qs.toString() ? `?${qs}` : '';
+  return apiFetch(`/api/v1/fleet/security/antivirus-status${query}`);
+}
+
+async function getSecurityThreats(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const query = qs.toString() ? `?${qs}` : '';
+  return apiFetch(`/api/v1/fleet/security/threats${query}`);
+}
+
+async function remediateThreat(id, status = 'RESOLVED') {
+  return apiFetch(`/api/v1/fleet/security/threats/${encodeURIComponent(id)}/remediate`, {
+    method: 'PATCH',
+    body: JSON.stringify({ remediation_status: status })
+  });
+}
+
+async function getDeviceSecurity(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/security`);
+}
+
+async function triggerSecurityScan(deviceId, scanType = 'QuickScan') {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/security/scan`, {
+    method: 'POST',
+    body: JSON.stringify({ scan_type: scanType })
+  });
+}
+
+async function triggerSignatureUpdate(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/security/update-signatures`, {
+    method: 'POST'
+  });
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -509,6 +584,19 @@ window.FleetAPI = {
   deleteApp,
   getDeviceApps,
   installDeviceApp,
+  // Endpoint Security & Defender Antivirus
+  getSecurityPolicies,
+  getSecurityPolicy,
+  createSecurityPolicy,
+  updateSecurityPolicy,
+  deleteSecurityPolicy,
+  getSecurityStats,
+  getAntivirusStatuses,
+  getSecurityThreats,
+  remediateThreat,
+  getDeviceSecurity,
+  triggerSecurityScan,
+  triggerSignatureUpdate,
   // Groups
   getGroups,
   createGroup,

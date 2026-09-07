@@ -178,7 +178,8 @@ export function initDb(dbOrPath, options = {}) {
       event_type TEXT NOT NULL CHECK(event_type IN (
         'USER_CREATED', 'USER_DELETED', 'ADMIN_ADDED', 'ADMIN_REMOVED',
         'APP_INSTALLED', 'APP_PROHIBITED_DETECTED', 'POLICY_DRIFT',
-        'TPM_VIOLATION', 'SECUREBOOT_DISABLED', 'BITLOCKER_OFFLINE', 'WATCHDOG_HEARTBEAT'
+        'TPM_VIOLATION', 'SECUREBOOT_DISABLED', 'BITLOCKER_OFFLINE', 'WATCHDOG_HEARTBEAT',
+        'MALWARE_THREAT_DETECTED', 'ANTIVIRUS_RTP_DISABLED'
       )),
       event_id INTEGER,
       event_source TEXT NOT NULL,
@@ -399,6 +400,72 @@ export function initDb(dbOrPath, options = {}) {
       FOREIGN KEY(app_id) REFERENCES apps(id) ON DELETE CASCADE,
       UNIQUE(device_id, app_id)
     );
+
+    -- 20. ENDPOINT_SECURITY_POLICIES (Microsoft Defender for Endpoint & Antivirus Governance)
+    CREATE TABLE IF NOT EXISTS endpoint_security_policies (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      target_group_id TEXT DEFAULT 'grp-all',
+      real_time_protection INTEGER NOT NULL DEFAULT 1 CHECK(real_time_protection IN (0, 1)),
+      cloud_protection_level TEXT NOT NULL DEFAULT 'HIGH' CHECK(cloud_protection_level IN ('DISABLED', 'BASIC', 'STANDARD', 'HIGH', 'HIGH_PLUS', 'ZERO_TOLERANCE')),
+      controlled_folder_access TEXT NOT NULL DEFAULT 'AUDIT' CHECK(controlled_folder_access IN ('DISABLED', 'ENABLED', 'AUDIT', 'BLOCK_DISK_ONLY')),
+      pua_protection TEXT NOT NULL DEFAULT 'ENABLED' CHECK(pua_protection IN ('DISABLED', 'ENABLED', 'AUDIT')),
+      network_protection TEXT NOT NULL DEFAULT 'ENABLED' CHECK(network_protection IN ('DISABLED', 'ENABLED', 'AUDIT')),
+      tamper_protection INTEGER NOT NULL DEFAULT 1 CHECK(tamper_protection IN (0, 1)),
+      scan_schedule_type TEXT NOT NULL DEFAULT 'DAILY_QUICK' CHECK(scan_schedule_type IN ('DISABLED', 'DAILY_QUICK', 'WEEKLY_FULL')),
+      scan_schedule_time TEXT DEFAULT '02:00',
+      exclusions_json TEXT DEFAULT '{"paths":[],"extensions":[],"processes":[]}',
+      is_enabled INTEGER DEFAULT 1 CHECK(is_enabled IN (0, 1)),
+      created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET NULL
+    );
+
+    -- 21. DEVICE_ANTIVIRUS_STATUS (Live Microsoft Defender Telemetry & Posture per Device)
+    CREATE TABLE IF NOT EXISTS device_antivirus_status (
+      id TEXT PRIMARY KEY NOT NULL,
+      device_id TEXT NOT NULL,
+      antivirus_enabled INTEGER DEFAULT 1 CHECK(antivirus_enabled IN (0, 1)),
+      engine_version TEXT,
+      product_version TEXT,
+      signature_version TEXT,
+      signature_last_updated TEXT,
+      signature_age_days INTEGER DEFAULT 0,
+      real_time_protection_enabled INTEGER DEFAULT 1 CHECK(real_time_protection_enabled IN (0, 1)),
+      cloud_protection_enabled INTEGER DEFAULT 1 CHECK(cloud_protection_enabled IN (0, 1)),
+      pua_protection_enabled INTEGER DEFAULT 1 CHECK(pua_protection_enabled IN (0, 1)),
+      controlled_folder_access_enabled INTEGER DEFAULT 0 CHECK(controlled_folder_access_enabled IN (0, 1, 2)),
+      network_protection_enabled INTEGER DEFAULT 1 CHECK(network_protection_enabled IN (0, 1)),
+      tamper_protection_enabled INTEGER DEFAULT 1 CHECK(tamper_protection_enabled IN (0, 1)),
+      antispyware_enabled INTEGER DEFAULT 1 CHECK(antispyware_enabled IN (0, 1)),
+      behavior_monitor_enabled INTEGER DEFAULT 1 CHECK(behavior_monitor_enabled IN (0, 1)),
+      ioav_protection_enabled INTEGER DEFAULT 1 CHECK(ioav_protection_enabled IN (0, 1)),
+      last_quick_scan_at TEXT,
+      last_full_scan_at TEXT,
+      quick_scan_age_days INTEGER DEFAULT 0,
+      full_scan_age_days INTEGER DEFAULT 0,
+      active_threat_count INTEGER DEFAULT 0,
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      UNIQUE(device_id)
+    );
+
+    -- 22. THREAT_DETECTIONS (Microsoft Defender Malware & Threat Log)
+    CREATE TABLE IF NOT EXISTS threat_detections (
+      id TEXT PRIMARY KEY NOT NULL,
+      device_id TEXT NOT NULL,
+      threat_name TEXT NOT NULL,
+      threat_id TEXT,
+      severity TEXT NOT NULL DEFAULT 'HIGH' CHECK(severity IN ('CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFORMATIONAL')),
+      category TEXT DEFAULT 'Malware',
+      resources_json TEXT DEFAULT '[]',
+      action_taken TEXT NOT NULL DEFAULT 'QUARANTINED' CHECK(action_taken IN ('QUARANTINED', 'REMOVED', 'CLEANED', 'BLOCKED', 'NO_ACTION', 'ALLOWED')),
+      remediation_status TEXT NOT NULL DEFAULT 'RESOLVED' CHECK(remediation_status IN ('ACTIVE', 'RESOLVED', 'MANUAL_STEPS_REQUIRED', 'FAILED')),
+      detected_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
   `);
 
   // Indexes
@@ -451,7 +518,54 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_device_app_status_dev ON device_app_status(device_id);
     CREATE INDEX IF NOT EXISTS idx_device_app_status_app ON device_app_status(app_id);
     CREATE INDEX IF NOT EXISTS idx_device_app_status_stat ON device_app_status(install_status);
+
+    CREATE INDEX IF NOT EXISTS idx_sec_policies_target ON endpoint_security_policies(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_dev_av_status_dev ON device_antivirus_status(device_id);
+    CREATE INDEX IF NOT EXISTS idx_dev_av_sig_age ON device_antivirus_status(signature_age_days);
+    CREATE INDEX IF NOT EXISTS idx_dev_av_rtp ON device_antivirus_status(real_time_protection_enabled);
+    CREATE INDEX IF NOT EXISTS idx_threats_dev ON threat_detections(device_id, detected_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_threats_status ON threat_detections(remediation_status);
+    CREATE INDEX IF NOT EXISTS idx_threats_sev ON threat_detections(severity);
   `);
+
+  // Schema migrations for existing databases
+  try {
+    const tableSqlRow = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'security_events'").get();
+    if (tableSqlRow && tableSqlRow.sql && !tableSqlRow.sql.includes('MALWARE_THREAT_DETECTED')) {
+      db.exec(`
+        PRAGMA foreign_keys = OFF;
+        CREATE TABLE security_events_migrated (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          device_id TEXT NOT NULL,
+          event_type TEXT NOT NULL CHECK(event_type IN (
+            'USER_CREATED', 'USER_DELETED', 'ADMIN_ADDED', 'ADMIN_REMOVED',
+            'APP_INSTALLED', 'APP_PROHIBITED_DETECTED', 'POLICY_DRIFT',
+            'TPM_VIOLATION', 'SECUREBOOT_DISABLED', 'BITLOCKER_OFFLINE', 'WATCHDOG_HEARTBEAT',
+            'MALWARE_THREAT_DETECTED', 'ANTIVIRUS_RTP_DISABLED'
+          )),
+          event_id INTEGER,
+          event_source TEXT NOT NULL,
+          severity TEXT NOT NULL CHECK(severity IN ('CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO')),
+          summary TEXT NOT NULL,
+          raw_payload_json TEXT NOT NULL,
+          acknowledged INTEGER DEFAULT 0 CHECK(acknowledged IN (0, 1)),
+          acknowledged_at TEXT,
+          acknowledged_by TEXT,
+          created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+          FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+        );
+        INSERT INTO security_events_migrated SELECT * FROM security_events;
+        DROP TABLE security_events;
+        ALTER TABLE security_events_migrated RENAME TO security_events;
+        CREATE INDEX IF NOT EXISTS idx_events_device ON security_events(device_id);
+        CREATE INDEX IF NOT EXISTS idx_events_sev_ack ON security_events(severity, acknowledged);
+        CREATE INDEX IF NOT EXISTS idx_events_created ON security_events(created_at DESC);
+        PRAGMA foreign_keys = ON;
+      `);
+    }
+  } catch (migErr) {
+    console.warn('[DB Migration Warning]:', migErr.message);
+  }
 
   if (shouldSeed) {
     seedDatabase(db);
@@ -1182,6 +1296,105 @@ exit 0`,
       insertStatus.run('app-stat-01', 'dev-daddy-pc', 'app-git', 'INSTALLED', 1, '2.44.0', '-2 hours');
       insertStatus.run('app-stat-02', 'dev-daddy-pc', 'app-vscode', 'INSTALLED', 1, '1.98.0', '-2 hours');
       insertStatus.run('app-stat-03', 'dev-daddy-pc', 'app-7zip', 'INSTALLED', 1, '24.09', '-2 hours');
+    }
+  }
+
+  // 11. Seed Endpoint Security Policies & Defender Telemetry
+  const secPolicyCount = db.prepare('SELECT COUNT(*) as count FROM endpoint_security_policies').get().count;
+  if (secPolicyCount === 0) {
+    const insertSecPol = db.prepare(`
+      INSERT INTO endpoint_security_policies (
+        id, name, description, target_group_id,
+        real_time_protection, cloud_protection_level, controlled_folder_access,
+        pua_protection, network_protection, tamper_protection,
+        scan_schedule_type, scan_schedule_time, exclusions_json, is_enabled
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+    `);
+
+    insertSecPol.run(
+      'sec-baseline-enterprise',
+      'Microsoft Defender Enterprise Baseline',
+      'Standard enterprise security posture with High cloud protection, PUA blocking, Network Protection, and daily Quick Scans.',
+      'grp-all',
+      1, 'HIGH', 'AUDIT', 'ENABLED', 'ENABLED', 1, 'DAILY_QUICK', '02:00',
+      JSON.stringify({ paths: [], extensions: [], processes: [] })
+    );
+
+    insertSecPol.run(
+      'sec-ransomware-shield',
+      'High-Security Ransomware Shield & Controlled Folders',
+      'Strict zero-trust anti-ransomware configuration enforcing Controlled Folder Access, High+ cloud ML, and blocked script execution.',
+      'grp-workstations',
+      1, 'HIGH_PLUS', 'ENABLED', 'ENABLED', 'ENABLED', 1, 'DAILY_QUICK', '03:00',
+      JSON.stringify({ paths: ['C:\\SecureVault'], extensions: [], processes: [] })
+    );
+
+    insertSecPol.run(
+      'sec-dev-gaming',
+      'Developer & High-Performance Rig Exclusions',
+      'Optimized Defender configuration with developer directory exclusions (.git, node_modules, target) for maximum build speed.',
+      'grp-workstations',
+      1, 'STANDARD', 'AUDIT', 'ENABLED', 'ENABLED', 1, 'WEEKLY_FULL', '04:00',
+      JSON.stringify({ paths: ['C:\\temp', 'C:\\dev'], extensions: ['.obj', '.pdb'], processes: ['node.exe', 'cargo.exe'] })
+    );
+
+    // Seed Defender telemetry for sample devices
+    const hasDaddy = db.prepare('SELECT id FROM devices WHERE id = ?').get('dev-daddy-pc');
+    if (hasDaddy) {
+      const insertAv = db.prepare(`
+        INSERT INTO device_antivirus_status (
+          id, device_id, antivirus_enabled, engine_version, product_version,
+          signature_version, signature_last_updated, signature_age_days,
+          real_time_protection_enabled, cloud_protection_enabled, pua_protection_enabled,
+          controlled_folder_access_enabled, network_protection_enabled, tamper_protection_enabled,
+          antispyware_enabled, behavior_monitor_enabled, ioav_protection_enabled,
+          last_quick_scan_at, last_full_scan_at, quick_scan_age_days, full_scan_age_days,
+          active_threat_count, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, DATETIME('now', ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?), DATETIME('now', ?), ?, ?, ?, DATETIME('now'))
+      `);
+
+      insertAv.run(
+        'av-daddy-01', 'dev-daddy-pc', 1, '1.1.24020.9', '4.18.24020.7',
+        '1.407.382.0', '-1 hours', 0,
+        1, 1, 1, 1, 1, 1, 1, 1, 1,
+        '-4 hours', '-3 days', 0, 3, 0
+      );
+
+      insertAv.run(
+        'av-living-01', 'dev-livingroom-pc', 1, '1.1.24010.5', '4.18.24010.3',
+        '1.405.120.0', '-8 days', 8,
+        0, 1, 1, 0, 0, 1, 1, 0, 1,
+        '-9 days', '-20 days', 9, 20, 1
+      );
+
+      insertAv.run(
+        'av-sarah-01', 'dev-sarah-laptop', 1, '1.1.24020.9', '4.18.24020.7',
+        '1.407.290.0', '-1 day', 1,
+        1, 1, 1, 2, 1, 1, 1, 1, 1,
+        '-1 day', '-7 days', 1, 7, 0
+      );
+
+      // Seed threat detection on livingroom PC
+      const insertThreat = db.prepare(`
+        INSERT INTO threat_detections (
+          id, device_id, threat_name, threat_id, severity, category,
+          resources_json, action_taken, remediation_status, detected_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?), DATETIME('now', ?))
+      `);
+
+      insertThreat.run(
+        'threat-01', 'dev-livingroom-pc', 'Trojan:Win32/Wacatac.B!ml', '2147735503',
+        'HIGH', 'Trojan',
+        JSON.stringify(['C:\\Users\\Family\\Downloads\\keygen.exe']),
+        'QUARANTINED', 'ACTIVE', '-2 hours', '-2 hours'
+      );
+
+      insertThreat.run(
+        'threat-02', 'dev-daddy-pc', 'PUA:Win32/CoinMiner', '2147741201',
+        'MEDIUM', 'PotentiallyUnwantedApp',
+        JSON.stringify(['C:\\temp\\miner_bench.exe']),
+        'BLOCKED', 'RESOLVED', '-5 days', '-5 days'
+      );
     }
   }
 }

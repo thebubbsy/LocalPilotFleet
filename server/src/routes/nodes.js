@@ -15,6 +15,7 @@ import { configProfileEngine } from '../services/configProfileEngine.js';
 import { updateRingEngine } from '../services/updateRingEngine.js';
 import { complianceEngine } from '../services/complianceEngine.js';
 import { appManagementEngine } from '../services/appManagementEngine.js';
+import { endpointSecurityEngine } from '../services/endpointSecurityEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -298,6 +299,9 @@ export function registerNodeRoutes(router) {
       // Check for assigned applications
       const assignedApps = appManagementEngine.getDeviceAssignedApps(db, deviceId);
 
+      // Check for assigned endpoint security policy
+      const assignedSecurityPolicy = endpointSecurityEngine.getEffectivePolicyForDevice(db, deviceId);
+
       sendJson(res, 200, {
         acknowledged: true,
         server_time: new Date().toISOString(),
@@ -307,7 +311,8 @@ export function registerNodeRoutes(router) {
         profiles: assignedProfiles,
         update_ring: assignedRing,
         compliance_policies: assignedCompliancePolicies,
-        assigned_apps: assignedApps
+        assigned_apps: assignedApps,
+        endpoint_security_policy: assignedSecurityPolicy
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -794,6 +799,72 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, result);
     } catch (err) {
       sendJson(res, 500, { error: 'NODE_APP_STATUS_ERROR', message: err.message });
+    }
+  });
+
+  // 17. GET /api/v1/nodes/:id/security-policy
+  router.get('/api/v1/nodes/:id/security-policy', async (req, res) => {
+    const targetDeviceId = req.params.id;
+    if (!requireFleetKeyOrNodeToken(req, res, targetDeviceId)) return;
+
+    try {
+      const db = getDb();
+      const policy = endpointSecurityEngine.getEffectivePolicyForDevice(db, targetDeviceId);
+      sendJson(res, 200, { policy });
+    } catch (err) {
+      sendJson(res, 500, { error: 'NODE_SECURITY_POLICY_ERROR', message: err.message });
+    }
+  });
+
+  // 18. POST /api/v1/nodes/:id/antivirus-status
+  router.post('/api/v1/nodes/:id/antivirus-status', async (req, res) => {
+    const targetDeviceId = req.params.id;
+    if (!requireFleetKeyOrNodeToken(req, res, targetDeviceId)) return;
+
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const result = endpointSecurityEngine.recordAntivirusStatus(db, targetDeviceId, body);
+
+      broadcastEvent('antivirus_status_updated', {
+        device_id: targetDeviceId,
+        real_time_protection_enabled: result.real_time_protection_enabled,
+        signature_version: result.signature_version,
+        signature_age_days: result.signature_age_days,
+        health_status: result.health_status
+      });
+
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 500, { error: 'NODE_AV_STATUS_ERROR', message: err.message });
+    }
+  });
+
+  // 19. POST /api/v1/nodes/:id/threat-detection
+  router.post('/api/v1/nodes/:id/threat-detection', async (req, res) => {
+    const targetDeviceId = req.params.id;
+    if (!requireFleetKeyOrNodeToken(req, res, targetDeviceId)) return;
+
+    const body = req.body || {};
+    if (!body.threat_name) {
+      sendJson(res, 400, { error: 'BAD_REQUEST', message: 'Missing threat_name' });
+      return;
+    }
+
+    try {
+      const db = getDb();
+      const result = endpointSecurityEngine.recordThreatDetection(db, targetDeviceId, body);
+
+      broadcastEvent('threat_detected', {
+        device_id: targetDeviceId,
+        threat_name: result.threat_name,
+        severity: result.severity,
+        action_taken: result.action_taken
+      });
+
+      sendJson(res, 201, result);
+    } catch (err) {
+      sendJson(res, 500, { error: 'NODE_THREAT_DETECTION_ERROR', message: err.message });
     }
   });
 }

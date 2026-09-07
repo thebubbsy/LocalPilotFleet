@@ -13,6 +13,7 @@ import { configProfileEngine } from '../services/configProfileEngine.js';
 import { updateRingEngine } from '../services/updateRingEngine.js';
 import { complianceEngine } from '../services/complianceEngine.js';
 import { appManagementEngine } from '../services/appManagementEngine.js';
+import { endpointSecurityEngine } from '../services/endpointSecurityEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -1656,6 +1657,203 @@ try {
       sendJson(res, 200, result);
     } catch (err) {
       sendJson(res, 400, { error: 'APP_INSTALL_QUEUE_ERROR', message: err.message });
+    }
+  });
+
+  // 58. GET /api/v1/fleet/security/policies
+  router.get('/api/v1/fleet/security/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const policies = endpointSecurityEngine.getAllPolicies(db);
+      sendJson(res, 200, policies);
+    } catch (err) {
+      sendJson(res, 500, { error: 'SECURITY_POLICIES_ERROR', message: err.message });
+    }
+  });
+
+  // 59. GET /api/v1/fleet/security/policies/:id
+  router.get('/api/v1/fleet/security/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const policy = endpointSecurityEngine.getPolicyById(db, id);
+      if (!policy) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Endpoint security policy not found' });
+        return;
+      }
+      sendJson(res, 200, policy);
+    } catch (err) {
+      sendJson(res, 500, { error: 'SECURITY_POLICY_ERROR', message: err.message });
+    }
+  });
+
+  // 60. POST /api/v1/fleet/security/policies
+  router.post('/api/v1/fleet/security/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const created = endpointSecurityEngine.createPolicy(db, body);
+      broadcastEvent('security_policy_created', { policy_id: created.id, name: created.name });
+      sendJson(res, 201, created);
+    } catch (err) {
+      sendJson(res, 400, { error: 'SECURITY_POLICY_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 61. PATCH /api/v1/fleet/security/policies/:id
+  router.patch('/api/v1/fleet/security/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const updated = endpointSecurityEngine.updatePolicy(db, id, body);
+      if (!updated) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Endpoint security policy not found' });
+        return;
+      }
+      broadcastEvent('security_policy_updated', { policy_id: updated.id, name: updated.name });
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 400, { error: 'SECURITY_POLICY_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 62. DELETE /api/v1/fleet/security/policies/:id
+  router.delete('/api/v1/fleet/security/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const deleted = endpointSecurityEngine.deletePolicy(db, id);
+      if (!deleted) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Endpoint security policy not found' });
+        return;
+      }
+      broadcastEvent('security_policy_deleted', { policy_id: id });
+      sendJson(res, 200, { success: true, deleted_id: id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'SECURITY_POLICY_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 63. GET /api/v1/fleet/security/stats
+  router.get('/api/v1/fleet/security/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const stats = endpointSecurityEngine.getSecurityStats(db);
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'SECURITY_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 64. GET /api/v1/fleet/security/antivirus-status
+  router.get('/api/v1/fleet/security/antivirus-status', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const statuses = endpointSecurityEngine.getAllDeviceAntivirusStatuses(db, req.query);
+      sendJson(res, 200, statuses);
+    } catch (err) {
+      sendJson(res, 500, { error: 'ANTIVIRUS_STATUS_ERROR', message: err.message });
+    }
+  });
+
+  // 65. GET /api/v1/fleet/security/threats
+  router.get('/api/v1/fleet/security/threats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const threats = endpointSecurityEngine.getThreats(db, req.query);
+      sendJson(res, 200, threats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'THREATS_QUERY_ERROR', message: err.message });
+    }
+  });
+
+  // 66. PATCH /api/v1/fleet/security/threats/:id/remediate
+  router.patch('/api/v1/fleet/security/threats/:id/remediate', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const updated = endpointSecurityEngine.remediateThreat(db, id, body.remediation_status || 'RESOLVED');
+      if (!updated) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Threat record not found' });
+        return;
+      }
+      broadcastEvent('threat_remediated', { threat_id: id, remediation_status: updated.remediation_status });
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 500, { error: 'THREAT_REMEDIATE_ERROR', message: err.message });
+    }
+  });
+
+  // 67. GET /api/v1/fleet/devices/:id/security
+  router.get('/api/v1/fleet/devices/:id/security', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const secStatus = endpointSecurityEngine.getDeviceAntivirusStatus(db, id);
+      if (!secStatus) {
+        // Check if device itself exists
+        const dev = db.prepare('SELECT id, hostname FROM devices WHERE id = ?').get(id);
+        if (!dev) {
+          sendJson(res, 404, { error: 'NOT_FOUND', message: 'Device not found' });
+          return;
+        }
+        // Device exists but has not reported Defender status yet
+        sendJson(res, 200, {
+          device_id: id,
+          hostname: dev.hostname,
+          antivirus_enabled: 1,
+          real_time_protection_enabled: 1,
+          signature_age_days: 0,
+          health_status: 'HEALTHY',
+          recent_threats: [],
+          effective_policy: endpointSecurityEngine.getEffectivePolicyForDevice(db, id)
+        });
+        return;
+      }
+      sendJson(res, 200, secStatus);
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_SECURITY_ERROR', message: err.message });
+    }
+  });
+
+  // 68. POST /api/v1/fleet/devices/:id/security/scan
+  router.post('/api/v1/fleet/devices/:id/security/scan', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const result = endpointSecurityEngine.queueScanCommand(db, id, body.scan_type || 'QuickScan');
+      broadcastEvent('defender_scan_dispatched', { device_id: id, scan_type: result.scan_type, command_id: result.command_id });
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'SCAN_DISPATCH_ERROR', message: err.message });
+    }
+  });
+
+  // 69. POST /api/v1/fleet/devices/:id/security/update-signatures
+  router.post('/api/v1/fleet/devices/:id/security/update-signatures', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const result = endpointSecurityEngine.queueSignatureUpdateCommand(db, id);
+      broadcastEvent('defender_sig_update_dispatched', { device_id: id, command_id: result.command_id });
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'SIG_UPDATE_DISPATCH_ERROR', message: err.message });
     }
   });
 }

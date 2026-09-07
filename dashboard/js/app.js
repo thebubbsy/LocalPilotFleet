@@ -104,6 +104,9 @@ const App = {
       case 'apps':
         if (window.AppsTable) window.AppsTable.loadData();
         break;
+      case 'security':
+        if (window.EndpointSecurityTable) window.EndpointSecurityTable.loadData();
+        break;
       case 'settings':
         this.renderSettings();
         break;
