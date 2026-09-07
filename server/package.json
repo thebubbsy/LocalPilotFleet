@@ -1,0 +1,20 @@
+{
+  "name": "localpilot-fleet-server",
+  "version": "1.0.0",
+  "description": "LocalPilot Fleet Command Center Backend Service & Database Engine",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test tests/*.test.js",
+    "test:db": "node --test tests/db.test.js",
+    "test:auth": "node --test tests/auth.test.js",
+    "test:nodes": "node --test tests/nodes_api.test.js",
+    "test:fleet": "node --test tests/fleet_api.test.js",
+    "test:groups": "node --test tests/dynamic_groups.test.js"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "private": true
+}

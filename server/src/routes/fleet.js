@@ -1,0 +1,713 @@
+/**
+ * LocalPilot Fleet — Fleet Command Center REST Endpoints
+ * server/src/routes/fleet.js
+ */
+
+import crypto from 'node:crypto';
+import { getDb } from '../db.js';
+import { requireFleetKey, setFleetKey } from '../utils/auth.js';
+import { sendJson } from '../utils/router.js';
+import dynamicGroupsService from '../services/dynamicGroups.js';
+
+export function registerFleetRoutes(router) {
+  // 1. GET /api/v1/fleet/stats and /overview
+  const handleStats = (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+
+    try {
+      const db = getDb();
+
+      const totalDevices = db.prepare('SELECT COUNT(*) as c FROM devices').get().c;
+      const onlineDevices = db.prepare("SELECT COUNT(*) as c FROM devices WHERE status = 'online'").get().c;
+      const offlineDevices = db.prepare("SELECT COUNT(*) as c FROM devices WHERE status = 'offline'").get().c;
+      const driftedDevices = db.prepare("SELECT COUNT(*) as c FROM devices WHERE status = 'drifted'").get().c;
+      const quarantinedDevices = db.prepare("SELECT COUNT(*) as c FROM devices WHERE status = 'quarantined'").get().c;
+
+      const criticalAlerts = db.prepare(`
+        SELECT COUNT(*) as c FROM security_events 
+        WHERE severity = 'CRITICAL' AND acknowledged = 0
+      `).get().c;
+
+      const ramRow = db.prepare('SELECT COALESCE(SUM(total_ram_gb), 0) as total_ram FROM devices').get();
+      const totalFleetRamGb = Math.round(Number(ramRow.total_ram) * 10) / 10;
+
+      sendJson(res, 200, {
+        total_devices: totalDevices,
+        online: onlineDevices,
+        offline: offlineDevices,
+        drifted: driftedDevices,
+        quarantined: quarantinedDevices,
+        critical_alerts: criticalAlerts,
+        total_fleet_ram_gb: totalFleetRamGb,
+        total_fleet_storage_tb: 2.5
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: 'STATS_ERROR', message: err.message });
+    }
+  };
+
+  router.get('/api/v1/fleet/stats', handleStats);
+  router.get('/api/v1/fleet/overview', handleStats);
+
+  // 2. GET /api/v1/fleet/devices
+  router.get('/api/v1/fleet/devices', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+
+    try {
+      const db = getDb();
+      const { search, status, group, route, sort = 'last_seen_at DESC', limit = 100, offset = 0 } = req.query;
+
+      const conditions = [];
+      const params = [];
+
+      if (search) {
+        conditions.push('(d.hostname LIKE ? OR d.friendly_name LIKE ? OR d.ip_address LIKE ?)');
+        const s = `%${search}%`;
+        params.push(s, s, s);
+      }
+
+      if (status) {
+        conditions.push('d.status = ?');
+        params.push(status);
+      }
+
+      if (route) {
+        conditions.push('d.connection_route = ?');
+        params.push(route);
+      }
+
+      if (group) {
+        conditions.push('EXISTS (SELECT 1 FROM group_memberships gm WHERE gm.device_id = d.id AND gm.group_id = ?)');
+        params.push(group);
+      }
+
+      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+      // Safe sorting whitelist
+      let orderBy = 'd.last_seen_at DESC';
+      if (sort) {
+        const lowerSort = sort.toLowerCase();
+        if (lowerSort.includes('hostname')) orderBy = lowerSort.includes('desc') ? 'd.hostname DESC' : 'd.hostname ASC';
+        else if (lowerSort.includes('ram')) orderBy = lowerSort.includes('desc') ? 'd.total_ram_bytes DESC' : 'd.total_ram_bytes ASC';
+        else if (lowerSort.includes('status')) orderBy = lowerSort.includes('desc') ? 'd.status DESC' : 'd.status ASC';
+        else if (lowerSort.includes('enrolled')) orderBy = lowerSort.includes('desc') ? 'd.enrolled_at DESC' : 'd.enrolled_at ASC';
+      }
+
+      const query = `
+        SELECT 
+          d.id, d.hostname, d.friendly_name, d.serial_number, d.uuid,
+          d.mac_address, d.ip_address, d.public_ip, d.connection_route,
+          d.status, d.os_name, d.os_version, d.os_build, d.os_architecture,
+          d.cpu_model, d.cpu_cores, d.cpu_logical, d.total_ram_bytes, d.total_ram_gb,
+          d.gpu_name, d.has_battery, d.battery_percent, d.battery_charging,
+          d.tpm_present, d.tpm_version, d.tpm_enabled, d.secure_boot_enabled,
+          d.bitlocker_status, d.primary_user, d.tags_json, d.assigned_group,
+          d.agent_version, d.enrolled_at, d.last_seen_at
+        FROM devices d
+        ${whereClause}
+        ORDER BY ${orderBy}
+        LIMIT ? OFFSET ?
+      `;
+
+      params.push(Number(limit) || 100, Number(offset) || 0);
+
+      const rows = db.prepare(query).all(...params);
+
+      // Parse tags_json
+      const devices = rows.map(r => {
+        let tags = [];
+        try {
+          tags = JSON.parse(r.tags_json || '[]');
+        } catch {}
+        return {
+          ...r,
+          tags
+        };
+      });
+
+      const countQuery = `SELECT COUNT(*) as total FROM devices d ${whereClause}`;
+      const total = db.prepare(countQuery).get(...params.slice(0, conditions.length * (search ? 3 : 1))).total;
+
+      sendJson(res, 200, {
+        devices,
+        total_count: total
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICES_QUERY_ERROR', message: err.message });
+    }
+  });
+
+  // 3. GET /api/v1/fleet/devices/:id
+  router.get('/api/v1/fleet/devices/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+
+    try {
+      const db = getDb();
+      const deviceId = req.params.id;
+
+      const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(deviceId);
+      if (!device) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: `Device ${deviceId} not found` });
+        return;
+      }
+
+      let tags = [];
+      try { tags = JSON.parse(device.tags_json || '[]'); } catch {}
+
+      // Groups
+      const groups = db.prepare(`
+        SELECT g.id, g.name, g.color, g.icon, g.priority
+        FROM dynamic_groups g
+        JOIN group_memberships m ON g.id = m.group_id
+        WHERE m.device_id = ?
+        ORDER BY g.priority ASC
+      `).all(deviceId);
+
+      // Recent snapshots (last 20)
+      const snapshots = db.prepare(`
+        SELECT * FROM telemetry_snapshots
+        WHERE device_id = ?
+        ORDER BY timestamp DESC
+        LIMIT 20
+      `).all(deviceId).map(s => {
+        let disks = [];
+        let network = [];
+        try { disks = JSON.parse(s.disks_json || '[]'); } catch {}
+        try { network = JSON.parse(s.network_json || '[]'); } catch {}
+        return { ...s, disks, network };
+      });
+
+      // Recent events (last 20)
+      const events = db.prepare(`
+        SELECT * FROM security_events
+        WHERE device_id = ?
+        ORDER BY created_at DESC
+        LIMIT 20
+      `).all(deviceId);
+
+      sendJson(res, 200, {
+        ...device,
+        tags,
+        assigned_groups: groups,
+        telemetry_snapshots: snapshots,
+        security_events: events
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 4. PATCH /api/v1/fleet/devices/:id
+  router.patch('/api/v1/fleet/devices/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+
+    try {
+      const db = getDb();
+      const deviceId = req.params.id;
+      const { friendly_name, tags, assigned_group, status } = req.body || {};
+
+      const existing = db.prepare('SELECT * FROM devices WHERE id = ?').get(deviceId);
+      if (!existing) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: `Device ${deviceId} not found` });
+        return;
+      }
+
+      const tagsJson = tags !== undefined
+        ? (Array.isArray(tags) ? JSON.stringify(tags) : String(tags))
+        : existing.tags_json;
+
+      db.prepare(`
+        UPDATE devices SET
+          friendly_name = COALESCE(?, friendly_name),
+          tags_json = ?,
+          assigned_group = COALESCE(?, assigned_group),
+          status = COALESCE(?, status),
+          updated_at = DATETIME('now')
+        WHERE id = ?
+      `).run(
+        friendly_name !== undefined ? friendly_name : null,
+        tagsJson,
+        assigned_group !== undefined ? assigned_group : null,
+        status !== undefined ? status : null,
+        deviceId
+      );
+
+      const updated = db.prepare('SELECT * FROM devices WHERE id = ?').get(deviceId);
+      let parsedTags = [];
+      try { parsedTags = JSON.parse(updated.tags_json || '[]'); } catch {}
+
+      sendJson(res, 200, {
+        ...updated,
+        tags: parsedTags
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 5. DELETE /api/v1/fleet/devices/:id
+  router.delete('/api/v1/fleet/devices/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+
+    try {
+      const db = getDb();
+      const deviceId = req.params.id;
+
+      const result = db.prepare('DELETE FROM devices WHERE id = ?').run(deviceId);
+      if (result.changes === 0) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: `Device ${deviceId} not found` });
+        return;
+      }
+
+      sendJson(res, 200, {
+        success: true,
+        message: `Device ${deviceId} decommissioned and deleted`
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 6. GET /api/v1/fleet/groups
+  router.get('/api/v1/fleet/groups', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+
+    try {
+      const db = getDb();
+      const groups = db.prepare(`
+        SELECT 
+          g.*,
+          COUNT(m.device_id) as member_count
+        FROM dynamic_groups g
+        LEFT JOIN group_memberships m ON g.id = m.group_id
+        GROUP BY g.id
+        ORDER BY g.priority ASC
+      `).all();
+
+      sendJson(res, 200, groups);
+    } catch (err) {
+      sendJson(res, 500, { error: 'GROUPS_QUERY_ERROR', message: err.message });
+    }
+  });
+
+  // 7. POST /api/v1/fleet/groups
+  router.post('/api/v1/fleet/groups', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+
+    const { id, name, description, rule_syntax, color = '#3B82F6', icon = 'laptop', priority = 100 } = req.body || {};
+
+    if (!name || !rule_syntax) {
+      sendJson(res, 400, { error: 'BAD_REQUEST', message: 'Group name and rule_syntax are required' });
+      return;
+    }
+
+    try {
+      const db = getDb();
+      const groupId = id || `grp-${Date.now()}`;
+
+      // Validate rule syntax
+      const validation = dynamicGroupsService.validateRule(rule_syntax);
+      if (!validation.valid) {
+        sendJson(res, 400, { error: 'INVALID_RULE_SYNTAX', message: validation.error });
+        return;
+      }
+
+      db.prepare(`
+        INSERT INTO dynamic_groups (id, name, description, rule_syntax, is_dynamic, color, icon, priority)
+        VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+      `).run(groupId, name, description || null, rule_syntax, color, icon, Number(priority) || 100);
+
+      // Re-evaluate across all devices
+      const devices = db.prepare('SELECT id FROM devices').all();
+      for (const dev of devices) {
+        dynamicGroupsService.reevaluateDeviceMemberships(db, dev.id);
+      }
+
+      const memberCount = db.prepare('SELECT COUNT(*) as c FROM group_memberships WHERE group_id = ?').get(groupId).c;
+
+      sendJson(res, 201, {
+        id: groupId,
+        name,
+        description,
+        rule_syntax,
+        color,
+        icon,
+        priority,
+        member_count: memberCount
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: 'GROUP_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 8. PUT /api/v1/fleet/groups/:id
+  router.put('/api/v1/fleet/groups/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+
+    const groupId = req.params.id;
+    const { name, description, rule_syntax, color, icon, priority } = req.body || {};
+
+    try {
+      const db = getDb();
+
+      if (rule_syntax) {
+        const validation = dynamicGroupsService.validateRule(rule_syntax);
+        if (!validation.valid) {
+          sendJson(res, 400, { error: 'INVALID_RULE_SYNTAX', message: validation.error });
+          return;
+        }
+      }
+
+      const result = db.prepare(`
+        UPDATE dynamic_groups SET
+          name = COALESCE(?, name),
+          description = COALESCE(?, description),
+          rule_syntax = COALESCE(?, rule_syntax),
+          color = COALESCE(?, color),
+          icon = COALESCE(?, icon),
+          priority = COALESCE(?, priority),
+          updated_at = DATETIME('now')
+        WHERE id = ?
+      `).run(
+        name || null,
+        description !== undefined ? description : null,
+        rule_syntax || null,
+        color || null,
+        icon || null,
+        priority !== undefined ? Number(priority) : null,
+        groupId
+      );
+
+      if (result.changes === 0) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: `Group ${groupId} not found` });
+        return;
+      }
+
+      // Re-evaluate across all devices
+      const devices = db.prepare('SELECT id FROM devices').all();
+      for (const dev of devices) {
+        dynamicGroupsService.reevaluateDeviceMemberships(db, dev.id);
+      }
+
+      const updated = db.prepare(`
+        SELECT g.*, COUNT(m.device_id) as member_count
+        FROM dynamic_groups g
+        LEFT JOIN group_memberships m ON g.id = m.group_id
+        WHERE g.id = ?
+        GROUP BY g.id
+      `).get(groupId);
+
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 500, { error: 'GROUP_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 9. DELETE /api/v1/fleet/groups/:id
+  router.delete('/api/v1/fleet/groups/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+
+    const groupId = req.params.id;
+    try {
+      const db = getDb();
+      const result = db.prepare('DELETE FROM dynamic_groups WHERE id = ?').run(groupId);
+
+      if (result.changes === 0) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: `Group ${groupId} not found` });
+        return;
+      }
+
+      sendJson(res, 200, { success: true, message: `Group ${groupId} deleted` });
+    } catch (err) {
+      sendJson(res, 500, { error: 'GROUP_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 10. POST /api/v1/fleet/groups/evaluate (Dry-run)
+  router.post('/api/v1/fleet/groups/evaluate', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+
+    const { rule_syntax } = req.body || {};
+    if (!rule_syntax) {
+      sendJson(res, 400, { error: 'BAD_REQUEST', message: 'rule_syntax is required' });
+      return;
+    }
+
+    try {
+      const db = getDb();
+      const result = dynamicGroupsService.evaluateRuleAgainstAllDevices(db, rule_syntax);
+      sendJson(res, result.valid ? 200 : 400, result);
+    } catch (err) {
+      sendJson(res, 500, { error: 'EVALUATION_ERROR', message: err.message });
+    }
+  });
+
+  // 11. GET /api/v1/fleet/software and /catalog
+  const handleSoftwareList = (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+
+    try {
+      const db = getDb();
+      const software = db.prepare(`
+        SELECT 
+          s.*,
+          (
+            SELECT COUNT(DISTINCT pa.group_id) 
+            FROM policy_assignments pa 
+            WHERE pa.software_id = s.id
+          ) as assigned_groups_count
+        FROM software_catalog s
+        ORDER BY s.name ASC
+      `).all();
+
+      sendJson(res, 200, software);
+    } catch (err) {
+      sendJson(res, 500, { error: 'SOFTWARE_QUERY_ERROR', message: err.message });
+    }
+  };
+
+  router.get('/api/v1/fleet/software', handleSoftwareList);
+  router.get('/api/v1/fleet/catalog', handleSoftwareList);
+
+  // 12. POST /api/v1/fleet/software and /catalog
+  const handleSoftwareCreate = (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+
+    const { id, name, publisher, winget_id, version = 'latest', category = 'Utilities', description, icon_url, silent_install_args, silent_uninstall_args } = req.body || {};
+
+    if (!name || !winget_id) {
+      sendJson(res, 400, { error: 'BAD_REQUEST', message: 'Package name and winget_id are required' });
+      return;
+    }
+
+    try {
+      const db = getDb();
+      const softwareId = id || `pkg-${Date.now()}`;
+
+      db.prepare(`
+        INSERT INTO software_catalog (
+          id, name, publisher, winget_id, version, category, description,
+          icon_url, silent_install_args, silent_uninstall_args
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        softwareId,
+        name,
+        publisher || null,
+        winget_id,
+        version || 'latest',
+        category || 'Utilities',
+        description || null,
+        icon_url || null,
+        silent_install_args || '--silent --accept-package-agreements --accept-source-agreements',
+        silent_uninstall_args || '--silent'
+      );
+
+      const created = db.prepare('SELECT * FROM software_catalog WHERE id = ?').get(softwareId);
+      sendJson(res, 201, created);
+    } catch (err) {
+      sendJson(res, 500, { error: 'SOFTWARE_CREATE_ERROR', message: err.message });
+    }
+  };
+
+  router.post('/api/v1/fleet/software', handleSoftwareCreate);
+  router.post('/api/v1/fleet/catalog', handleSoftwareCreate);
+
+  // 13. DELETE /api/v1/fleet/software/:id
+  const handleSoftwareDelete = (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+
+    const softwareId = req.params.id;
+    try {
+      const db = getDb();
+      const result = db.prepare('DELETE FROM software_catalog WHERE id = ?').run(softwareId);
+      if (result.changes === 0) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: `Software ${softwareId} not found` });
+        return;
+      }
+      sendJson(res, 200, { success: true });
+    } catch (err) {
+      sendJson(res, 500, { error: 'SOFTWARE_DELETE_ERROR', message: err.message });
+    }
+  };
+
+  router.delete('/api/v1/fleet/software/:id', handleSoftwareDelete);
+  router.delete('/api/v1/fleet/catalog/:id', handleSoftwareDelete);
+
+  // 14. GET /api/v1/fleet/policies
+  router.get('/api/v1/fleet/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+
+    try {
+      const db = getDb();
+      const assignments = db.prepare(`
+        SELECT 
+          pa.id,
+          pa.group_id,
+          g.name as group_name,
+          pa.software_id,
+          s.name as software_name,
+          s.winget_id,
+          pa.assignment_type,
+          pa.auto_update,
+          pa.enforcement_priority,
+          pa.created_at,
+          pa.updated_at
+        FROM policy_assignments pa
+        JOIN dynamic_groups g ON pa.group_id = g.id
+        JOIN software_catalog s ON pa.software_id = s.id
+        ORDER BY g.priority ASC, pa.enforcement_priority ASC
+      `).all();
+
+      sendJson(res, 200, assignments);
+    } catch (err) {
+      sendJson(res, 500, { error: 'POLICY_QUERY_ERROR', message: err.message });
+    }
+  });
+
+  // 15. PUT /api/v1/fleet/policies
+  router.put('/api/v1/fleet/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+
+    const { group_id, software_id, assignment_type, auto_update = 1, enforcement_priority = 10 } = req.body || {};
+
+    if (!group_id || !software_id) {
+      sendJson(res, 400, { error: 'BAD_REQUEST', message: 'group_id and software_id are required' });
+      return;
+    }
+
+    try {
+      const db = getDb();
+
+      // If assignment_type is None or delete
+      if (!assignment_type || assignment_type === 'None') {
+        db.prepare('DELETE FROM policy_assignments WHERE group_id = ? AND software_id = ?').run(group_id, software_id);
+        sendJson(res, 200, { success: true, removed: true });
+        return;
+      }
+
+      if (!['Required', 'Prohibited', 'Available'].includes(assignment_type)) {
+        sendJson(res, 400, { error: 'BAD_REQUEST', message: 'assignment_type must be Required, Prohibited, or Available' });
+        return;
+      }
+
+      const policyId = `pol-${crypto.randomBytes(6).toString('hex')}`;
+      db.prepare(`
+        INSERT INTO policy_assignments (
+          id, group_id, software_id, assignment_type, auto_update, enforcement_priority, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, DATETIME('now'))
+        ON CONFLICT(group_id, software_id) DO UPDATE SET
+          assignment_type = excluded.assignment_type,
+          auto_update = excluded.auto_update,
+          enforcement_priority = excluded.enforcement_priority,
+          updated_at = DATETIME('now')
+      `).run(policyId, group_id, software_id, assignment_type, auto_update ? 1 : 0, Number(enforcement_priority) || 10);
+
+      const saved = db.prepare(`
+        SELECT pa.*, s.name as software_name, s.winget_id, g.name as group_name
+        FROM policy_assignments pa
+        JOIN dynamic_groups g ON pa.group_id = g.id
+        JOIN software_catalog s ON pa.software_id = s.id
+        WHERE pa.group_id = ? AND pa.software_id = ?
+      `).get(group_id, software_id);
+
+      sendJson(res, 200, saved);
+    } catch (err) {
+      sendJson(res, 500, { error: 'POLICY_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 16. GET /api/v1/fleet/settings
+  router.get('/api/v1/fleet/settings', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+
+    try {
+      const db = getDb();
+      const rows = db.prepare('SELECT key, value, data_type, description, is_secret FROM fleet_settings').all();
+
+      const settings = {};
+      for (const row of rows) {
+        if (row.is_secret) {
+          settings[row.key] = '****************';
+        } else if (row.data_type === 'number') {
+          settings[row.key] = Number(row.value);
+        } else if (row.data_type === 'boolean') {
+          settings[row.key] = row.value === 'true' || row.value === '1';
+        } else {
+          settings[row.key] = row.value;
+        }
+      }
+
+      sendJson(res, 200, settings);
+    } catch (err) {
+      sendJson(res, 500, { error: 'SETTINGS_QUERY_ERROR', message: err.message });
+    }
+  });
+
+  // 17. PUT /api/v1/fleet/settings
+  router.put('/api/v1/fleet/settings', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+
+    const updates = req.body || {};
+    try {
+      const db = getDb();
+      const upsert = db.prepare(`
+        INSERT INTO fleet_settings (key, value, updated_at)
+        VALUES (?, ?, DATETIME('now'))
+        ON CONFLICT(key) DO UPDATE SET
+          value = excluded.value,
+          updated_at = DATETIME('now')
+      `);
+
+      for (const [k, v] of Object.entries(updates)) {
+        // Skip masked secret placeholder
+        if (String(v).startsWith('***')) continue;
+
+        upsert.run(k, String(v));
+        if (k === 'fleet_enrollment_key') {
+          setFleetKey(String(v));
+        }
+      }
+
+      sendJson(res, 200, { success: true });
+    } catch (err) {
+      sendJson(res, 500, { error: 'SETTINGS_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 18. POST /api/v1/fleet/tunnel/generate
+  router.post('/api/v1/fleet/tunnel/generate', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+
+    const { hostname = 'fleet.localpilot.homelab' } = req.body || {};
+    const configYml = `tunnel: localpilot-fleet-tunnel\ncredentials-file: C:\\Users\\User\\.cloudflared\\credentials.json\n\ningress:\n  - hostname: ${hostname}\n    service: http://127.0.0.1:8443\n  - service: http_status:404\n`;
+    const setupScript = `# Setup Cloudflare Tunnel\ncloudflared.exe tunnel create localpilot-fleet-tunnel\ncloudflared.exe tunnel route dns localpilot-fleet-tunnel ${hostname}\ncloudflared.exe tunnel run localpilot-fleet-tunnel\n`;
+
+    sendJson(res, 200, {
+      config_yml: configYml,
+      powershell_setup: setupScript
+    });
+  });
+
+  // 19. GET /api/v1/fleet/tunnel/status
+  router.get('/api/v1/fleet/tunnel/status', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+
+    try {
+      const db = getDb();
+      const row = db.prepare("SELECT value FROM fleet_settings WHERE key = 'cloudflare_tunnel_hostname'").get();
+      const hostname = row ? row.value : '';
+
+      const countCloudflare = db.prepare("SELECT COUNT(*) as c FROM devices WHERE connection_route = 'Cloudflare'").get().c;
+
+      sendJson(res, 200, {
+        configured: Boolean(hostname),
+        hostname,
+        active_connections: countCloudflare
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: 'TUNNEL_STATUS_ERROR', message: err.message });
+    }
+  });
+}
+
+export default registerFleetRoutes;

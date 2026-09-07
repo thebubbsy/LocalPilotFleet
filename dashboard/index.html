@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Microsoft Intune admin center — LocalPilot Fleet</title>
+  <meta name="description" content="Zero-cloud Microsoft Intune-style Windows device management portal">
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='45' height='45' fill='%23f25022'/><rect x='55' width='45' height='45' fill='%237fba00'/><rect y='55' width='45' height='45' fill='%2300a4ef'/><rect x='55' y='55' width='45' height='45' fill='%23ffb900'/></svg>">
+</head>
+<body class="intune-portal">
+
+<!-- ════════════════════════════════════════════════════════════════
+     1. GLOBAL AZURE / INTUNE TOP SHELL HEADER
+     ════════════════════════════════════════════════════════════════ -->
+<header id="intune-shell-header">
+  <div class="shell-left">
+    <button class="shell-hamburger" id="btn-toggle-sidebar" title="Toggle navigation">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="shell-brand">
+      <svg class="ms-logo" viewBox="0 0 24 24" width="18" height="18">
+        <rect x="1" y="1" width="10" height="10" fill="#f25022"/>
+        <rect x="13" y="1" width="10" height="10" fill="#7fba00"/>
+        <rect x="1" y="13" width="10" height="10" fill="#00a4ef"/>
+        <rect x="13" y="13" width="10" height="10" fill="#ffb900"/>
+      </svg>
+      <span class="shell-brand-text">Microsoft Intune admin center</span>
+      <span class="shell-badge">LocalPilot</span>
+    </div>
+  </div>
+
+  <div class="shell-center">
+    <div class="shell-search-box">
+      <span class="search-icon">🔍</span>
+      <input type="text" id="global-search" placeholder="Search resources, devices, services, and docs (G+/)" autocomplete="off">
+      <span class="search-shortcut">/</span>
+    </div>
+  </div>
+
+  <div class="shell-right">
+    <button class="shell-tool-btn" title="Cloud Shell (>_)"><span class="tool-icon">&gt;_</span></button>
+    <button class="shell-tool-btn" title="Directories + subscriptions"><span class="tool-icon">🗂️</span></button>
+    <button class="shell-tool-btn relative" id="btn-notifications" title="Notifications">
+      <span class="tool-icon">🔔</span>
+      <span class="shell-notify-badge" id="shell-badge-count">0</span>
+    </button>
+    <button class="shell-tool-btn" id="btn-shell-settings" title="Portal settings"><span class="tool-icon">⚙️</span></button>
+    <button class="shell-tool-btn" title="Help and support"><span class="tool-icon">❓</span></button>
+    <button class="shell-tool-btn" title="Feedback"><span class="tool-icon">💬</span></button>
+    <div class="shell-user-profile" id="user-profile-btn">
+      <div class="user-avatar">MB</div>
+      <div class="user-details">
+        <div class="user-name">Matthew Bubb</div>
+        <div class="user-tenant">LocalPilot (Daddy Master)</div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ════════════════════════════════════════════════════════════════
+     2. MAIN PORTAL BODY (SIDEBAR + BLADES)
+     ════════════════════════════════════════════════════════════════ -->
+<div id="intune-portal-body">
+
+  <!-- Left Navigation Blade (Intune Tree) -->
+  <nav id="intune-sidebar">
+    <div class="nav-tree">
+      <div class="nav-item active" data-tab="overview">
+        <span class="nav-icon">🏠</span>
+        <span class="nav-label">Home</span>
+      </div>
+      <div class="nav-item" data-tab="overview">
+        <span class="nav-icon">📊</span>
+        <span class="nav-label">Dashboard</span>
+      </div>
+
+      <div class="nav-group-header">MANAGE</div>
+
+      <div class="nav-item" data-tab="devices">
+        <span class="nav-icon">💻</span>
+        <span class="nav-label">Devices</span>
+        <span class="nav-counter" id="sidebar-device-count">0</span>
+      </div>
+
+      <div class="nav-sub-item active" data-tab="devices" style="padding-left:36px;">
+        <span class="nav-icon">🪟</span>
+        <span class="nav-label">Windows devices</span>
+      </div>
+
+      <div class="nav-item" data-tab="software">
+        <span class="nav-icon">📦</span>
+        <span class="nav-label">Apps</span>
+      </div>
+
+      <div class="nav-item" data-tab="events">
+        <span class="nav-icon">🛡️</span>
+        <span class="nav-label">Endpoint security</span>
+        <span class="nav-badge alert hidden" id="nav-events-badge">0</span>
+      </div>
+
+      <div class="nav-item" data-tab="groups">
+        <span class="nav-icon">🏷️</span>
+        <span class="nav-label">Groups</span>
+      </div>
+
+      <div class="nav-item" data-tab="events">
+        <span class="nav-icon">📈</span>
+        <span class="nav-label">Reports</span>
+      </div>
+
+      <div class="nav-group-header" style="margin-top:12px;">ADMINISTRATION</div>
+
+      <div class="nav-item" data-tab="settings">
+        <span class="nav-icon">🏢</span>
+        <span class="nav-label">Tenant administration</span>
+      </div>
+
+      <div class="nav-item" data-tab="settings" style="padding-left:36px;">
+        <span class="nav-icon">☁️</span>
+        <span class="nav-label">Cloudflare Tunnel</span>
+      </div>
+
+      <div class="nav-item" data-tab="events" style="padding-left:36px;">
+        <span class="nav-icon">⚡</span>
+        <span class="nav-label">Security Audit log</span>
+      </div>
+    </div>
+
+    <div class="sidebar-status-footer">
+      <div class="intune-connection-pill">
+        <div class="sse-dot" id="sse-status-dot"></div>
+        <span id="sse-status-text">Intune Agent Connected</span>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Central Blade / Workspace Area -->
+  <main id="intune-workspace">
+
+    <!-- ── OVERVIEW / DASHBOARD BLADE ────────────────────────────── -->
+    <div class="tab-page active" id="tab-overview">
+      <div class="intune-blade-header">
+        <div class="intune-breadcrumb">Home &gt; Devices | Overview</div>
+        <div class="intune-title-row">
+          <div class="intune-title-icon">💻</div>
+          <div>
+            <h1 class="intune-blade-title">Devices | Overview</h1>
+            <p class="intune-blade-subtitle">Microsoft Intune administration for your family fleet, homelab, and personal workstations</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Intune Action Command Bar -->
+      <div class="intune-command-bar">
+        <button class="intune-cmd-btn primary" onclick="App.navigate('devices')">
+          <span class="cmd-icon">➕</span> Enroll device
+        </button>
+        <button class="intune-cmd-btn" onclick="renderKpiCards()">
+          <span class="cmd-icon">🔄</span> Sync all
+        </button>
+        <button class="intune-cmd-btn" onclick="showToast('Scan Initiated', 'Dispatched background drift scan to all fleet nodes.', 'info')">
+          <span class="cmd-icon">⚡</span> Quick scan
+        </button>
+        <button class="intune-cmd-btn" onclick="showToast('Export Started', 'Generating Microsoft Intune CSV export manifest.', 'info')">
+          <span class="cmd-icon">📥</span> Export
+        </button>
+        <button class="intune-cmd-btn" onclick="renderKpiCards()">
+          <span class="cmd-icon">🔄</span> Refresh
+        </button>
+      </div>
+
+      <!-- Donut Rings & KPI Summary Strip -->
+      <div id="kpi-container"></div>
+
+      <!-- Intune Overview Widgets Grid -->
+      <div class="intune-dashboard-grid">
+        <!-- Live Devices Widget -->
+        <div class="intune-card">
+          <div class="intune-card-header">
+            <span class="card-icon">💻</span>
+            <h3>Windows Device Compliance & Status</h3>
+            <button class="intune-link-btn" onclick="App.navigate('devices')">View all devices &gt;</button>
+          </div>
+          <div class="intune-card-body" id="overview-devices" style="max-height:280px; overflow-y:auto;"></div>
+        </div>
+
+        <!-- Security Event Feed Widget -->
+        <div class="intune-card">
+          <div class="intune-card-header">
+            <span class="card-icon">⚡</span>
+            <h3>Endpoint Security Alerts & Audit</h3>
+            <button class="intune-link-btn" onclick="App.navigate('events')">View all alerts &gt;</button>
+          </div>
+          <div class="intune-card-body" id="overview-events" style="max-height:280px; overflow-y:auto;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── DEVICES BLADE ─────────────────────────────────────────── -->
+    <div class="tab-page" id="tab-devices">
+      <div id="devices-container"></div>
+    </div>
+
+    <!-- ── GROUPS BLADE ──────────────────────────────────────────── -->
+    <div class="tab-page" id="tab-groups">
+      <div id="groups-container"></div>
+    </div>
+
+    <!-- ── APPS / SOFTWARE BLADE ─────────────────────────────────── -->
+    <div class="tab-page" id="tab-software">
+      <div id="software-container"></div>
+    </div>
+
+    <!-- ── ENDPOINT SECURITY / EVENTS BLADE ──────────────────────── -->
+    <div class="tab-page" id="tab-events">
+      <div id="events-container"></div>
+    </div>
+
+    <!-- ── TENANT ADMINISTRATION / SETTINGS BLADE ────────────────── -->
+    <div class="tab-page" id="tab-settings">
+      <div id="settings-container"></div>
+    </div>
+
+  </main>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     3. AUTH / SETUP MODAL
+     ════════════════════════════════════════════════════════════════ -->
+<div id="setup-overlay" style="display:none;">
+  <div class="setup-card">
+    <div class="setup-logo">
+      <svg class="ms-logo" viewBox="0 0 24 24" width="32" height="32" style="margin-bottom:12px;">
+        <rect x="1" y="1" width="10" height="10" fill="#f25022"/>
+        <rect x="13" y="1" width="10" height="10" fill="#7fba00"/>
+        <rect x="1" y="13" width="10" height="10" fill="#00a4ef"/>
+        <rect x="13" y="13" width="10" height="10" fill="#ffb900"/>
+      </svg>
+      <h1>Sign in to Microsoft Intune</h1>
+      <p>LocalPilot Master Authority</p>
+    </div>
+    <div class="setup-error" id="setup-error"></div>
+    <div class="intune-form-group">
+      <label class="intune-label">Authority Endpoint URL</label>
+      <input class="intune-input" id="setup-server-url" type="url" placeholder="http://localhost:8443">
+      <div class="form-hint">Defaults to current server origin</div>
+    </div>
+    <div class="intune-form-group">
+      <label class="intune-label">Fleet API Key</label>
+      <input class="intune-input secret" id="setup-fleet-key" type="password" placeholder="Enter FleetKey..." autocomplete="off">
+    </div>
+    <button class="intune-btn primary" id="setup-submit-btn" style="width:100%; margin-top:10px;">
+      Sign in
+    </button>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     4. INTUNE DEVICE DETAILS BLADE (SLIDE-IN DRAWER)
+     ════════════════════════════════════════════════════════════════ -->
+<div id="bc-overlay"></div>
+<div id="bc-drawer" class="intune-device-blade">
+  <div class="intune-blade-top">
+    <div class="device-blade-header-left">
+      <div class="device-blade-icon">💻</div>
+      <div>
+        <div class="device-blade-title" id="bc-hostname">DESKTOP-GAMING</div>
+        <div class="device-blade-meta">Windows device | Managed by LocalPilot</div>
+      </div>
+    </div>
+    <button class="bc-close-btn" id="bc-close-btn" title="Close blade">&times;</button>
+  </div>
+
+  <!-- Intune Device Remote Actions Ribbon -->
+  <div class="intune-device-actions">
+    <button class="action-btn" title="Retire device" onclick="showToast('Retire', 'Device retirement policy queued.', 'info')"><span class="act-icon">🛑</span> Retire</button>
+    <button class="action-btn" title="Wipe device" onclick="showToast('Wipe', 'Remote wipe requested.', 'warning')"><span class="act-icon">🧹</span> Wipe</button>
+    <button class="action-btn delete" id="btn-delete-device-blade" title="Delete device"><span class="act-icon">🗑️</span> Delete</button>
+    <button class="action-btn" title="Remote lock" onclick="showToast('Lock', 'Remote lock signal dispatched.', 'info')"><span class="act-icon">🔒</span> Remote lock</button>
+    <button class="action-btn" title="Sync now" onclick="showToast('Sync', 'Check-in signal sent.', 'success')"><span class="act-icon">🔄</span> Sync</button>
+    <button class="action-btn" title="Restart" onclick="showToast('Restart', 'Reboot command queued.', 'warning')"><span class="act-icon">↻</span> Restart</button>
+    <button class="action-btn" title="Fresh Start" onclick="showToast('Fresh Start', 'Fresh Start provisioner triggered.', 'info')"><span class="act-icon">✨</span> Fresh Start</button>
+    <button class="action-btn" title="Quick scan" onclick="showToast('Defender Scan', 'Windows Defender scan running.', 'info')"><span class="act-icon">⚡</span> Quick scan</button>
+  </div>
+
+  <div class="intune-blade-content" id="bc-body">
+    <!-- Injected by birthCertificate.js -->
+  </div>
+</div>
+
+<!-- Toast Notifications Container -->
+<div id="toast-container"></div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     5. CLIENT SCRIPTS
+     ════════════════════════════════════════════════════════════════ -->
+<script src="/js/api.js"></script>
+<script src="/js/sse.js"></script>
+<script src="/js/components/kpiCards.js"></script>
+<script src="/js/components/deviceTable.js"></script>
+<script src="/js/components/birthCertificate.js"></script>
+<script src="/js/components/dynamicGroups.js"></script>
+<script src="/js/components/policyMatrix.js"></script>
+<script src="/js/components/activityFeed.js"></script>
+<script src="/js/app.js"></script>
+
+</body>
+</html>

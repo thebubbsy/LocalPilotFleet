@@ -1,0 +1,76 @@
+# =============================================================================
+# LocalPilot Fleet -- Cloudflare Tunnel Sample Configuration
+# cloudflare/config.sample.yml
+#
+# Copy this file to cloudflare/config.yml and fill in the values below.
+# Generate it interactively with:
+#   .\cloudflare\Generate-TunnelConfig.ps1 -Hostname fleet.yourdomain.com
+# =============================================================================
+
+# -- tunnel -------------------------------------------------------------------
+# The UUID of your named Cloudflare Tunnel.
+# Obtain this by running: cloudflared tunnel create localpilot-fleet
+# It looks like: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+tunnel: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+
+# -- credentials-file ---------------------------------------------------------
+# Absolute path to the JSON credentials file written by cloudflared when the
+# tunnel was created. cloudflared saves it automatically under:
+#   C:\Users\<YOU>\.cloudflared\<TUNNEL-ID>.json
+# This file contains a secret -- do NOT commit it to source control.
+credentials-file: C:\Users\Tony\.cloudflared\a1b2c3d4-e5f6-7890-abcd-ef1234567890.json
+
+# -- ingress ------------------------------------------------------------------
+# Ingress rules map inbound public hostnames (or URL prefixes) to local services.
+# Rules are evaluated top-to-bottom; the FIRST matching rule wins.
+# The final rule MUST be a catch-all (no hostname/path) that handles everything
+# else -- cloudflared will refuse to start without it.
+ingress:
+
+  # -- Primary rule: your Fleet Command Center --------------------------------
+  # All HTTPS traffic arriving at fleet.yourdomain.com (port 443) via the
+  # Cloudflare edge is decrypted by cloudflared and forwarded over plain HTTP
+  # to the local Node.js server on port 8443.
+  # The tunnel terminates TLS for you -- no local certificate required.
+  - hostname: fleet.yourdomain.com
+    service: http://localhost:8443
+
+    # Optional per-origin HTTP settings:
+    originRequest:
+      # How long to wait for the local service to respond
+      connectTimeout: 10s
+      # Keep-alive for the connection between cloudflared and the local service
+      keepAliveTimeout: 90s
+      # Disable TLS verification for the origin (safe here -- it is localhost)
+      noTLSVerify: true
+
+  # -- Example: expose an additional service on a subdomain ------------------
+  # Uncomment to proxy a second service (e.g. Grafana on port 3000).
+  # - hostname: metrics.yourdomain.com
+  #   service: http://localhost:3000
+
+  # -- Catch-all rule (REQUIRED) ---------------------------------------------
+  # Returns HTTP 404 for any request that does not match the rules above.
+  # Without this rule, cloudflared will error on startup.
+  - service: http_status:404
+
+# -- warp-routing (optional) --------------------------------------------------
+# Enable to allow WARP-connected devices to reach private LAN IPs through this
+# tunnel without exposing them publicly. Requires a Zero Trust account.
+# warp-routing:
+#   enabled: true
+
+# -- loglevel -----------------------------------------------------------------
+# Verbosity of cloudflared output. Options: debug | info | warn | error | fatal
+# Default: info
+loglevel: info
+
+# -- logfile ------------------------------------------------------------------
+# Write cloudflared logs to a file in addition to stdout.
+# Comment out to log to stdout only.
+logfile: C:\ProgramData\LocalPilotFleet\logs\cloudflared.log
+
+# -- metrics ------------------------------------------------------------------
+# Expose a Prometheus-compatible /metrics endpoint for internal observability.
+# Default: localhost:2000
+# metrics: localhost:2000
