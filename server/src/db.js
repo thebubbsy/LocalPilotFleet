@@ -183,7 +183,8 @@ export function initDb(dbOrPath, options = {}) {
         'BITLOCKER_KEY_ESCROWED', 'BITLOCKER_KEY_REVEALED', 'BITLOCKER_ENCRYPTION_TRIGGERED',
         'LAPS_PASSWORD_ESCROWED', 'LAPS_PASSWORD_REVEALED', 'LAPS_PASSWORD_ROTATED',
         'EPM_ELEVATION_REQUESTED', 'EPM_ELEVATION_APPROVED', 'EPM_ELEVATION_DENIED', 'EPM_PROCESS_ELEVATED',
-        'AUTOPILOT_DEVICE_IMPORTED', 'AUTOPILOT_PROFILE_ASSIGNED', 'AUTOPILOT_PROVISIONING_STARTED', 'AUTOPILOT_PROVISIONING_COMPLETED', 'AUTOPILOT_PROVISIONING_FAILED'
+        'AUTOPILOT_DEVICE_IMPORTED', 'AUTOPILOT_PROFILE_ASSIGNED', 'AUTOPILOT_PROVISIONING_STARTED', 'AUTOPILOT_PROVISIONING_COMPLETED', 'AUTOPILOT_PROVISIONING_FAILED',
+        'REMOTE_ACTION_DISPATCHED', 'REMOTE_ACTION_COMPLETED', 'REMOTE_ACTION_FAILED', 'DIAGNOSTICS_COLLECTED', 'BULK_ACTION_EXECUTED'
       )),
       event_id INTEGER,
       event_source TEXT NOT NULL,
@@ -748,6 +749,64 @@ export function initDb(dbOrPath, options = {}) {
       FOREIGN KEY(autopilot_device_id) REFERENCES autopilot_devices(id) ON DELETE CASCADE,
       FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE SET NULL
     );
+
+    -- 39. DEVICE_REMOTE_ACTIONS (Intune Device Lifecycle, Remote Lock, Reboot, Wipe, Diagnostics & Sync)
+    CREATE TABLE IF NOT EXISTS device_remote_actions (
+      id TEXT PRIMARY KEY NOT NULL,
+      device_id TEXT NOT NULL,
+      action_type TEXT NOT NULL CHECK(action_type IN (
+        'REMOTE_LOCK', 'RESTART', 'SHUTDOWN', 'CANCEL_SHUTDOWN',
+        'COLLECT_DIAGNOSTICS', 'FRESH_START', 'WIPE', 'RETIRE',
+        'SYNC_MDM', 'DEFENDER_SCAN', 'ROTATE_BITLOCKER', 'ROTATE_LAPS'
+      )),
+      parameters_json TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'DISPATCHED', 'EXECUTING', 'COMPLETED', 'FAILED', 'CANCELLED')),
+      error_message TEXT,
+      result_data_json TEXT DEFAULT '{}',
+      dispatched_at TEXT,
+      completed_at TEXT,
+      initiated_by TEXT DEFAULT 'LocalPilot Administrator',
+      bulk_action_id TEXT,
+      created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(bulk_action_id) REFERENCES bulk_device_actions(id) ON DELETE SET NULL
+    );
+
+    -- 40. DEVICE_DIAGNOSTICS_BUNDLES (Intune Standard Diagnostics Archive Vault)
+    CREATE TABLE IF NOT EXISTS device_diagnostics_bundles (
+      id TEXT PRIMARY KEY NOT NULL,
+      device_id TEXT NOT NULL,
+      remote_action_id TEXT,
+      file_name TEXT NOT NULL,
+      file_size_bytes INTEGER NOT NULL DEFAULT 0,
+      content_type TEXT NOT NULL DEFAULT 'application/zip',
+      categories_json TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'COLLECTING' CHECK(status IN ('COLLECTING', 'READY', 'FAILED')),
+      storage_path TEXT NOT NULL,
+      summary_json TEXT DEFAULT '{}',
+      collected_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(remote_action_id) REFERENCES device_remote_actions(id) ON DELETE SET NULL
+    );
+
+    -- 41. BULK_DEVICE_ACTIONS (Multi-Device & Dynamic Group Remote Action Orchestration)
+    CREATE TABLE IF NOT EXISTS bulk_device_actions (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      action_type TEXT NOT NULL,
+      target_group_id TEXT,
+      parameters_json TEXT NOT NULL DEFAULT '{}',
+      total_devices INTEGER NOT NULL DEFAULT 0,
+      dispatched_count INTEGER NOT NULL DEFAULT 0,
+      completed_count INTEGER NOT NULL DEFAULT 0,
+      failed_count INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'DISPATCHED' CHECK(status IN ('DISPATCHED', 'IN_PROGRESS', 'COMPLETED', 'PARTIALLY_FAILED', 'FAILED')),
+      created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET NULL
+    );
   `);
 
   // Indexes
@@ -842,12 +901,22 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_ap_prov_dev ON autopilot_provisioning_events(autopilot_device_id);
     CREATE INDEX IF NOT EXISTS idx_ap_prov_phase ON autopilot_provisioning_events(phase);
     CREATE INDEX IF NOT EXISTS idx_ap_prov_time ON autopilot_provisioning_events(timestamp DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_dra_device ON device_remote_actions(device_id);
+    CREATE INDEX IF NOT EXISTS idx_dra_status ON device_remote_actions(status);
+    CREATE INDEX IF NOT EXISTS idx_dra_type ON device_remote_actions(action_type);
+    CREATE INDEX IF NOT EXISTS idx_dra_created ON device_remote_actions(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_dra_bulk ON device_remote_actions(bulk_action_id);
+    CREATE INDEX IF NOT EXISTS idx_ddb_device ON device_diagnostics_bundles(device_id);
+    CREATE INDEX IF NOT EXISTS idx_ddb_status ON device_diagnostics_bundles(status);
+    CREATE INDEX IF NOT EXISTS idx_bda_target ON bulk_device_actions(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_bda_status ON bulk_device_actions(status);
   `);
 
   // Schema migrations for existing databases
   try {
     const tableSqlRow = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'security_events'").get();
-    if (tableSqlRow && tableSqlRow.sql && !tableSqlRow.sql.includes('AUTOPILOT_DEVICE_IMPORTED')) {
+    if (tableSqlRow && tableSqlRow.sql && !tableSqlRow.sql.includes('REMOTE_ACTION_DISPATCHED')) {
       db.exec(`
         PRAGMA foreign_keys = OFF;
         CREATE TABLE security_events_migrated (
@@ -861,7 +930,8 @@ export function initDb(dbOrPath, options = {}) {
             'BITLOCKER_KEY_ESCROWED', 'BITLOCKER_KEY_REVEALED', 'BITLOCKER_ENCRYPTION_TRIGGERED',
             'LAPS_PASSWORD_ESCROWED', 'LAPS_PASSWORD_REVEALED', 'LAPS_PASSWORD_ROTATED',
             'EPM_ELEVATION_REQUESTED', 'EPM_ELEVATION_APPROVED', 'EPM_ELEVATION_DENIED', 'EPM_PROCESS_ELEVATED',
-            'AUTOPILOT_DEVICE_IMPORTED', 'AUTOPILOT_PROFILE_ASSIGNED', 'AUTOPILOT_PROVISIONING_STARTED', 'AUTOPILOT_PROVISIONING_COMPLETED', 'AUTOPILOT_PROVISIONING_FAILED'
+            'AUTOPILOT_DEVICE_IMPORTED', 'AUTOPILOT_PROFILE_ASSIGNED', 'AUTOPILOT_PROVISIONING_STARTED', 'AUTOPILOT_PROVISIONING_COMPLETED', 'AUTOPILOT_PROVISIONING_FAILED',
+            'REMOTE_ACTION_DISPATCHED', 'REMOTE_ACTION_COMPLETED', 'REMOTE_ACTION_FAILED', 'DIAGNOSTICS_COLLECTED', 'BULK_ACTION_EXECUTED'
           )),
           event_id INTEGER,
           event_source TEXT NOT NULL,
@@ -2080,5 +2150,69 @@ exit 0`,
     insertProvEvent.run('ap-ev-03', 'ap-dev-01', hasDaddy ? hasDaddy.id : null, 'DEVICE_SETUP', 'Security Baselines & BitLocker Encryption', 'COMPLETED', null, 'Applied enterprise baseline policy', '-2 hours 45 minutes');
     insertProvEvent.run('ap-ev-04', 'ap-dev-01', hasDaddy ? hasDaddy.id : null, 'DEVICE_SETUP', 'Required Core Applications', 'COMPLETED', null, 'Installed 3 required packages', '-2 hours 30 minutes');
     insertProvEvent.run('ap-ev-05', 'ap-dev-01', hasDaddy ? hasDaddy.id : null, 'ACCOUNT_SETUP', 'Primary User Account & LAPS Provisioning', 'COMPLETED', null, 'Created standard user profile and escrowed admin LAPS password', '-2 hours 15 minutes');
+
+    // 12. Remote Actions, Diagnostics Bundles & Bulk Actions
+    const insertAction = db.prepare(`
+      INSERT OR IGNORE INTO device_remote_actions (
+        id, device_id, action_type, parameters_json, status, error_message,
+        result_data_json, dispatched_at, completed_at, initiated_by, bulk_action_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?), DATETIME('now', ?), ?, ?, DATETIME('now', ?), DATETIME('now', ?))
+    `);
+
+    const targetDevId = hasDaddy ? hasDaddy.id : 'dev-daddy-pc';
+
+    insertAction.run(
+      'dra-seed-01', targetDevId, 'SYNC_MDM', '{}', 'COMPLETED', null,
+      JSON.stringify({ message: 'MDM policies and telemetry refreshed successfully', elapsed_ms: 340 }),
+      '-4 hours', '-3 hours 59 minutes', 'Tony (Fleet Administrator)', null, '-4 hours', '-3 hours 59 minutes'
+    );
+
+    insertAction.run(
+      'dra-seed-02', targetDevId, 'COLLECT_DIAGNOSTICS',
+      JSON.stringify({ categories: ['SYSTEM_LOGS', 'SECURITY_LOGS', 'MDM_POLICIES', 'NETWORK'] }),
+      'COMPLETED', null,
+      JSON.stringify({ bundle_id: 'ddb-seed-01', file_name: 'diagnostics-daddy-pc-20260908.zip', file_size_bytes: 348160 }),
+      '-2 hours', '-1 hour 58 minutes', 'Tony (Fleet Administrator)', null, '-2 hours', '-1 hour 58 minutes'
+    );
+
+    insertAction.run(
+      'dra-seed-03', targetDevId, 'REMOTE_LOCK', '{}', 'COMPLETED', null,
+      JSON.stringify({ message: 'User workstation session locked via User32::LockWorkStation' }),
+      '-1 hour', '-59 minutes', 'Tony (Fleet Administrator)', null, '-1 hour', '-59 minutes'
+    );
+
+    const insertBundle = db.prepare(`
+      INSERT OR IGNORE INTO device_diagnostics_bundles (
+        id, device_id, remote_action_id, file_name, file_size_bytes, content_type,
+        categories_json, status, storage_path, summary_json, collected_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?), DATETIME('now', ?))
+    `);
+
+    insertBundle.run(
+      'ddb-seed-01', targetDevId, 'dra-seed-02', 'diagnostics-daddy-pc-20260908.zip', 348160, 'application/zip',
+      JSON.stringify(['SYSTEM_LOGS', 'SECURITY_LOGS', 'MDM_POLICIES', 'NETWORK']), 'READY',
+      'server/data/diagnostics/ddb-seed-01.zip',
+      JSON.stringify({
+        os_version: 'Windows 11 Enterprise (23H2)',
+        event_log_records: 150,
+        hotfixes_count: 24,
+        active_adapters: 2,
+        bitlocker_volumes: 1,
+        antivirus_healthy: true
+      }),
+      '-1 hour 58 minutes', '-1 hour 58 minutes'
+    );
+
+    const insertBulk = db.prepare(`
+      INSERT OR IGNORE INTO bulk_device_actions (
+        id, name, action_type, target_group_id, parameters_json,
+        total_devices, dispatched_count, completed_count, failed_count, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?), DATETIME('now', ?))
+    `);
+
+    insertBulk.run(
+      'bda-seed-01', 'Fleet-wide Telemetry & Policy Synchronization', 'SYNC_MDM', 'grp-all', '{}',
+      3, 3, 3, 0, 'COMPLETED', '-4 hours', '-3 hours 58 minutes'
+    );
   }
 }

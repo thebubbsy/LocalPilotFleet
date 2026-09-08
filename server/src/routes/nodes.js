@@ -20,6 +20,7 @@ import { bitlockerEngine } from '../services/bitlockerEngine.js';
 import { lapsEngine } from '../services/lapsEngine.js';
 import * as epmEngine from '../services/epmEngine.js';
 import * as autopilotEngine from '../services/autopilotEngine.js';
+import * as remoteActionEngine from '../services/remoteActionEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -321,11 +322,15 @@ export function registerNodeRoutes(router) {
       // Check for assigned LAPS policy
       const assignedLapsPolicy = lapsEngine.getEffectivePolicyForDevice(db, deviceId);
 
+      // Check for pending remote lifecycle & diagnostic actions
+      const pendingRemoteActions = remoteActionEngine.getPendingActionsForNode(deviceId);
+
       sendJson(res, 200, {
         acknowledged: true,
         server_time: new Date().toISOString(),
         commands_pending: pendingCommands.length > 0,
         pending_commands: pendingCommands,
+        pending_remote_actions: pendingRemoteActions,
         remediations: assignedRemediations,
         profiles: assignedProfiles,
         update_ring: assignedRing,
@@ -1112,6 +1117,57 @@ export function registerNodeRoutes(router) {
       sendJson(res, 201, result);
     } catch (err) {
       sendJson(res, 400, { error: 'NODE_PROVISIONING_EVENT_ERROR', message: err.message });
+    }
+  });
+
+  // 30. GET /api/v1/nodes/:id/remote-actions/pending
+  router.get('/api/v1/nodes/:id/remote-actions/pending', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const actions = remoteActionEngine.getPendingActionsForNode(id);
+      sendJson(res, 200, { device_id: id, count: actions.length, actions });
+    } catch (err) {
+      sendJson(res, 500, { error: 'NODE_PENDING_ACTIONS_ERROR', message: err.message });
+    }
+  });
+
+  // 31. POST /api/v1/nodes/:id/remote-actions/:actionId/result
+  router.post('/api/v1/nodes/:id/remote-actions/:actionId/result', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id, actionId } = req.params;
+    const body = req.body || {};
+    try {
+      const result = remoteActionEngine.completeRemoteAction({
+        actionId,
+        deviceId: id,
+        status: body.status || 'COMPLETED',
+        resultData: body.result_data || body.result || {},
+        errorMessage: body.error_message || body.error || null
+      });
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'NODE_ACTION_RESULT_ERROR', message: err.message });
+    }
+  });
+
+  // 32. POST /api/v1/nodes/:id/diagnostics-upload
+  router.post('/api/v1/nodes/:id/diagnostics-upload', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    try {
+      const bundle = remoteActionEngine.saveDiagnosticsBundle({
+        deviceId: id,
+        remoteActionId: body.remote_action_id || null,
+        fileName: body.file_name || `diagnostics-${id}-${Date.now()}.zip`,
+        base64Data: body.base64_data || body.data || '',
+        categories: body.categories || ['SYSTEM_LOGS', 'SECURITY_LOGS'],
+        summary: body.summary || {}
+      });
+      sendJson(res, 201, bundle);
+    } catch (err) {
+      sendJson(res, 400, { error: 'DIAGNOSTICS_UPLOAD_ERROR', message: err.message });
     }
   });
 }

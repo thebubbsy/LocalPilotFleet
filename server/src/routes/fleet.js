@@ -17,7 +17,9 @@ import { endpointSecurityEngine } from '../services/endpointSecurityEngine.js';
 import { bitlockerEngine } from '../services/bitlockerEngine.js';
 import { lapsEngine } from '../services/lapsEngine.js';
 import * as epmEngine from '../services/epmEngine.js';
+import fs from 'node:fs';
 import * as autopilotEngine from '../services/autopilotEngine.js';
+import * as remoteActionEngine from '../services/remoteActionEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -2843,6 +2845,198 @@ try {
       sendJson(res, 200, posture);
     } catch (err) {
       sendJson(res, 500, { error: 'DEVICE_AUTOPILOT_POSTURE_ERROR', message: err.message });
+    }
+  });
+
+  // 131. GET /api/v1/fleet/remote-actions/stats
+  router.get('/api/v1/fleet/remote-actions/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = remoteActionEngine.getRemoteActionStats();
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'REMOTE_ACTION_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 132. GET /api/v1/fleet/remote-actions
+  router.get('/api/v1/fleet/remote-actions', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const limit = Number(req.query.limit || 100);
+      const offset = Number(req.query.offset || 0);
+      const { status, action_type, device_id } = req.query;
+      const data = remoteActionEngine.getAllActions({
+        status,
+        actionType: action_type,
+        deviceId: device_id,
+        limit,
+        offset
+      });
+      sendJson(res, 200, data);
+    } catch (err) {
+      sendJson(res, 500, { error: 'REMOTE_ACTIONS_QUERY_ERROR', message: err.message });
+    }
+  });
+
+  // 133. POST /api/v1/fleet/remote-actions
+  router.post('/api/v1/fleet/remote-actions', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const body = req.body || {};
+    try {
+      const action = remoteActionEngine.queueRemoteAction({
+        deviceId: body.device_id,
+        actionType: body.action_type,
+        parameters: body.parameters || {},
+        initiatedBy: body.initiated_by || 'LocalPilot Administrator'
+      });
+      broadcastEvent('remote_action_dispatched', {
+        action_id: action.id,
+        device_id: action.device_id,
+        action_type: action.action_type
+      });
+      sendJson(res, 201, action);
+    } catch (err) {
+      sendJson(res, 400, { error: 'REMOTE_ACTION_DISPATCH_ERROR', message: err.message });
+    }
+  });
+
+  // 134. GET /api/v1/fleet/remote-actions/:id
+  router.get('/api/v1/fleet/remote-actions/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const action = remoteActionEngine.getRemoteAction(id);
+      if (!action) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Remote action not found' });
+        return;
+      }
+      sendJson(res, 200, action);
+    } catch (err) {
+      sendJson(res, 500, { error: 'REMOTE_ACTION_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 135. POST /api/v1/fleet/remote-actions/:id/cancel
+  router.post('/api/v1/fleet/remote-actions/:id/cancel', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const cancelled = remoteActionEngine.cancelRemoteAction(id);
+      broadcastEvent('remote_action_cancelled', { action_id: id, device_id: cancelled.device_id });
+      sendJson(res, 200, cancelled);
+    } catch (err) {
+      sendJson(res, 400, { error: 'REMOTE_ACTION_CANCEL_ERROR', message: err.message });
+    }
+  });
+
+  // 136. GET /api/v1/fleet/devices/:id/remote-actions
+  router.get('/api/v1/fleet/devices/:id/remote-actions', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const limit = Number(req.query.limit || 50);
+      const actions = remoteActionEngine.getDeviceActions(id, limit);
+      sendJson(res, 200, { device_id: id, count: actions.length, actions });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_ACTIONS_ERROR', message: err.message });
+    }
+  });
+
+  // 137. GET /api/v1/fleet/devices/:id/diagnostics
+  router.get('/api/v1/fleet/devices/:id/diagnostics', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const bundles = remoteActionEngine.getDeviceDiagnosticsBundles(id);
+      sendJson(res, 200, { device_id: id, count: bundles.length, bundles });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_DIAGNOSTICS_ERROR', message: err.message });
+    }
+  });
+
+  // 138. GET /api/v1/fleet/diagnostics/:id/download
+  router.get('/api/v1/fleet/diagnostics/:id/download', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const { bundle, filePath } = remoteActionEngine.getDiagnosticsDownloadStream(id);
+      const stat = fs.statSync(filePath);
+      res.writeHead(200, {
+        'Content-Type': 'application/zip',
+        'Content-Length': stat.size,
+        'Content-Disposition': `attachment; filename="${bundle.file_name}"`,
+        'Access-Control-Allow-Origin': '*'
+      });
+      fs.createReadStream(filePath).pipe(res);
+    } catch (err) {
+      sendJson(res, 404, { error: 'DIAGNOSTICS_DOWNLOAD_ERROR', message: err.message });
+    }
+  });
+
+  // 139. GET /api/v1/fleet/diagnostics/:id
+  router.get('/api/v1/fleet/diagnostics/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const bundle = remoteActionEngine.getDiagnosticsBundle(id);
+      if (!bundle) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Diagnostics bundle not found' });
+        return;
+      }
+      sendJson(res, 200, bundle);
+    } catch (err) {
+      sendJson(res, 500, { error: 'DIAGNOSTICS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 140. GET /api/v1/fleet/bulk-actions
+  router.get('/api/v1/fleet/bulk-actions', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const actions = remoteActionEngine.getBulkActions();
+      sendJson(res, 200, { count: actions.length, bulk_actions: actions });
+    } catch (err) {
+      sendJson(res, 500, { error: 'BULK_ACTIONS_QUERY_ERROR', message: err.message });
+    }
+  });
+
+  // 141. POST /api/v1/fleet/bulk-actions
+  router.post('/api/v1/fleet/bulk-actions', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const body = req.body || {};
+    try {
+      const bulk = remoteActionEngine.createBulkAction({
+        name: body.name,
+        actionType: body.action_type,
+        targetGroupId: body.target_group_id || 'grp-all',
+        parameters: body.parameters || {},
+        initiatedBy: body.initiated_by || 'LocalPilot Administrator'
+      });
+      broadcastEvent('bulk_action_dispatched', {
+        bulk_id: bulk.id,
+        action_type: bulk.action_type,
+        total_devices: bulk.total_devices
+      });
+      sendJson(res, 201, bulk);
+    } catch (err) {
+      sendJson(res, 400, { error: 'BULK_ACTION_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 142. GET /api/v1/fleet/bulk-actions/:id
+  router.get('/api/v1/fleet/bulk-actions/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const bulk = remoteActionEngine.getBulkAction(id);
+      if (!bulk) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Bulk action not found' });
+        return;
+      }
+      sendJson(res, 200, bulk);
+    } catch (err) {
+      sendJson(res, 500, { error: 'BULK_ACTION_FETCH_ERROR', message: err.message });
     }
   });
 }

@@ -893,6 +893,72 @@ async function getDeviceAutopilot(deviceId) {
   return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/autopilot`);
 }
 
+/* ── Device Remote Lifecycle Actions, Diagnostics & Bulk Orchestrator ── */
+
+async function getRemoteActionStats() {
+  return apiFetch('/api/v1/fleet/remote-actions/stats');
+}
+
+async function getRemoteActions(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.status) qs.set('status', params.status);
+  if (params.action_type) qs.set('action_type', params.action_type);
+  if (params.device_id) qs.set('device_id', params.device_id);
+  if (params.limit) qs.set('limit', params.limit);
+  if (params.offset) qs.set('offset', params.offset);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/remote-actions${qStr ? '?' + qStr : ''}`);
+}
+
+async function queueRemoteAction(data) {
+  return apiFetch('/api/v1/fleet/remote-actions', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function getRemoteAction(id) {
+  return apiFetch(`/api/v1/fleet/remote-actions/${encodeURIComponent(id)}`);
+}
+
+async function cancelRemoteAction(id) {
+  return apiFetch(`/api/v1/fleet/remote-actions/${encodeURIComponent(id)}/cancel`, {
+    method: 'POST'
+  });
+}
+
+async function getDeviceRemoteActions(deviceId, limit = 50) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/remote-actions?limit=${limit}`);
+}
+
+async function getDeviceDiagnostics(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/diagnostics`);
+}
+
+async function getDiagnosticsBundle(id) {
+  return apiFetch(`/api/v1/fleet/diagnostics/${encodeURIComponent(id)}`);
+}
+
+function getDiagnosticsDownloadUrl(id) {
+  const serverUrl = getServerUrl();
+  return `${serverUrl}/api/v1/fleet/diagnostics/${encodeURIComponent(id)}/download`;
+}
+
+async function getBulkActions() {
+  return apiFetch('/api/v1/fleet/bulk-actions');
+}
+
+async function createBulkAction(data) {
+  return apiFetch('/api/v1/fleet/bulk-actions', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function getBulkAction(id) {
+  return apiFetch(`/api/v1/fleet/bulk-actions/${encodeURIComponent(id)}`);
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -1034,6 +1100,19 @@ window.FleetAPI = {
   updateEspPolicy,
   deleteEspPolicy,
   getDeviceAutopilot,
+  // Remote Actions & Diagnostics
+  getRemoteActionStats,
+  getRemoteActions,
+  queueRemoteAction,
+  getRemoteAction,
+  cancelRemoteAction,
+  getDeviceRemoteActions,
+  getDeviceDiagnostics,
+  getDiagnosticsBundle,
+  getDiagnosticsDownloadUrl,
+  getBulkActions,
+  createBulkAction,
+  getBulkAction,
   // Groups
   getGroups,
   createGroup,

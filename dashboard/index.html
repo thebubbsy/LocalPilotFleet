@@ -118,6 +118,11 @@
         <span class="nav-label">Windows Autopilot</span>
       </div>
 
+      <div class="nav-item" data-tab="remote-actions">
+        <span class="nav-icon">⚡</span>
+        <span class="nav-label">Remote actions &amp; logs</span>
+      </div>
+
       <div class="nav-item" data-tab="groups">
         <span class="nav-icon">🏷️</span>
         <span class="nav-label">Groups</span>
@@ -312,6 +317,9 @@
       <div id="view-autopilot"></div>
     </div>
 
+    <!-- ── REMOTE ACTIONS & DIAGNOSTICS BLADE ───────────────────── -->
+    <div class="tab-page" id="tab-remote-actions"></div>
+
     <!-- ── TENANT ADMINISTRATION / SETTINGS BLADE ────────────────── -->
     <div class="tab-page" id="tab-settings">
       <div id="settings-container"></div>
@@ -373,8 +381,9 @@
     <button class="action-btn" id="btn-blade-sync" title="Sync now"><span class="act-icon">🔄</span> Sync</button>
     <button class="action-btn" id="btn-blade-lock" title="Remote lock"><span class="act-icon">🔒</span> Remote lock</button>
     <button class="action-btn" id="btn-blade-restart" title="Restart"><span class="act-icon">↻</span> Restart</button>
+    <button class="action-btn" id="btn-blade-diagnostics" title="Collect Diagnostics Package"><span class="act-icon">📦</span> Collect logs</button>
     <button class="action-btn" id="btn-blade-scan" title="Defender Scan"><span class="act-icon">⚡</span> Quick scan</button>
-    <button class="action-btn" title="Fresh Start" onclick="showToast('Fresh Start', 'Fresh Start provisioner triggered.', 'info')"><span class="act-icon">✨</span> Fresh Start</button>
+    <button class="action-btn" id="btn-blade-fresh-start" title="Fresh Start"><span class="act-icon">✨</span> Fresh Start</button>
     <button class="action-btn delete" id="btn-delete-device-blade" title="Delete device"><span class="act-icon">🗑️</span> Delete</button>
   </div>
 
@@ -411,6 +420,7 @@
 <script src="/js/components/lapsTable.js"></script>
 <script src="/js/components/epmTable.js"></script>
 <script src="/js/components/autopilotTable.js"></script>
+<script src="/js/components/remoteActionsTable.js"></script>
 <script src="/js/app.js"></script>
 
 </body>

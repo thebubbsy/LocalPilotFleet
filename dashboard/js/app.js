@@ -119,6 +119,9 @@ const App = {
       case 'autopilot':
         if (window.AutopilotTable) window.AutopilotTable.init();
         break;
+      case 'remote-actions':
+        if (window.RemoteActionsTable) window.RemoteActionsTable.init();
+        break;
       case 'settings':
         this.renderSettings();
         break;

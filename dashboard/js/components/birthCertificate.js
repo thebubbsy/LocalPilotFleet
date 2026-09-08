@@ -491,6 +491,19 @@
         </div>
       ` : ''}
 
+      <!-- ── Remote Actions & Diagnostic Logs ── -->
+      <div class="bc-section">
+        <div class="bc-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>⚡ Remote Actions &amp; Diagnostic Bundles</span>
+          <button class="intune-btn small primary" id="btn-bc-view-all-remote" style="font-size:11px;padding:2px 8px;">
+            Open Blade &gt;
+          </button>
+        </div>
+        <div id="bc-remote-actions-list" style="margin-top:8px;">
+          <span>⏳</span> Loading remote execution history…
+        </div>
+      </div>
+
       <!-- Padding at bottom -->
       <div style="height:40px;"></div>
     `;
@@ -1176,6 +1189,90 @@
         apListEl.innerHTML = `<div style="color:#EF4444;font-size:12px;">Failed to load Autopilot posture: ${esc(err.message)}</div>`;
       });
     }
+
+    // Fetch and populate Remote Actions & Diagnostics
+    const raListEl = body.querySelector('#bc-remote-actions-list');
+    if (raListEl && _currentDevice?.id) {
+      body.querySelector('#btn-bc-view-all-remote')?.addEventListener('click', () => {
+        close();
+        if (window.App && typeof window.App.navigate === 'function') {
+          window.App.navigate('remote-actions');
+        }
+      });
+
+      Promise.all([
+        window.FleetAPI.getDeviceRemoteActions(_currentDevice.id).catch(() => ({ actions: [] })),
+        window.FleetAPI.getDeviceDiagnostics(_currentDevice.id).catch(() => ({ bundles: [] }))
+      ]).then(([raRes, diagRes]) => {
+        const actions = raRes.actions || [];
+        const bundles = diagRes.bundles || [];
+
+        if (actions.length === 0 && bundles.length === 0) {
+          raListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">No remote actions or diagnostic packages for this device yet.</div>';
+          return;
+        }
+
+        let html = '<div style="display:flex;flex-direction:column;gap:8px;">';
+
+        // Diagnostics highlight if any
+        if (bundles.length > 0) {
+          const latestBundle = bundles[0];
+          const sizeStr = (latestBundle.file_size_bytes / 1024).toFixed(1) + ' KB';
+          html += `
+            <div style="background:#1e293b;border:1px solid #3b82f644;border-radius:6px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <div style="font-weight:600;color:var(--accent-blue);font-size:12px;">📦 Latest Diagnostics Bundle</div>
+                <div style="font-size:11px;color:var(--text-muted);">${esc(latestBundle.file_name)} (${sizeStr}) &bull; ${new Date(latestBundle.created_at).toLocaleString()}</div>
+              </div>
+              <button class="intune-btn small primary" id="btn-bc-dl-diag" style="font-size:11px;padding:3px 8px;">
+                ⬇️ Download ZIP
+              </button>
+            </div>
+          `;
+        }
+
+        // Recent Actions table
+        if (actions.length > 0) {
+          html += `
+            <table class="bc-sub-table" style="margin-top:4px;">
+              <thead><tr><th>Action</th><th>Status</th><th>Initiated</th><th>Completed</th></tr></thead>
+              <tbody>
+                ${actions.slice(0, 5).map(act => {
+                  const statusColors = {
+                    PENDING: '#94a3b8',
+                    DISPATCHED: '#3b82f6',
+                    RUNNING: '#06b6d4',
+                    COMPLETED: '#10b981',
+                    FAILED: '#ef4444',
+                    CANCELLED: '#64748b'
+                  };
+                  const color = statusColors[act.status] || '#94a3b8';
+                  return `
+                    <tr>
+                      <td style="font-weight:600;">${esc(act.action_type)}</td>
+                      <td><span class="badge" style="background:${color}22;color:${color};border:1px solid ${color}55;font-size:10px;">${esc(act.status)}</span></td>
+                      <td style="font-size:11px;color:var(--text-muted);">${new Date(act.created_at).toLocaleTimeString()}</td>
+                      <td style="font-size:11px;color:var(--text-muted);">${act.completed_at ? new Date(act.completed_at).toLocaleTimeString() : (act.error_message ? `<span title="${esc(act.error_message)}" style="color:#ef4444;">Error</span>` : '—')}</td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          `;
+        }
+
+        html += '</div>';
+        raListEl.innerHTML = html;
+
+        if (bundles.length > 0) {
+          raListEl.querySelector('#btn-bc-dl-diag')?.addEventListener('click', () => {
+            window.FleetAPI.downloadDiagnostics(bundles[0].id, bundles[0].file_name);
+          });
+        }
+      }).catch(err => {
+        raListEl.innerHTML = `<div style="color:#EF4444;font-size:12px;">Failed to load remote actions: ${esc(err.message)}</div>`;
+      });
+    }
   }
 
   /* ── Bind close button & overlay click ─────────────────────────── */
@@ -1202,8 +1299,9 @@
     btnSync?.addEventListener('click', async () => {
       if (!_currentDevice) return;
       try {
-        await window.FleetAPI.runScript(_currentDevice.id, 'Get-Date -Format o');
+        await window.FleetAPI.queueRemoteAction({ device_id: _currentDevice.id, action_type: 'SYNC_MDM' });
         if (typeof showToast === 'function') showToast('Sync Dispatched', `Check-in requested for ${_currentDevice.hostname}`, 'success');
+        if (_currentDevice?.id) open(_currentDevice.id);
       } catch (err) {
         if (typeof showToast === 'function') showToast('Sync Failed', err.message, 'critical');
       }
@@ -1212,10 +1310,18 @@
     const btnRestart = document.getElementById('btn-blade-restart');
     btnRestart?.addEventListener('click', async () => {
       if (!_currentDevice) return;
-      if (!confirm(`Are you sure you want to remotely reboot ${_currentDevice.hostname}?\nThis will force restart the machine.`)) return;
+      const delayStr = prompt(`Reboot ${_currentDevice.hostname}?\nEnter delay in seconds (default 30):`, "30");
+      if (delayStr === null) return;
+      const delay_sec = parseInt(delayStr, 10) || 30;
+      const message = prompt(`Reboot notification message to user:`, "Your IT administrator has scheduled a device restart.") || '';
       try {
-        await window.FleetAPI.runScript(_currentDevice.id, 'Restart-Computer -Force');
-        if (typeof showToast === 'function') showToast('Reboot Queued', `Restart command queued for ${_currentDevice.hostname}`, 'warning');
+        await window.FleetAPI.queueRemoteAction({
+          device_id: _currentDevice.id,
+          action_type: 'RESTART',
+          parameters: { delay_sec, message }
+        });
+        if (typeof showToast === 'function') showToast('Reboot Queued', `Restart scheduled in ${delay_sec}s for ${_currentDevice.hostname}`, 'warning');
+        if (_currentDevice?.id) open(_currentDevice.id);
       } catch (err) {
         if (typeof showToast === 'function') showToast('Reboot Failed', err.message, 'critical');
       }
@@ -1224,9 +1330,11 @@
     const btnLock = document.getElementById('btn-blade-lock');
     btnLock?.addEventListener('click', async () => {
       if (!_currentDevice) return;
+      if (!confirm(`Lock workstation for ${_currentDevice.hostname} immediately?`)) return;
       try {
-        await window.FleetAPI.runScript(_currentDevice.id, 'rundll32.exe user32.dll,LockWorkStation');
+        await window.FleetAPI.queueRemoteAction({ device_id: _currentDevice.id, action_type: 'REMOTE_LOCK' });
         if (typeof showToast === 'function') showToast('Remote Lock', `Lock workstation command dispatched to ${_currentDevice.hostname}`, 'info');
+        if (_currentDevice?.id) open(_currentDevice.id);
       } catch (err) {
         if (typeof showToast === 'function') showToast('Lock Failed', err.message, 'critical');
       }
@@ -1236,10 +1344,40 @@
     btnScan?.addEventListener('click', async () => {
       if (!_currentDevice) return;
       try {
-        await window.FleetAPI.triggerSecurityScan(_currentDevice.id, 'QuickScan');
+        await window.FleetAPI.queueRemoteAction({
+          device_id: _currentDevice.id,
+          action_type: 'DEFENDER_SCAN',
+          parameters: { scan_type: 'QuickScan' }
+        });
         if (typeof showToast === 'function') showToast('Defender Scan', `Windows Defender quick scan initiated on ${_currentDevice.hostname}`, 'info');
+        if (_currentDevice?.id) open(_currentDevice.id);
       } catch (err) {
         if (typeof showToast === 'function') showToast('Scan Failed', err.message, 'critical');
+      }
+    });
+
+    const btnDiag = document.getElementById('btn-blade-diagnostics');
+    btnDiag?.addEventListener('click', async () => {
+      if (!_currentDevice) return;
+      try {
+        await window.FleetAPI.queueRemoteAction({ device_id: _currentDevice.id, action_type: 'COLLECT_DIAGNOSTICS' });
+        if (typeof showToast === 'function') showToast('Diagnostics Queued', `Log collection dispatched to ${_currentDevice.hostname}`, 'info');
+        if (_currentDevice?.id) open(_currentDevice.id);
+      } catch (err) {
+        if (typeof showToast === 'function') showToast('Diagnostics Failed', err.message, 'critical');
+      }
+    });
+
+    const btnFreshStart = document.getElementById('btn-blade-fresh-start');
+    btnFreshStart?.addEventListener('click', async () => {
+      if (!_currentDevice) return;
+      if (!confirm(`⚠️ Trigger FRESH START on ${_currentDevice.hostname}?\nThis will retain user profiles and data while returning Windows to a clean factory state.`)) return;
+      try {
+        await window.FleetAPI.queueRemoteAction({ device_id: _currentDevice.id, action_type: 'FRESH_START' });
+        if (typeof showToast === 'function') showToast('Fresh Start Dispatched', `Clean wipe initiated on ${_currentDevice.hostname}`, 'warning');
+        if (_currentDevice?.id) open(_currentDevice.id);
+      } catch (err) {
+        if (typeof showToast === 'function') showToast('Fresh Start Failed', err.message, 'critical');
       }
     });
 

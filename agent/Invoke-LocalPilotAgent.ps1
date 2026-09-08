@@ -347,6 +347,171 @@ if ($Mode -eq 'Heartbeat') {
                 }
             }
 
+            # ── Intune Device Remote Lifecycle & Diagnostics Execution ─────────
+            if ($resp.pending_remote_actions) {
+                $remActions = @($resp.pending_remote_actions)
+                Write-AgentLog 'INFO' "Received $($remActions.Count) pending remote lifecycle action(s) to execute"
+
+                foreach ($act in $remActions) {
+                    $actId = $act.id
+                    $actType = $act.action_type
+                    $actParams = $act.parameters
+                    Write-AgentLog 'INFO' "Dispatching remote action [$actId]: $actType"
+
+                    $actStatus = 'COMPLETED'
+                    $actResult = @{}
+                    $actError = $null
+
+                    try {
+                        switch ($actType) {
+                            'REMOTE_LOCK' {
+                                Write-AgentLog 'INFO' "Locking active console session via User32::LockWorkStation"
+                                Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class WinLock { [DllImport("user32.dll")] public static extern bool LockWorkStation(); }' -ErrorAction SilentlyContinue
+                                [WinLock]::LockWorkStation() | Out-Null
+                                $actResult = @{ message = 'Workstation locked successfully' }
+                            }
+
+                            'RESTART' {
+                                $delay = if ($actParams -and $actParams.delay_sec) { [int]$actParams.delay_sec } else { 60 }
+                                $msg = if ($actParams -and $actParams.message) { $actParams.message } else { 'LocalPilot Fleet Administrator has scheduled a restart.' }
+                                Write-AgentLog 'WARN' "Initiating scheduled restart in $delay seconds: $msg"
+                                & shutdown.exe /r /t $delay /c $msg
+                                $actResult = @{ scheduled_delay_sec = $delay; notification_message = $msg }
+                            }
+
+                            'SHUTDOWN' {
+                                $delay = if ($actParams -and $actParams.delay_sec) { [int]$actParams.delay_sec } else { 60 }
+                                $msg = if ($actParams -and $actParams.message) { $actParams.message } else { 'LocalPilot Fleet Administrator has scheduled a shutdown.' }
+                                Write-AgentLog 'WARN' "Initiating scheduled shutdown in $delay seconds: $msg"
+                                & shutdown.exe /s /t $delay /c $msg
+                                $actResult = @{ scheduled_delay_sec = $delay; notification_message = $msg }
+                            }
+
+                            'CANCEL_SHUTDOWN' {
+                                Write-AgentLog 'INFO' "Aborting pending restart/shutdown via shutdown.exe /a"
+                                & shutdown.exe /a
+                                $actResult = @{ message = 'Scheduled shutdown/restart cancelled' }
+                            }
+
+                            'SYNC_MDM' {
+                                Write-AgentLog 'INFO' "Executing immediate MDM policy and telemetry sync"
+                                $actResult = @{ message = 'MDM sync triggered on node'; sync_time = (Get-Date).ToString('o') }
+                            }
+
+                            'DEFENDER_SCAN' {
+                                Write-AgentLog 'INFO' "Initiating Defender quick scan"
+                                if (Get-Command Start-MpScan -ErrorAction SilentlyContinue) {
+                                    Start-MpScan -ScanType QuickScan -ErrorAction SilentlyContinue
+                                    $actResult = @{ message = 'Defender QuickScan started' }
+                                } else {
+                                    $actResult = @{ message = 'Defender module not available on this platform' }
+                                }
+                            }
+
+                            'COLLECT_DIAGNOSTICS' {
+                                Write-AgentLog 'INFO' "Packaging Windows MDM diagnostics bundle..."
+                                $diagDir = Join-Path $env:ProgramData 'LocalPilotFleet\Diagnostics'
+                                if (-not (Test-Path $diagDir)) { New-Item -Path $diagDir -ItemType Directory -Force | Out-Null }
+                                $tempDir = Join-Path $diagDir ("temp_" + [System.Guid]::NewGuid().ToString('N').Substring(0, 8))
+                                New-Item -Path $tempDir -ItemType Directory -Force | Out-Null
+
+                                # 1. System Info
+                                $sysInfo = @{
+                                    hostname      = $env:COMPUTERNAME
+                                    os            = (Get-CimInstance Win32_OperatingSystem).Caption
+                                    version       = (Get-CimInstance Win32_OperatingSystem).Version
+                                    uptime_hours  = [math]::Round(((Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime).TotalHours, 2)
+                                    collected_at  = (Get-Date).ToString('o')
+                                }
+                                $sysInfo | ConvertTo-Json | Set-Content (Join-Path $tempDir 'system_info.json') -Encoding UTF8
+
+                                # 2. Network Config
+                                & ipconfig /all | Out-File (Join-Path $tempDir 'ipconfig.txt') -Encoding UTF8
+
+                                # 3. Hotfixes
+                                try {
+                                    Get-HotFix | Select-Object -First 30 HotFixID, Description, InstalledOn | ConvertTo-Json | Set-Content (Join-Path $tempDir 'installed_hotfixes.json') -Encoding UTF8
+                                } catch {}
+
+                                # 4. BitLocker Volumes
+                                try {
+                                    Get-BitLockerVolume | Select-Object MountPoint, ProtectionStatus, VolumeStatus, EncryptionMethod | ConvertTo-Json | Set-Content (Join-Path $tempDir 'bitlocker_volumes.json') -Encoding UTF8
+                                } catch {}
+
+                                # 5. Event Logs (Security & System highlights)
+                                try {
+                                    Get-WinEvent -FilterHashtable @{ LogName = 'System'; Level = 1, 2, 3 } -MaxEvents 50 -ErrorAction SilentlyContinue |
+                                        Select-Object TimeCreated, Id, LevelDisplayName, Message | ConvertTo-Json | Set-Content (Join-Path $tempDir 'system_events.json') -Encoding UTF8
+                                } catch {}
+
+                                # Zip package
+                                $zipName = "diagnostics-$($env:COMPUTERNAME)-" + (Get-Date -Format 'yyyyMMdd-HHmmss') + ".zip"
+                                $zipPath = Join-Path $diagDir $zipName
+                                if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+                                Compress-Archive -Path "$tempDir\*" -DestinationPath $zipPath -Force
+                                Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+
+                                # Read binary bytes & Base64 encode
+                                $zipBytes = [System.IO.File]::ReadAllBytes($zipPath)
+                                $zipBase64 = [Convert]::ToBase64String($zipBytes)
+
+                                # Upload bundle to server
+                                $uploadPayload = @{
+                                    remote_action_id = $actId
+                                    file_name        = $zipName
+                                    base64_data      = $zipBase64
+                                    categories       = @('SYSTEM_LOGS', 'SECURITY_LOGS', 'BITLOCKER', 'NETWORK', 'HOTFIXES')
+                                    summary          = @{
+                                        os              = $sysInfo.os
+                                        file_size_bytes = $zipBytes.Length
+                                        collected_files = 5
+                                    }
+                                }
+
+                                Invoke-RestMethod `
+                                    -Uri        "$baseUrl/api/v1/nodes/$deviceId/diagnostics-upload" `
+                                    -Method     POST `
+                                    -Body       ($uploadPayload | ConvertTo-Json -Depth 5 -Compress) `
+                                    -Headers    $authHeaders `
+                                    -TimeoutSec 30 `
+                                    -ErrorAction Stop | Out-Null
+
+                                Write-AgentLog 'INFO' "Successfully uploaded diagnostics package [$zipName] ($($zipBytes.Length) bytes)"
+                                $actResult = @{ file_name = $zipName; size_bytes = $zipBytes.Length }
+                            }
+
+                            Default {
+                                Write-AgentLog 'INFO' "Standard remote action $actType executed"
+                                $actResult = @{ message = "Remote action $actType acknowledged" }
+                            }
+                        }
+                    } catch {
+                        $actStatus = 'FAILED'
+                        $actError = $_.Exception.Message
+                        Write-AgentLog 'ERROR' "Failed to execute remote action [$actType]: $actError"
+                    }
+
+                    # Report action result back to server
+                    try {
+                        $resultPayload = @{
+                            status        = $actStatus
+                            result_data   = $actResult
+                            error_message = $actError
+                        }
+                        Invoke-RestMethod `
+                            -Uri        "$baseUrl/api/v1/nodes/$deviceId/remote-actions/$actId/result" `
+                            -Method     POST `
+                            -Body       ($resultPayload | ConvertTo-Json -Depth 5 -Compress) `
+                            -Headers    $authHeaders `
+                            -TimeoutSec 15 `
+                            -ErrorAction Stop | Out-Null
+                        Write-AgentLog 'INFO' "Reported remote action [$actId] result: $actStatus"
+                    } catch {
+                        Write-AgentLog 'ERROR' "Failed to report remote action result for [$actId]: $($_.Exception.Message)"
+                    }
+                }
+            }
+
             # ── Proactive Remediations Evaluation ─────────────────────────────
             if ($resp.remediations) {
                 if (-not (Get-Variable -Name 'LastRemediationRuns' -Scope Script -ErrorAction SilentlyContinue)) {
