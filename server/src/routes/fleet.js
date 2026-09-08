@@ -21,6 +21,7 @@ import fs from 'node:fs';
 import * as autopilotEngine from '../services/autopilotEngine.js';
 import * as remoteActionEngine from '../services/remoteActionEngine.js';
 import * as firewallEngine from '../services/firewallEngine.js';
+import * as scriptsEngine from '../services/scriptsEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -3191,6 +3192,159 @@ try {
       sendJson(res, 202, { success: true, message: 'Firewall policy enforcement dispatched', action });
     } catch (err) {
       sendJson(res, 400, { error: 'FIREWALL_ENFORCE_DISPATCH_ERROR', message: err.message });
+    }
+  });
+
+  // 153. GET /api/v1/fleet/scripts/stats
+  router.get('/api/v1/fleet/scripts/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const stats = scriptsEngine.getScriptStats(db);
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'SCRIPTS_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 154. GET /api/v1/fleet/scripts
+  router.get('/api/v1/fleet/scripts', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const url = new URL(req.url, 'http://localhost');
+    const search = url.searchParams.get('search') || undefined;
+    const target_group_id = url.searchParams.get('target_group_id') || undefined;
+    const enabled = url.searchParams.get('enabled') || undefined;
+    const run_frequency = url.searchParams.get('run_frequency') || undefined;
+    const run_as_account = url.searchParams.get('run_as_account') || undefined;
+    try {
+      const db = getDb();
+      const scripts = scriptsEngine.getScripts(db, { search, target_group_id, enabled, run_frequency, run_as_account });
+      sendJson(res, 200, { scripts, total: scripts.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'SCRIPTS_GET_ERROR', message: err.message });
+    }
+  });
+
+  // 155. POST /api/v1/fleet/scripts
+  router.post('/api/v1/fleet/scripts', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const script = scriptsEngine.createScript(db, req.body || {});
+      sendJson(res, 201, script);
+    } catch (err) {
+      sendJson(res, 400, { error: 'SCRIPT_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 156. GET /api/v1/fleet/scripts/runs
+  router.get('/api/v1/fleet/scripts/runs', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const url = new URL(req.url, 'http://localhost');
+    const device_id = url.searchParams.get('device_id') || undefined;
+    const script_id = url.searchParams.get('script_id') || undefined;
+    const status = url.searchParams.get('status') || undefined;
+    const limit = url.searchParams.get('limit') || 50;
+    const offset = url.searchParams.get('offset') || 0;
+    try {
+      const db = getDb();
+      const result = scriptsEngine.getScriptRuns(db, { device_id, script_id, status, limit, offset });
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 500, { error: 'SCRIPT_RUNS_GET_ERROR', message: err.message });
+    }
+  });
+
+  // 157. GET /api/v1/fleet/scripts/:id
+  router.get('/api/v1/fleet/scripts/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const script = scriptsEngine.getScript(db, id);
+      if (!script) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Script not found' });
+        return;
+      }
+      sendJson(res, 200, script);
+    } catch (err) {
+      sendJson(res, 500, { error: 'SCRIPT_GET_ERROR', message: err.message });
+    }
+  });
+
+  // 158. PATCH /api/v1/fleet/scripts/:id
+  router.patch('/api/v1/fleet/scripts/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const updated = scriptsEngine.updateScript(db, id, req.body || {});
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 400, { error: 'SCRIPT_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 159. DELETE /api/v1/fleet/scripts/:id
+  router.delete('/api/v1/fleet/scripts/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const result = scriptsEngine.deleteScript(db, id);
+      sendJson(res, 200, result);
+    } catch (err) {
+      const status = err.message && err.message.toLowerCase().includes('not found') ? 404 : 400;
+      sendJson(res, status, { error: 'SCRIPT_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 160. POST /api/v1/fleet/scripts/:id/run
+  router.post('/api/v1/fleet/scripts/:id/run', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const { device_id, initiated_by } = req.body || {};
+    if (!device_id) {
+      sendJson(res, 400, { error: 'BAD_REQUEST', message: 'device_id is required' });
+      return;
+    }
+    try {
+      const db = getDb();
+      const result = scriptsEngine.dispatchScriptRun(db, { scriptId: id, deviceId: device_id, initiatedBy: initiated_by });
+      sendJson(res, 202, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'SCRIPT_DISPATCH_ERROR', message: err.message });
+    }
+  });
+
+  // 161. GET /api/v1/fleet/devices/:id/scripts
+  router.get('/api/v1/fleet/devices/:id/scripts', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const device = db.prepare('SELECT id FROM devices WHERE id = ?').get(id);
+      if (!device) {
+        sendJson(res, 404, { error: 'DEVICE_NOT_FOUND', message: 'Device not found' });
+        return;
+      }
+      const status = scriptsEngine.getDeviceScriptStatus(db, id);
+      sendJson(res, 200, status);
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_SCRIPTS_ERROR', message: err.message });
+    }
+  });
+
+  // 162. POST /api/v1/fleet/devices/:id/scripts/:scriptId/run
+  router.post('/api/v1/fleet/devices/:id/scripts/:scriptId/run', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id, scriptId } = req.params;
+    try {
+      const db = getDb();
+      const result = scriptsEngine.dispatchScriptRun(db, { scriptId, deviceId: id, initiatedBy: req.body?.initiated_by });
+      sendJson(res, 202, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'DEVICE_SCRIPT_RUN_ERROR', message: err.message });
     }
   });
 }

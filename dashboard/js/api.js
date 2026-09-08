@@ -1025,6 +1025,72 @@ async function enforceDeviceFirewall(deviceId) {
   });
 }
 
+/* ── Intune Device Management & PowerShell Scripts ─────────────────── */
+async function getScriptStats() {
+  return apiFetch('/api/v1/fleet/scripts/stats');
+}
+
+async function getScripts(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.search) qs.set('search', params.search);
+  if (params.enabled !== undefined) qs.set('enabled', params.enabled);
+  if (params.group_id) qs.set('group_id', params.group_id);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/scripts${qStr ? '?' + qStr : ''}`);
+}
+
+async function getScript(id) {
+  return apiFetch(`/api/v1/fleet/scripts/${encodeURIComponent(id)}`);
+}
+
+async function createScript(data) {
+  return apiFetch('/api/v1/fleet/scripts', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateScript(id, data) {
+  return apiFetch(`/api/v1/fleet/scripts/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteScript(id) {
+  return apiFetch(`/api/v1/fleet/scripts/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getScriptRuns(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.device_id) qs.set('device_id', params.device_id);
+  if (params.script_id) qs.set('script_id', params.script_id);
+  if (params.status) qs.set('status', params.status);
+  if (params.limit) qs.set('limit', params.limit);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/scripts/runs${qStr ? '?' + qStr : ''}`);
+}
+
+async function dispatchScriptRun(id, data = {}) {
+  return apiFetch(`/api/v1/fleet/scripts/${encodeURIComponent(id)}/run`, {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function getDeviceScripts(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/scripts`);
+}
+
+async function runDeviceScript(deviceId, scriptId, data = {}) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/scripts/${encodeURIComponent(scriptId)}/run`, {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -1045,6 +1111,17 @@ window.FleetAPI = {
   runScript,
   getCommandStatus,
   getDeviceCommands,
+  // Intune PowerShell Scripts
+  getScriptStats,
+  getScripts,
+  getScript,
+  createScript,
+  updateScript,
+  deleteScript,
+  getScriptRuns,
+  dispatchScriptRun,
+  getDeviceScripts,
+  runDeviceScript,
   // Proactive Remediations
   getRemediations,
   getRemediationStats,

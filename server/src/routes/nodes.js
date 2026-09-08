@@ -22,6 +22,7 @@ import * as epmEngine from '../services/epmEngine.js';
 import * as autopilotEngine from '../services/autopilotEngine.js';
 import * as remoteActionEngine from '../services/remoteActionEngine.js';
 import * as firewallEngine from '../services/firewallEngine.js';
+import * as scriptsEngine from '../services/scriptsEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -344,7 +345,8 @@ export function registerNodeRoutes(router) {
         autopilot: autopilotEngine.getDeviceAutopilotPosture(db, deviceId),
         firewall_policy: {
           effective_rules: firewallEngine.getEffectiveRulesForDevice(db, deviceId)
-        }
+        },
+        assigned_scripts: scriptsEngine.getAssignedScriptsForDevice(db, deviceId)
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -1202,6 +1204,36 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { device_id: id, count: saved.length, ports: saved });
     } catch (err) {
       sendJson(res, 400, { error: 'LISTENING_PORTS_REPORT_ERROR', message: err.message });
+    }
+  });
+
+  // 35. POST /api/v1/nodes/:id/scripts/:scriptId/result (Agent reports Intune script execution result)
+  router.post('/api/v1/nodes/:id/scripts/:scriptId/result', (req, res) => {
+    const targetDeviceId = req.params.id;
+    if (!requireFleetKeyOrNodeToken(req, res, targetDeviceId)) return;
+    const { scriptId } = req.params;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const runRecord = scriptsEngine.saveScriptRunResult(db, {
+        deviceId: targetDeviceId,
+        scriptId: scriptId,
+        runMode: body.run_mode || 'ASSIGNED',
+        status: body.status || (body.exit_code === 0 ? 'SUCCESS' : 'FAILED'),
+        exitCode: body.exit_code !== undefined ? Number(body.exit_code) : 0,
+        stdout: body.stdout || '',
+        stderr: body.stderr || '',
+        executionTimeMs: body.execution_time_ms || 0
+      });
+      broadcastEvent('script_run_completed', {
+        device_id: targetDeviceId,
+        script_id: scriptId,
+        status: runRecord.status,
+        exit_code: runRecord.exit_code
+      });
+      sendJson(res, 201, runRecord);
+    } catch (err) {
+      sendJson(res, 400, { error: 'SCRIPT_RUN_RESULT_ERROR', message: err.message });
     }
   });
 }

@@ -185,7 +185,8 @@ export function initDb(dbOrPath, options = {}) {
         'EPM_ELEVATION_REQUESTED', 'EPM_ELEVATION_APPROVED', 'EPM_ELEVATION_DENIED', 'EPM_PROCESS_ELEVATED',
         'AUTOPILOT_DEVICE_IMPORTED', 'AUTOPILOT_PROFILE_ASSIGNED', 'AUTOPILOT_PROVISIONING_STARTED', 'AUTOPILOT_PROVISIONING_COMPLETED', 'AUTOPILOT_PROVISIONING_FAILED',
         'REMOTE_ACTION_DISPATCHED', 'REMOTE_ACTION_COMPLETED', 'REMOTE_ACTION_FAILED', 'DIAGNOSTICS_COLLECTED', 'BULK_ACTION_EXECUTED',
-        'FIREWALL_RULE_APPLIED', 'FIREWALL_DRIFT_DETECTED', 'ROGUE_PORT_DETECTED', 'FIREWALL_PROFILE_DISABLED'
+        'FIREWALL_RULE_APPLIED', 'FIREWALL_DRIFT_DETECTED', 'ROGUE_PORT_DETECTED', 'FIREWALL_PROFILE_DISABLED',
+        'SCRIPT_DISPATCHED', 'SCRIPT_EXECUTION_SUCCESS', 'SCRIPT_EXECUTION_FAILED'
       )),
       event_id INTEGER,
       event_source TEXT NOT NULL,
@@ -870,6 +871,44 @@ export function initDb(dbOrPath, options = {}) {
       FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
       UNIQUE(device_id, protocol, local_address, local_port)
     );
+
+    -- 45. DEVICE_SCRIPTS (Microsoft Intune Windows PowerShell Scripts Repository)
+    CREATE TABLE IF NOT EXISTS device_scripts (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      script_content TEXT NOT NULL,
+      run_as_account TEXT DEFAULT 'SYSTEM' CHECK (run_as_account IN ('SYSTEM', 'USER')),
+      run_as_32bit INTEGER DEFAULT 0 CHECK (run_as_32bit IN (0, 1)),
+      enforce_signature_check INTEGER DEFAULT 0 CHECK (enforce_signature_check IN (0, 1)),
+      timeout_seconds INTEGER DEFAULT 60 CHECK (timeout_seconds >= 5 AND timeout_seconds <= 3600),
+      target_group_id TEXT DEFAULT 'grp-all',
+      assignment_intent TEXT DEFAULT 'ASSIGNED' CHECK (assignment_intent IN ('ASSIGNED', 'AVAILABLE')),
+      run_frequency TEXT DEFAULT 'ONCE' CHECK (run_frequency IN ('ONCE', 'SCHEDULED', 'ON_DEMAND')),
+      schedule_cron TEXT,
+      enabled INTEGER DEFAULT 1 CHECK (enabled IN (0, 1)),
+      created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET DEFAULT
+    );
+
+    -- 46. DEVICE_SCRIPT_RUNS (Device Script Execution Logs & Real-Time Output)
+    CREATE TABLE IF NOT EXISTS device_script_runs (
+      id TEXT PRIMARY KEY NOT NULL,
+      device_id TEXT NOT NULL,
+      script_id TEXT NOT NULL,
+      run_mode TEXT DEFAULT 'ASSIGNED' CHECK (run_mode IN ('ASSIGNED', 'ON_DEMAND', 'SCHEDULED')),
+      status TEXT DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'RUNNING', 'SUCCESS', 'FAILED', 'TIMED_OUT')),
+      exit_code INTEGER,
+      stdout TEXT,
+      stderr TEXT,
+      execution_time_ms INTEGER DEFAULT 0,
+      executed_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(script_id) REFERENCES device_scripts(id) ON DELETE CASCADE
+    );
   `);
 
   // Indexes
@@ -985,12 +1024,19 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_dlp_port ON device_listening_ports(local_port);
     CREATE INDEX IF NOT EXISTS idx_dlp_risk ON device_listening_ports(risk_level);
     CREATE INDEX IF NOT EXISTS idx_dlp_status ON device_listening_ports(status);
+
+    CREATE INDEX IF NOT EXISTS idx_ds_target ON device_scripts(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_ds_enabled ON device_scripts(enabled);
+    CREATE INDEX IF NOT EXISTS idx_dsr_device ON device_script_runs(device_id);
+    CREATE INDEX IF NOT EXISTS idx_dsr_script ON device_script_runs(script_id);
+    CREATE INDEX IF NOT EXISTS idx_dsr_status ON device_script_runs(status);
+    CREATE INDEX IF NOT EXISTS idx_dsr_executed ON device_script_runs(executed_at DESC);
   `);
 
   // Schema migrations for existing databases
   try {
     const tableSqlRow = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'security_events'").get();
-    if (tableSqlRow && tableSqlRow.sql && !tableSqlRow.sql.includes('FIREWALL_RULE_APPLIED')) {
+    if (tableSqlRow && tableSqlRow.sql && !tableSqlRow.sql.includes('SCRIPT_DISPATCHED')) {
       db.exec(`
         PRAGMA foreign_keys = OFF;
         CREATE TABLE security_events_migrated (
@@ -1006,7 +1052,8 @@ export function initDb(dbOrPath, options = {}) {
             'EPM_ELEVATION_REQUESTED', 'EPM_ELEVATION_APPROVED', 'EPM_ELEVATION_DENIED', 'EPM_PROCESS_ELEVATED',
             'AUTOPILOT_DEVICE_IMPORTED', 'AUTOPILOT_PROFILE_ASSIGNED', 'AUTOPILOT_PROVISIONING_STARTED', 'AUTOPILOT_PROVISIONING_COMPLETED', 'AUTOPILOT_PROVISIONING_FAILED',
             'REMOTE_ACTION_DISPATCHED', 'REMOTE_ACTION_COMPLETED', 'REMOTE_ACTION_FAILED', 'DIAGNOSTICS_COLLECTED', 'BULK_ACTION_EXECUTED',
-            'FIREWALL_RULE_APPLIED', 'FIREWALL_DRIFT_DETECTED', 'ROGUE_PORT_DETECTED', 'FIREWALL_PROFILE_DISABLED'
+            'FIREWALL_RULE_APPLIED', 'FIREWALL_DRIFT_DETECTED', 'ROGUE_PORT_DETECTED', 'FIREWALL_PROFILE_DISABLED',
+            'SCRIPT_DISPATCHED', 'SCRIPT_EXECUTION_SUCCESS', 'SCRIPT_EXECUTION_FAILED'
           )),
           event_id INTEGER,
           event_source TEXT NOT NULL,
@@ -2384,5 +2431,78 @@ exit 0`,
       'node.exe', 'Vite / React Dev Server', 'LOW', 'AUTHORIZED',
       '-5 minutes', '-2 hours', '-5 minutes'
     );
+  }
+
+  // 17. Device PowerShell Scripts
+  const scriptCount = db.prepare('SELECT COUNT(*) as count FROM device_scripts').get().count;
+  if (scriptCount === 0) {
+    const insertScript = db.prepare(`
+      INSERT OR IGNORE INTO device_scripts (
+        id, name, description, script_content, run_as_account, run_as_32bit,
+        enforce_signature_check, timeout_seconds, target_group_id, assignment_intent,
+        run_frequency, enabled, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?), DATETIME('now', ?))
+    `);
+
+    insertScript.run(
+      'ps-local-admins',
+      'Enumerate Local Administrators Group & Privileged Accounts',
+      'Audits all local and domain accounts with administrative privileges on the workstation',
+      "Get-LocalGroupMember -Group 'Administrators' | Select-Object Name, PrincipalSource, ObjectClass | Format-Table -AutoSize",
+      'SYSTEM', 0, 0, 60, 'grp-all', 'ASSIGNED', 'ONCE', 1,
+      '-6 hours', '-6 hours'
+    );
+
+    insertScript.run(
+      'ps-cert-audit',
+      'Audit Local Machine Certificates & Expired SSL Roots',
+      'Scans the LocalMachine certificate store for expired certificates or untrusted roots',
+      "Get-ChildItem -Path Cert:\\LocalMachine\\My, Cert:\\LocalMachine\\Root | Where-Object { $_.NotAfter -lt (Get-Date).AddDays(30) } | Select-Object Subject, Thumbprint, NotAfter | Format-Table -AutoSize",
+      'SYSTEM', 0, 0, 60, 'grp-all', 'ASSIGNED', 'ONCE', 1,
+      '-6 hours', '-6 hours'
+    );
+
+    insertScript.run(
+      'ps-dns-health',
+      'Network Stack Health, DNS Cache Flush & Gateway Reachability',
+      'Validates default gateway ARP reachability and flushes local DNS client resolver cache',
+      "Clear-DnsClientCache; Test-NetConnection -ComputerName 1.1.1.1 -InformationLevel Detailed | Select-Object ComputerName, PingSucceeded, RoundTripTime",
+      'SYSTEM', 0, 0, 60, 'grp-all', 'ASSIGNED', 'ONCE', 1,
+      '-6 hours', '-6 hours'
+    );
+
+    insertScript.run(
+      'ps-disk-cleanup',
+      'Enterprise Disk Footprint & Component Store Cleanup',
+      'Analyzes WinSxS component store and temporary cache footprint',
+      "Dism.exe /Online /Cleanup-Image /AnalyzeComponentStore",
+      'SYSTEM', 0, 0, 120, 'grp-low-storage', 'ASSIGNED', 'ONCE', 1,
+      '-6 hours', '-6 hours'
+    );
+
+    insertScript.run(
+      'ps-wua-reset',
+      'Windows Update Agent Subsystem Diagnostics & Soft Reset',
+      'Checks the Windows Update service state and restarts WUA services if stuck',
+      "Get-Service -Name wuauserv, bits, cryptsvc | Select-Object Name, Status, StartType | Format-Table -AutoSize",
+      'SYSTEM', 0, 0, 60, 'grp-win11-modern', 'ASSIGNED', 'ONCE', 1,
+      '-6 hours', '-6 hours'
+    );
+
+    const targetDevId = '6ae3a5d2-6051-4c12-a604-fae0a0df41e6';
+    const devExists = db.prepare('SELECT id FROM devices WHERE id = ?').get(targetDevId);
+    if (devExists) {
+      const insertRun = db.prepare(`
+        INSERT OR IGNORE INTO device_script_runs (
+          id, device_id, script_id, run_mode, status, exit_code, stdout, stderr, execution_time_ms, executed_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?), DATETIME('now', ?), DATETIME('now', ?))
+      `);
+
+      insertRun.run(
+        'dsr-seed-01', targetDevId, 'ps-local-admins', 'ASSIGNED', 'SUCCESS', 0,
+        "Name                 PrincipalSource ObjectClass\n----                 --------------- -----------\nDESKTOP-R0H12DJ\\Tony Local           User\nAdministrator        Local           User",
+        "", 420, '-1 hour', '-1 hour', '-1 hour'
+      );
+    }
   }
 }

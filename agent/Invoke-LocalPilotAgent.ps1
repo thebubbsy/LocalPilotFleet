@@ -598,6 +598,138 @@ if ($Mode -eq 'Heartbeat') {
                 }
             }
 
+            # ── Intune Device Management & PowerShell Scripts Evaluation ──────
+            if ($resp.assigned_scripts) {
+                $scriptHistoryDir = 'C:\ProgramData\LocalPilotFleet\Scripts'
+                if (-not (Test-Path $scriptHistoryDir)) {
+                    New-Item -ItemType Directory -Path $scriptHistoryDir -Force -ErrorAction SilentlyContinue | Out-Null
+                }
+                $scriptHistoryFile = Join-Path $scriptHistoryDir 'history.json'
+                $localScriptHistory = @{}
+                if (Test-Path $scriptHistoryFile) {
+                    try {
+                        $jsonRaw = Get-Content $scriptHistoryFile -Raw -ErrorAction SilentlyContinue
+                        if ($jsonRaw) {
+                            $parsedHistory = $jsonRaw | ConvertFrom-Json
+                            foreach ($prop in $parsedHistory.PSObject.Properties) {
+                                $localScriptHistory[$prop.Name] = [string]$prop.Value
+                            }
+                        }
+                    } catch {}
+                }
+
+                if (-not (Get-Variable -Name 'LastScriptRuns' -Scope Script -ErrorAction SilentlyContinue)) {
+                    $script:LastScriptRuns = @{}
+                }
+                $scriptsList = @($resp.assigned_scripts)
+                $now = Get-Date
+
+                foreach ($scr in $scriptsList) {
+                    $scrId = $scr.id
+                    $freq = if ($scr.run_frequency) { $scr.run_frequency.ToUpper() } else { 'ONCE' }
+                    $isDue = if ($null -ne $scr.is_due) { [bool]$scr.is_due } else { $true }
+
+                    $shouldExecute = $false
+                    if ($freq -eq 'ONCE') {
+                        # Only run if marked as due by server AND not already completed in local history
+                        if ($isDue -and -not $localScriptHistory.ContainsKey($scrId) -and -not $script:LastScriptRuns.ContainsKey($scrId)) {
+                            $shouldExecute = $true
+                        }
+                    } elseif ($freq -eq 'SCHEDULED') {
+                        $lastExec = $script:LastScriptRuns[$scrId]
+                        if ($null -eq $lastExec -or ($now - $lastExec).TotalSeconds -ge 900) {
+                            $shouldExecute = $true
+                        }
+                    } elseif ($freq -eq 'ON_DEMAND') {
+                        if ($isDue -and -not $script:LastScriptRuns.ContainsKey($scrId)) {
+                            $shouldExecute = $true
+                        }
+                    }
+
+                    if ($shouldExecute) {
+                        Write-AgentLog 'INFO' "Executing Intune PowerShell Script [$scrId]: $($scr.name) (Frequency: $freq)"
+                        $script:LastScriptRuns[$scrId] = $now
+
+                        $runAs32Bit = [bool]$scr.run_as_32bit
+                        $timeoutSec = if ($scr.timeout_seconds) { [int]$scr.timeout_seconds } else { 300 }
+                        $psExe = 'powershell.exe'
+                        if ($runAs32Bit -and [Environment]::Is64BitOperatingSystem) {
+                            $sysWowPs = "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe"
+                            if (Test-Path $sysWowPs) { $psExe = $sysWowPs }
+                        }
+
+                        $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+                        $scrStdout = ''
+                        $scrStderr = ''
+                        $scrExitCode = 0
+                        $scrStatus = 'SUCCESS'
+
+                        try {
+                            $fullContent = "`$ProgressPreference = 'SilentlyContinue';`n" + $scr.script_content
+                            $encodedScript = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($fullContent))
+                            $rawResult = & $psExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encodedScript 2>&1
+                            $scrExitCode = $LASTEXITCODE
+                            if ($null -eq $scrExitCode) { $scrExitCode = 0 }
+
+                            $outLines = @()
+                            $errLines = @()
+                            foreach ($item in $rawResult) {
+                                if ($null -eq $item) { continue }
+                                $lineStr = $item.ToString()
+                                if ($lineStr -like '#< CLIXML*' -or $lineStr -like '<Objs Version=*' -or $lineStr -like '</Objs>*') { continue }
+                                if ($item -is [System.Management.Automation.ErrorRecord]) {
+                                    $errLines += $lineStr
+                                } else {
+                                    $outLines += $lineStr
+                                }
+                            }
+                            $scrStdout = $outLines -join "`n"
+                            $scrStderr = $errLines -join "`n"
+                            if ($scrExitCode -ne 0) {
+                                $scrStatus = 'FAILED'
+                            }
+                        } catch {
+                            $scrStatus = 'FAILED'
+                            $scrExitCode = 1
+                            $scrStderr = $_.Exception.Message
+                        } finally {
+                            $stopwatch.Stop()
+                        }
+
+                        $execTimeMs = [int]$stopwatch.ElapsedMilliseconds
+
+                        if ($scrStatus -eq 'SUCCESS') {
+                            $localScriptHistory[$scrId] = $now.ToString('o')
+                            try {
+                                $localScriptHistory | ConvertTo-Json | Set-Content -Path $scriptHistoryFile -Encoding UTF8 -Force -ErrorAction SilentlyContinue
+                            } catch {}
+                        }
+
+                        # Report script run result back to fleet authority
+                        try {
+                            $runPayload = @{
+                                run_mode          = 'ASSIGNED'
+                                status            = $scrStatus
+                                exit_code         = $scrExitCode
+                                stdout            = $scrStdout
+                                stderr            = $scrStderr
+                                execution_time_ms = $execTimeMs
+                            }
+                            Invoke-RestMethod `
+                                -Uri        "$baseUrl/api/v1/nodes/$deviceId/scripts/$scrId/result" `
+                                -Method     POST `
+                                -Body       ($runPayload | ConvertTo-Json -Compress) `
+                                -Headers    $authHeaders `
+                                -TimeoutSec 15 `
+                                -ErrorAction Stop | Out-Null
+                            Write-AgentLog 'INFO' "Reported Intune script run result for [$scrId]: $scrStatus (Exit: $scrExitCode, Duration: ${execTimeMs}ms)"
+                        } catch {
+                            Write-AgentLog 'ERROR' "Failed to report Intune script run for [$scrId]: $($_.Exception.Message)"
+                        }
+                    }
+                }
+            }
+
             # ── Configuration Profiles & Settings Catalog Evaluation ──────────
             if ($resp.profiles) {
                 if (-not (Get-Variable -Name 'LastProfileRuns' -Scope Script -ErrorAction SilentlyContinue)) {

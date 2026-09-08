@@ -459,6 +459,17 @@
         </div>
       </div>
 
+      <!-- ── Windows PowerShell Scripts ── -->
+      <div class="bc-section" id="bc-scripts-section">
+        <div class="bc-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>📜 Windows PowerShell Scripts</span>
+          <button class="intune-link-btn" id="btn-bc-open-scripts-terminal">💻 Open Cloud Shell</button>
+        </div>
+        <div id="bc-scripts-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading PowerShell script execution status…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -1287,6 +1298,76 @@
         });
       }).catch(err => {
         apListEl.innerHTML = `<div style="color:#EF4444;font-size:12px;">Failed to load Autopilot posture: ${esc(err.message)}</div>`;
+      });
+    }
+
+    // Fetch and populate PowerShell scripts status
+    const scriptsListEl = body.querySelector('#bc-scripts-list');
+    if (scriptsListEl && _currentDevice?.id) {
+      body.querySelector('#btn-bc-open-scripts-terminal')?.addEventListener('click', () => {
+        close();
+        if (window.RemoteTerminal) {
+          window.RemoteTerminal.open(_currentDevice.id);
+        }
+      });
+
+      window.FleetAPI.getDeviceScripts(_currentDevice.id).then(res => {
+        const scripts = res.scripts || [];
+        if (scripts.length === 0) {
+          scriptsListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">No PowerShell scripts assigned to this device.</div>';
+          return;
+        }
+
+        let html = '<div style="display:flex;flex-direction:column;gap:8px;">';
+        scripts.forEach(s => {
+          const run = s.last_run;
+          const statusText = run ? run.status : 'NOT_EXECUTED';
+          const isSuccess = statusText === 'SUCCESS';
+          const isFailed = statusText === 'FAILED';
+          const statusColor = isSuccess ? '#10b981' : (isFailed ? '#ef4444' : '#94a3b8');
+
+          html += `
+            <div style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:10px;display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <div style="font-weight:600;color:var(--text-primary);font-size:13px;">${esc(s.name)}</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">
+                  <span class="badge" style="background:rgba(107,114,128,0.2);">${esc(s.run_frequency)}</span>
+                  <span class="badge" style="background:rgba(59,130,246,0.15);color:#60A5FA;">${esc(s.run_as_account)}</span>
+                  ${run && run.executed_at ? `<span>Executed: ${new Date(run.executed_at).toLocaleTimeString()}</span>` : '<span>Pending heartbeat execution</span>'}
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span class="status-pill" style="color:${statusColor};border-color:${statusColor};font-size:11px;">
+                  ${esc(statusText)}
+                </span>
+                <button class="intune-btn small primary btn-bc-run-single-script" data-script-id="${esc(s.id)}" style="font-size:11px;padding:2px 8px;">
+                  ⚡ Run
+                </button>
+              </div>
+            </div>
+          `;
+        });
+        html += '</div>';
+        scriptsListEl.innerHTML = html;
+
+        scriptsListEl.querySelectorAll('.btn-bc-run-single-script').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const scriptId = btn.getAttribute('data-script-id');
+            try {
+              btn.disabled = true;
+              btn.textContent = '⏳';
+              await window.FleetAPI.runDeviceScript(_currentDevice.id, scriptId);
+              if (typeof showToast === 'function') showToast('Script Queued', 'PowerShell script queued for execution on target node.', 'info');
+              setTimeout(() => open(_currentDevice.id), 2000);
+            } catch (err) {
+              alert(`Failed to run script: ${err.message}`);
+              btn.disabled = false;
+              btn.textContent = '⚡ Run';
+            }
+          });
+        });
+      }).catch(err => {
+        scriptsListEl.innerHTML = `<div style="color:#EF4444;font-size:12px;">Failed to load device scripts: ${esc(err.message)}</div>`;
       });
     }
 
