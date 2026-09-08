@@ -419,6 +419,14 @@
         </div>
       </div>
 
+      <!-- ── Windows Firewall & Listening Ports Sentinel ── -->
+      <div class="bc-section" id="bc-firewall-section">
+        <div class="bc-section-title">🧱 Windows Firewall &amp; Perimeter Open Ports</div>
+        <div id="bc-firewall-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading firewall posture &amp; listening ports…
+        </div>
+      </div>
+
       <!-- ── BitLocker Drive Encryption & Recovery Vault ── -->
       <div class="bc-section" id="bc-bitlocker-section">
         <div class="bc-section-title">🔑 BitLocker Drive Encryption &amp; Recovery Keys</div>
@@ -821,6 +829,98 @@
         });
       }).catch(err => {
         secListEl.innerHTML = `<div style="color:#EF4444;font-size:12px;">Failed to load Defender status: ${esc(err.message)}</div>`;
+      });
+    }
+
+    // Fetch and populate Windows Firewall and listening ports
+    const fwListEl = body.querySelector('#bc-firewall-list');
+    if (fwListEl && _currentDevice?.id) {
+      Promise.all([
+        window.FleetAPI.getDeviceFirewall(_currentDevice.id).catch(() => null),
+        window.FleetAPI.getDeviceListeningPorts(_currentDevice.id).catch(() => ({ ports: [] }))
+      ]).then(([fw, portsRes]) => {
+        const ports = portsRes?.ports || [];
+        const isCompliant = fw?.compliance_status === 'COMPLIANT';
+        const activeRules = fw?.active_rules_count || 0;
+        const domOn = fw?.domain_profile_enabled === 1;
+        const privOn = fw?.private_profile_enabled === 1;
+        const pubOn = fw?.public_profile_enabled === 1;
+
+        fwListEl.innerHTML = `
+          <div style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:12px;display:flex;flex-direction:column;gap:10px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <span class="badge ${isCompliant ? 'badge-success' : 'badge-warning'}">
+                  ${isCompliant ? '🛡️ Firewall Compliant' : '⚠️ Profile Drift Detected'}
+                </span>
+                <span style="margin-left:8px;font-weight:600;font-size:13px;color:var(--text-bright);">
+                  ${activeRules} rules active &bull; ${ports.length} open sockets
+                </span>
+              </div>
+              <div style="display:flex;gap:6px;">
+                <button class="intune-btn small primary" id="btn-bc-enforce-fw" style="font-size:11px;padding:3px 8px;">
+                  ⚡ Enforce Policy
+                </button>
+                <button class="intune-btn small" id="btn-bc-view-fw" style="font-size:11px;padding:3px 8px;">
+                  🧱 View Firewall Blade &gt;
+                </button>
+              </div>
+            </div>
+
+            <!-- Profile Badges -->
+            <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:8px;font-size:12px;">
+              <div style="background:#0f172a;padding:6px 10px;border-radius:4px;border:1px solid #334155;">
+                <div style="color:var(--text-muted);font-size:10px;">DOMAIN PROFILE</div>
+                <div style="font-weight:600;color:${domOn ? '#10b981' : '#ef4444'};">${domOn ? '● Enabled' : '○ Disabled'}</div>
+              </div>
+              <div style="background:#0f172a;padding:6px 10px;border-radius:4px;border:1px solid #334155;">
+                <div style="color:var(--text-muted);font-size:10px;">PRIVATE PROFILE</div>
+                <div style="font-weight:600;color:${privOn ? '#10b981' : '#ef4444'};">${privOn ? '● Enabled' : '○ Disabled'}</div>
+              </div>
+              <div style="background:#0f172a;padding:6px 10px;border-radius:4px;border:1px solid #334155;">
+                <div style="color:var(--text-muted);font-size:10px;">PUBLIC PROFILE</div>
+                <div style="font-weight:600;color:${pubOn ? '#10b981' : '#ef4444'};">${pubOn ? '● Enabled' : '○ Disabled'}</div>
+              </div>
+            </div>
+
+            ${ports.length > 0 ? `
+              <div style="border-top:1px solid #334155;padding-top:8px;">
+                <div style="font-weight:600;color:var(--text-bright);font-size:12px;margin-bottom:4px;">Listening TCP Sockets:</div>
+                <table class="bc-sub-table">
+                  <thead><tr><th>Port</th><th>Binding</th><th>Process</th><th>Risk</th></tr></thead>
+                  <tbody>
+                    ${ports.slice(0, 5).map(p => `
+                      <tr>
+                        <td class="mono" style="font-weight:600;">${esc(p.local_port)}</td>
+                        <td class="mono" style="font-size:11px;">${esc(p.local_address)}</td>
+                        <td>${esc(p.process_name || 'System')}</td>
+                        <td><span class="badge badge-${p.risk_level === 'CRITICAL' || p.risk_level === 'HIGH' ? 'error' : 'neutral'}" style="font-size:10px;">${esc(p.risk_level)}</span></td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            ` : '<div style="font-size:11px;color:var(--text-muted);">No open listening sockets recorded.</div>'}
+          </div>
+        `;
+
+        fwListEl.querySelector('#btn-bc-enforce-fw')?.addEventListener('click', async () => {
+          try {
+            await window.FleetAPI.enforceDeviceFirewall(_currentDevice.id);
+            if (typeof showToast === 'function') showToast('Firewall Enforce', `Policy enforcement dispatched to ${_currentDevice.hostname}`, 'info');
+          } catch (err) {
+            if (typeof showToast === 'function') showToast('Enforce Failed', err.message, 'critical');
+          }
+        });
+
+        fwListEl.querySelector('#btn-bc-view-fw')?.addEventListener('click', () => {
+          close();
+          if (window.App && typeof window.App.navigate === 'function') {
+            window.App.navigate('firewall');
+          }
+        });
+      }).catch(err => {
+        fwListEl.innerHTML = `<div style="color:#EF4444;font-size:12px;">Failed to load firewall posture: ${esc(err.message)}</div>`;
       });
     }
 

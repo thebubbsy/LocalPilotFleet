@@ -21,6 +21,7 @@ import { lapsEngine } from '../services/lapsEngine.js';
 import * as epmEngine from '../services/epmEngine.js';
 import * as autopilotEngine from '../services/autopilotEngine.js';
 import * as remoteActionEngine from '../services/remoteActionEngine.js';
+import * as firewallEngine from '../services/firewallEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -340,7 +341,10 @@ export function registerNodeRoutes(router) {
         bitlocker_policy: assignedBitLockerPolicy,
         laps_policy: assignedLapsPolicy,
         epm_rules: epmEngine.getEffectiveEpmRulesForDevice(db, deviceId),
-        autopilot: autopilotEngine.getDeviceAutopilotPosture(db, deviceId)
+        autopilot: autopilotEngine.getDeviceAutopilotPosture(db, deviceId),
+        firewall_policy: {
+          effective_rules: firewallEngine.getEffectiveRulesForDevice(db, deviceId)
+        }
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -1168,6 +1172,36 @@ export function registerNodeRoutes(router) {
       sendJson(res, 201, bundle);
     } catch (err) {
       sendJson(res, 400, { error: 'DIAGNOSTICS_UPLOAD_ERROR', message: err.message });
+    }
+  });
+
+  // 33. POST /api/v1/nodes/:id/firewall-status
+  router.post('/api/v1/nodes/:id/firewall-status', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const status = firewallEngine.saveDeviceFirewallStatus(db, id, body);
+      broadcastEvent('node_firewall_reported', { device_id: id, compliance_status: status.compliance_status });
+      sendJson(res, 200, status);
+    } catch (err) {
+      sendJson(res, 400, { error: 'FIREWALL_STATUS_REPORT_ERROR', message: err.message });
+    }
+  });
+
+  // 34. POST /api/v1/nodes/:id/listening-ports
+  router.post('/api/v1/nodes/:id/listening-ports', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    const portsList = Array.isArray(body) ? body : (body.ports || []);
+    try {
+      const db = getDb();
+      const saved = firewallEngine.saveDeviceListeningPorts(db, id, portsList);
+      sendJson(res, 200, { device_id: id, count: saved.length, ports: saved });
+    } catch (err) {
+      sendJson(res, 400, { error: 'LISTENING_PORTS_REPORT_ERROR', message: err.message });
     }
   });
 }

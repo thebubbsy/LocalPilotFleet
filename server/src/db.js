@@ -184,7 +184,8 @@ export function initDb(dbOrPath, options = {}) {
         'LAPS_PASSWORD_ESCROWED', 'LAPS_PASSWORD_REVEALED', 'LAPS_PASSWORD_ROTATED',
         'EPM_ELEVATION_REQUESTED', 'EPM_ELEVATION_APPROVED', 'EPM_ELEVATION_DENIED', 'EPM_PROCESS_ELEVATED',
         'AUTOPILOT_DEVICE_IMPORTED', 'AUTOPILOT_PROFILE_ASSIGNED', 'AUTOPILOT_PROVISIONING_STARTED', 'AUTOPILOT_PROVISIONING_COMPLETED', 'AUTOPILOT_PROVISIONING_FAILED',
-        'REMOTE_ACTION_DISPATCHED', 'REMOTE_ACTION_COMPLETED', 'REMOTE_ACTION_FAILED', 'DIAGNOSTICS_COLLECTED', 'BULK_ACTION_EXECUTED'
+        'REMOTE_ACTION_DISPATCHED', 'REMOTE_ACTION_COMPLETED', 'REMOTE_ACTION_FAILED', 'DIAGNOSTICS_COLLECTED', 'BULK_ACTION_EXECUTED',
+        'FIREWALL_RULE_APPLIED', 'FIREWALL_DRIFT_DETECTED', 'ROGUE_PORT_DETECTED', 'FIREWALL_PROFILE_DISABLED'
       )),
       event_id INTEGER,
       event_source TEXT NOT NULL,
@@ -807,6 +808,68 @@ export function initDb(dbOrPath, options = {}) {
       updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
       FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET NULL
     );
+
+    -- 42. FIREWALL_RULES (Microsoft Intune Endpoint Security Firewall Rules)
+    CREATE TABLE IF NOT EXISTS firewall_rules (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      direction TEXT NOT NULL CHECK(direction IN ('INBOUND', 'OUTBOUND')),
+      action TEXT NOT NULL CHECK(action IN ('ALLOW', 'BLOCK')),
+      protocol TEXT NOT NULL CHECK(protocol IN ('TCP', 'UDP', 'ICMPv4', 'ICMPv6', 'ANY')),
+      local_ports TEXT DEFAULT 'ANY',
+      remote_ports TEXT DEFAULT 'ANY',
+      local_addresses TEXT DEFAULT '*',
+      remote_addresses TEXT DEFAULT '*',
+      profiles_json TEXT NOT NULL DEFAULT '["Domain","Private","Public"]',
+      program_path TEXT DEFAULT 'ANY',
+      service_name TEXT DEFAULT 'ANY',
+      target_group_id TEXT DEFAULT 'grp-all',
+      enabled INTEGER DEFAULT 1 CHECK(enabled IN (0, 1)),
+      priority INTEGER DEFAULT 100,
+      created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET DEFAULT
+    );
+
+    -- 43. DEVICE_FIREWALL_STATUS (Per-Device Windows Firewall Profiles & Compliance Posture)
+    CREATE TABLE IF NOT EXISTS device_firewall_status (
+      id TEXT PRIMARY KEY NOT NULL,
+      device_id TEXT UNIQUE NOT NULL,
+      domain_profile_enabled INTEGER DEFAULT 1 CHECK(domain_profile_enabled IN (0, 1)),
+      private_profile_enabled INTEGER DEFAULT 1 CHECK(private_profile_enabled IN (0, 1)),
+      public_profile_enabled INTEGER DEFAULT 1 CHECK(public_profile_enabled IN (0, 1)),
+      domain_inbound_action TEXT DEFAULT 'Block',
+      private_inbound_action TEXT DEFAULT 'Block',
+      public_inbound_action TEXT DEFAULT 'Block',
+      stealth_mode_enabled INTEGER DEFAULT 1 CHECK(stealth_mode_enabled IN (0, 1)),
+      active_rules_count INTEGER DEFAULT 0,
+      compliance_status TEXT DEFAULT 'COMPLIANT' CHECK(compliance_status IN ('COMPLIANT', 'NON_COMPLIANT', 'DRIFTED', 'ERROR')),
+      drift_summary_json TEXT DEFAULT '{}',
+      last_audit_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    -- 44. DEVICE_LISTENING_PORTS (Fleet Network Perimeter & Open Port Sentinel)
+    CREATE TABLE IF NOT EXISTS device_listening_ports (
+      id TEXT PRIMARY KEY NOT NULL,
+      device_id TEXT NOT NULL,
+      protocol TEXT NOT NULL CHECK(protocol IN ('TCP', 'UDP')),
+      local_address TEXT NOT NULL,
+      local_port INTEGER NOT NULL,
+      owning_process_id INTEGER,
+      process_name TEXT,
+      service_name TEXT,
+      risk_level TEXT DEFAULT 'LOW' CHECK(risk_level IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+      status TEXT DEFAULT 'AUTHORIZED' CHECK(status IN ('AUTHORIZED', 'UNAUTHORIZED', 'SUSPICIOUS', 'EXPOSED_PUBLIC')),
+      last_seen_at TEXT DEFAULT (DATETIME('now')),
+      created_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      updated_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      UNIQUE(device_id, protocol, local_address, local_port)
+    );
   `);
 
   // Indexes
@@ -911,12 +974,23 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_ddb_status ON device_diagnostics_bundles(status);
     CREATE INDEX IF NOT EXISTS idx_bda_target ON bulk_device_actions(target_group_id);
     CREATE INDEX IF NOT EXISTS idx_bda_status ON bulk_device_actions(status);
+
+    CREATE INDEX IF NOT EXISTS idx_fwr_target ON firewall_rules(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_fwr_enabled ON firewall_rules(enabled);
+    CREATE INDEX IF NOT EXISTS idx_fwr_direction ON firewall_rules(direction);
+    CREATE INDEX IF NOT EXISTS idx_fwr_action ON firewall_rules(action);
+    CREATE INDEX IF NOT EXISTS idx_dfs_device ON device_firewall_status(device_id);
+    CREATE INDEX IF NOT EXISTS idx_dfs_compliance ON device_firewall_status(compliance_status);
+    CREATE INDEX IF NOT EXISTS idx_dlp_device ON device_listening_ports(device_id);
+    CREATE INDEX IF NOT EXISTS idx_dlp_port ON device_listening_ports(local_port);
+    CREATE INDEX IF NOT EXISTS idx_dlp_risk ON device_listening_ports(risk_level);
+    CREATE INDEX IF NOT EXISTS idx_dlp_status ON device_listening_ports(status);
   `);
 
   // Schema migrations for existing databases
   try {
     const tableSqlRow = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'security_events'").get();
-    if (tableSqlRow && tableSqlRow.sql && !tableSqlRow.sql.includes('REMOTE_ACTION_DISPATCHED')) {
+    if (tableSqlRow && tableSqlRow.sql && !tableSqlRow.sql.includes('FIREWALL_RULE_APPLIED')) {
       db.exec(`
         PRAGMA foreign_keys = OFF;
         CREATE TABLE security_events_migrated (
@@ -931,7 +1005,8 @@ export function initDb(dbOrPath, options = {}) {
             'LAPS_PASSWORD_ESCROWED', 'LAPS_PASSWORD_REVEALED', 'LAPS_PASSWORD_ROTATED',
             'EPM_ELEVATION_REQUESTED', 'EPM_ELEVATION_APPROVED', 'EPM_ELEVATION_DENIED', 'EPM_PROCESS_ELEVATED',
             'AUTOPILOT_DEVICE_IMPORTED', 'AUTOPILOT_PROFILE_ASSIGNED', 'AUTOPILOT_PROVISIONING_STARTED', 'AUTOPILOT_PROVISIONING_COMPLETED', 'AUTOPILOT_PROVISIONING_FAILED',
-            'REMOTE_ACTION_DISPATCHED', 'REMOTE_ACTION_COMPLETED', 'REMOTE_ACTION_FAILED', 'DIAGNOSTICS_COLLECTED', 'BULK_ACTION_EXECUTED'
+            'REMOTE_ACTION_DISPATCHED', 'REMOTE_ACTION_COMPLETED', 'REMOTE_ACTION_FAILED', 'DIAGNOSTICS_COLLECTED', 'BULK_ACTION_EXECUTED',
+            'FIREWALL_RULE_APPLIED', 'FIREWALL_DRIFT_DETECTED', 'ROGUE_PORT_DETECTED', 'FIREWALL_PROFILE_DISABLED'
           )),
           event_id INTEGER,
           event_source TEXT NOT NULL,
@@ -2213,6 +2288,101 @@ exit 0`,
     insertBulk.run(
       'bda-seed-01', 'Fleet-wide Telemetry & Policy Synchronization', 'SYNC_MDM', 'grp-all', '{}',
       3, 3, 3, 0, 'COMPLETED', '-4 hours', '-3 hours 58 minutes'
+    );
+
+    // 13. Microsoft Intune Windows Firewall Rules & Network Perimeter Governance
+    const insertFwRule = db.prepare(`
+      INSERT OR IGNORE INTO firewall_rules (
+        id, name, description, direction, action, protocol, local_ports, remote_ports,
+        local_addresses, remote_addresses, profiles_json, program_path, service_name,
+        target_group_id, enabled, priority, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?), DATETIME('now', ?))
+    `);
+
+    insertFwRule.run(
+      'fwr-block-rdp-public',
+      'Block Inbound Remote Desktop (RDP 3389) on Public Networks',
+      'Restricts incoming Terminal Services / RDP connections when connected to untrusted public Wi-Fi hotspots and cellular networks.',
+      'INBOUND', 'BLOCK', 'TCP', '3389', 'ANY', '*', '*',
+      JSON.stringify(['Public']), 'ANY', 'ANY', 'grp-all', 1, 10,
+      '-5 hours', '-5 hours'
+    );
+
+    insertFwRule.run(
+      'fwr-block-smb-public',
+      'Block Inbound NetBIOS & SMB File Sharing (Ports 137-139, 445) on Public Networks',
+      'Prevents lateral traversal and SMB ransomware propagation by denying file and printer sharing ports on public interfaces.',
+      'INBOUND', 'BLOCK', 'TCP', '137,138,139,445', 'ANY', '*', '*',
+      JSON.stringify(['Public']), 'ANY', 'ANY', 'grp-all', 1, 20,
+      '-5 hours', '-5 hours'
+    );
+
+    insertFwRule.run(
+      'fwr-allow-fleet-intranet',
+      'Allow LocalPilot Fleet Telemetry & WinRM (Ports 5985, 8443) on Private Subnets',
+      'Enables authenticated on-premises fleet management, secure HTTP API commands, and remote configuration over the local intranet.',
+      'INBOUND', 'ALLOW', 'TCP', '5985,8443', 'ANY', '*', '192.168.0.0/16,10.0.0.0/8',
+      JSON.stringify(['Domain', 'Private']), 'ANY', 'ANY', 'grp-all', 1, 50,
+      '-5 hours', '-5 hours'
+    );
+
+    insertFwRule.run(
+      'fwr-block-bittorrent',
+      'Block Known P2P & Torrent Swarm Traffic (Ports 6881-6889, 51413)',
+      'Blocks unauthorized peer-to-peer file transfer protocols and tracker communications across all network profiles.',
+      'INBOUND', 'BLOCK', 'TCP', '6881-6889,51413', 'ANY', '*', '*',
+      JSON.stringify(['Domain', 'Private', 'Public']), 'ANY', 'ANY', 'grp-all', 1, 80,
+      '-5 hours', '-5 hours'
+    );
+
+    insertFwRule.run(
+      'fwr-allow-dev-web',
+      'Allow Local Development Web Servers (Ports 3000, 5173, 8080) on Private LAN',
+      'Permits inbound development preview traffic for Node.js, Vite, and Java servers across local trusted subnets.',
+      'INBOUND', 'ALLOW', 'TCP', '3000,5173,8080', 'ANY', '*', 'LocalSubnet',
+      JSON.stringify(['Private']), 'ANY', 'ANY', 'grp-all', 1, 90,
+      '-5 hours', '-5 hours'
+    );
+
+    const insertFwStatus = db.prepare(`
+      INSERT OR IGNORE INTO device_firewall_status (
+        id, device_id, domain_profile_enabled, private_profile_enabled, public_profile_enabled,
+        domain_inbound_action, private_inbound_action, public_inbound_action, stealth_mode_enabled,
+        active_rules_count, compliance_status, drift_summary_json, last_audit_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?), DATETIME('now', ?), DATETIME('now', ?))
+    `);
+
+    insertFwStatus.run(
+      'dfs-seed-01', targetDevId,
+      1, 1, 1,
+      'Block', 'Block', 'Block', 1,
+      5, 'COMPLIANT', '{}',
+      '-15 minutes', '-4 hours', '-15 minutes'
+    );
+
+    const insertPort = db.prepare(`
+      INSERT OR IGNORE INTO device_listening_ports (
+        id, device_id, protocol, local_address, local_port, owning_process_id,
+        process_name, service_name, risk_level, status, last_seen_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?), DATETIME('now', ?), DATETIME('now', ?))
+    `);
+
+    insertPort.run(
+      'dlp-seed-01', targetDevId, 'TCP', '0.0.0.0', 8443, 24756,
+      'node.exe', 'LocalPilot Fleet Server', 'LOW', 'AUTHORIZED',
+      '-5 minutes', '-4 hours', '-5 minutes'
+    );
+
+    insertPort.run(
+      'dlp-seed-02', targetDevId, 'TCP', '0.0.0.0', 5985, 1024,
+      'svchost.exe', 'Windows Remote Management (WS-Management)', 'MEDIUM', 'AUTHORIZED',
+      '-5 minutes', '-4 hours', '-5 minutes'
+    );
+
+    insertPort.run(
+      'dlp-seed-03', targetDevId, 'TCP', '127.0.0.1', 3000, 18420,
+      'node.exe', 'Vite / React Dev Server', 'LOW', 'AUTHORIZED',
+      '-5 minutes', '-2 hours', '-5 minutes'
     );
   }
 }

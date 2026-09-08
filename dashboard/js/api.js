@@ -959,6 +959,72 @@ async function getBulkAction(id) {
   return apiFetch(`/api/v1/fleet/bulk-actions/${encodeURIComponent(id)}`);
 }
 
+/* ── Windows Firewall Rules & Perimeter Open Port Sentinel ────────── */
+
+async function getFirewallStats() {
+  return apiFetch('/api/v1/fleet/firewall/stats');
+}
+
+async function getFirewallRules(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.direction) qs.set('direction', params.direction);
+  if (params.action) qs.set('action', params.action);
+  if (params.protocol) qs.set('protocol', params.protocol);
+  if (params.enabled !== undefined && params.enabled !== '') qs.set('enabled', params.enabled);
+  if (params.target_group_id) qs.set('target_group_id', params.target_group_id);
+  if (params.search) qs.set('search', params.search);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/firewall/rules${qStr ? '?' + qStr : ''}`);
+}
+
+async function getFirewallRule(id) {
+  return apiFetch(`/api/v1/fleet/firewall/rules/${encodeURIComponent(id)}`);
+}
+
+async function createFirewallRule(data) {
+  return apiFetch('/api/v1/fleet/firewall/rules', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateFirewallRule(id, data) {
+  return apiFetch(`/api/v1/fleet/firewall/rules/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteFirewallRule(id) {
+  return apiFetch(`/api/v1/fleet/firewall/rules/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getFirewallPorts(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.device_id) qs.set('device_id', params.device_id);
+  if (params.risk_level) qs.set('risk_level', params.risk_level);
+  if (params.status) qs.set('status', params.status);
+  if (params.search) qs.set('search', params.search);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/firewall/ports${qStr ? '?' + qStr : ''}`);
+}
+
+async function getDeviceFirewall(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/firewall`);
+}
+
+async function getDeviceListeningPorts(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/listening-ports`);
+}
+
+async function enforceDeviceFirewall(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/firewall/enforce`, {
+    method: 'POST'
+  });
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -1100,6 +1166,17 @@ window.FleetAPI = {
   updateEspPolicy,
   deleteEspPolicy,
   getDeviceAutopilot,
+  // Windows Firewall & Perimeter Sentinel
+  getFirewallStats,
+  getFirewallRules,
+  getFirewallRule,
+  createFirewallRule,
+  updateFirewallRule,
+  deleteFirewallRule,
+  getFirewallPorts,
+  getDeviceFirewall,
+  getDeviceListeningPorts,
+  enforceDeviceFirewall,
   // Remote Actions & Diagnostics
   getRemoteActionStats,
   getRemoteActions,

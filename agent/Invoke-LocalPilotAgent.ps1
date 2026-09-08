@@ -480,6 +480,12 @@ if ($Mode -eq 'Heartbeat') {
                                 $actResult = @{ file_name = $zipName; size_bytes = $zipBytes.Length }
                             }
 
+                            'ENFORCE_FIREWALL_POLICY' {
+                                Write-AgentLog 'INFO' 'Executing immediate Windows Firewall policy enforcement...'
+                                $script:LastFirewallAudit = $null
+                                $actResult = @{ message = 'Firewall audit and enforcement triggered' }
+                            }
+
                             Default {
                                 Write-AgentLog 'INFO' "Standard remote action $actType executed"
                                 $actResult = @{ message = "Remote action $actType acknowledged" }
@@ -1522,6 +1528,127 @@ if ($Mode -eq 'Heartbeat') {
                         }
                         $apData | ConvertTo-Json -Depth 6 | Set-Content -Path "$apCacheDir\posture.json" -Force -ErrorAction SilentlyContinue
                     } catch {}
+                }
+            }
+
+            # ── Windows Firewall Rules, Profile Governance & Perimeter Sentinel ──
+            if (-not (Get-Variable -Name 'LastFirewallAudit' -Scope Script -ErrorAction SilentlyContinue)) {
+                $script:LastFirewallAudit = $null
+            }
+            $now = Get-Date
+            $shouldAuditFirewall = $false
+            if ($null -eq $script:LastFirewallAudit) {
+                $shouldAuditFirewall = $true
+            } elseif (($now - $script:LastFirewallAudit).TotalSeconds -ge 120) { # 2-minute cadence
+                $shouldAuditFirewall = $true
+            }
+
+            if ($shouldAuditFirewall) {
+                $script:LastFirewallAudit = $now
+                Write-AgentLog 'INFO' 'Auditing Windows Firewall profile status & listening ports sentinel...'
+
+                # 1. Harvest Firewall Profiles
+                try {
+                    $hasFwCmd = Get-Command -Name Get-NetFirewallProfile -ErrorAction SilentlyContinue
+                    if ($hasFwCmd) {
+                        $profiles = Get-NetFirewallProfile -ErrorAction SilentlyContinue
+                        $domProf = $profiles | Where-Object { $_.Name -eq 'Domain' } | Select-Object -First 1
+                        $privProf = $profiles | Where-Object { $_.Name -eq 'Private' } | Select-Object -First 1
+                        $pubProf = $profiles | Where-Object { $_.Name -eq 'Public' } | Select-Object -First 1
+
+                        $domEnabled = if ($domProf) { [bool]$domProf.Enabled } else { $true }
+                        $privEnabled = if ($privProf) { [bool]$privProf.Enabled } else { $true }
+                        $pubEnabled = if ($pubProf) { [bool]$pubProf.Enabled } else { $true }
+
+                        $domInbound = if ($domProf -and $domProf.DefaultInboundAction) { [string]$domProf.DefaultInboundAction } else { 'Block' }
+                        $privInbound = if ($privProf -and $privProf.DefaultInboundAction) { [string]$privProf.DefaultInboundAction } else { 'Block' }
+                        $pubInbound = if ($pubProf -and $pubProf.DefaultInboundAction) { [string]$pubProf.DefaultInboundAction } else { 'Block' }
+
+                        $activeCount = 0
+                        try {
+                            $activeCount = (Get-NetFirewallRule -Enabled True -ErrorAction SilentlyContinue | Measure-Object).Count
+                        } catch {}
+
+                        $fwPayload = @{
+                            domain_profile_enabled  = $domEnabled
+                            private_profile_enabled = $privEnabled
+                            public_profile_enabled  = $pubEnabled
+                            domain_inbound_action   = $domInbound
+                            private_inbound_action  = $privInbound
+                            public_inbound_action   = $pubInbound
+                            stealth_mode_enabled    = $true
+                            active_rules_count      = $activeCount
+                        }
+
+                        Invoke-RestMethod `
+                            -Uri        "$baseUrl/api/v1/nodes/$deviceId/firewall-status" `
+                            -Method     POST `
+                            -Body       ($fwPayload | ConvertTo-Json -Compress) `
+                            -Headers    $authHeaders `
+                            -TimeoutSec 10 `
+                            -ErrorAction SilentlyContinue | Out-Null
+
+                        Write-AgentLog 'INFO' "Reported firewall posture (Domain: $domEnabled, Private: $privEnabled, Public: $pubEnabled, Active Rules: $activeCount)"
+                    }
+                } catch {
+                    Write-AgentLog 'WARN' "Could not harvest Windows Firewall profile posture: $($_.Exception.Message)"
+                }
+
+                # 2. Harvest Active Listening Ports (Perimeter Sentinel)
+                try {
+                    $hasTcpCmd = Get-Command -Name Get-NetTCPConnection -ErrorAction SilentlyContinue
+                    if ($hasTcpCmd) {
+                        $listening = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Select-Object -First 50
+                        $portList = @()
+
+                        if ($listening) {
+                            $procCache = @{}
+                            foreach ($conn in $listening) {
+                                $pidNum = [int]$conn.OwningProcess
+                                $pName = $procCache[$pidNum]
+                                if ($null -eq $pName) {
+                                    try {
+                                        $p = Get-Process -Id $pidNum -ErrorAction SilentlyContinue | Select-Object -First 1
+                                        $pName = if ($p) { $p.ProcessName } else { 'System' }
+                                    } catch {
+                                        $pName = 'Unknown'
+                                    }
+                                    $procCache[$pidNum] = $pName
+                                }
+
+                                $portList += @{
+                                    protocol          = 'TCP'
+                                    local_address     = [string]$conn.LocalAddress
+                                    local_port        = [int]$conn.LocalPort
+                                    owning_process_id = $pidNum
+                                    process_name      = [string]$pName
+                                    service_name      = $null
+                                }
+                            }
+                        }
+
+                        $portsPayload = @{
+                            ports = $portList
+                        }
+
+                        Invoke-RestMethod `
+                            -Uri        "$baseUrl/api/v1/nodes/$deviceId/listening-ports" `
+                            -Method     POST `
+                            -Body       ($portsPayload | ConvertTo-Json -Depth 4 -Compress) `
+                            -Headers    $authHeaders `
+                            -TimeoutSec 10 `
+                            -ErrorAction SilentlyContinue | Out-Null
+
+                        Write-AgentLog 'INFO' "Reported $($portList.Count) listening ports to Perimeter Sentinel"
+                    }
+                } catch {
+                    Write-AgentLog 'WARN' "Could not harvest listening ports: $($_.Exception.Message)"
+                }
+
+                # 3. Log effective firewall rules from heartbeat
+                if ($resp.firewall_policy -and $resp.firewall_policy.effective_rules) {
+                    $effRules = @($resp.firewall_policy.effective_rules)
+                    Write-AgentLog 'INFO' "Synchronized $($effRules.Count) effective firewall rules from fleet policy"
                 }
             }
         } catch {

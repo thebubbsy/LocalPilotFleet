@@ -155,6 +155,7 @@ No login required on the LAN — the FleetKey is the authentication layer for AP
 | **REST API** | Full JSON API at `/api/v1/*` for scripting and integration |
 | **Server-Sent Events** | Live event stream at `/api/v1/events` for real-time dashboard updates |
 | **FleetKey Auth** | Bearer token authentication on all API endpoints |
+| **Windows Firewall & Sentinel** | Stateful inbound/outbound rules, profile governance (Domain/Private/Public), and live listening socket perimeter sentinel |
 
 ---
 

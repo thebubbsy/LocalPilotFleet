@@ -20,6 +20,7 @@ import * as epmEngine from '../services/epmEngine.js';
 import fs from 'node:fs';
 import * as autopilotEngine from '../services/autopilotEngine.js';
 import * as remoteActionEngine from '../services/remoteActionEngine.js';
+import * as firewallEngine from '../services/firewallEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -3037,6 +3038,159 @@ try {
       sendJson(res, 200, bulk);
     } catch (err) {
       sendJson(res, 500, { error: 'BULK_ACTION_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 143. GET /api/v1/fleet/firewall/stats
+  router.get('/api/v1/fleet/firewall/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const stats = firewallEngine.getFleetFirewallStats(db);
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'FIREWALL_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 144. GET /api/v1/fleet/firewall/rules
+  router.get('/api/v1/fleet/firewall/rules', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const rules = firewallEngine.getRules(db, req.query || {});
+      sendJson(res, 200, { count: rules.length, rules });
+    } catch (err) {
+      sendJson(res, 500, { error: 'FIREWALL_RULES_QUERY_ERROR', message: err.message });
+    }
+  });
+
+  // 145. POST /api/v1/fleet/firewall/rules
+  router.post('/api/v1/fleet/firewall/rules', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const created = firewallEngine.createRule(db, body);
+      broadcastEvent('firewall_rule_created', { rule_id: created.id, name: created.name });
+      sendJson(res, 201, created);
+    } catch (err) {
+      sendJson(res, 400, { error: 'FIREWALL_RULE_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 146. GET /api/v1/fleet/firewall/rules/:id
+  router.get('/api/v1/fleet/firewall/rules/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const rule = firewallEngine.getRule(db, id);
+      if (!rule) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Firewall rule not found' });
+        return;
+      }
+      sendJson(res, 200, rule);
+    } catch (err) {
+      sendJson(res, 500, { error: 'FIREWALL_RULE_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 147. PATCH /api/v1/fleet/firewall/rules/:id
+  router.patch('/api/v1/fleet/firewall/rules/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const updated = firewallEngine.updateRule(db, id, body);
+      if (!updated) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Firewall rule not found' });
+        return;
+      }
+      broadcastEvent('firewall_rule_updated', { rule_id: id, name: updated.name });
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 400, { error: 'FIREWALL_RULE_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 148. DELETE /api/v1/fleet/firewall/rules/:id
+  router.delete('/api/v1/fleet/firewall/rules/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const deleted = firewallEngine.deleteRule(db, id);
+      if (!deleted) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: 'Firewall rule not found' });
+        return;
+      }
+      broadcastEvent('firewall_rule_deleted', { rule_id: id });
+      sendJson(res, 200, { success: true, deleted_id: id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'FIREWALL_RULE_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 149. GET /api/v1/fleet/firewall/ports
+  router.get('/api/v1/fleet/firewall/ports', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const ports = firewallEngine.getFleetListeningPorts(db, req.query || {});
+      sendJson(res, 200, { count: ports.length, ports });
+    } catch (err) {
+      sendJson(res, 500, { error: 'FIREWALL_PORTS_QUERY_ERROR', message: err.message });
+    }
+  });
+
+  // 150. GET /api/v1/fleet/devices/:id/firewall
+  router.get('/api/v1/fleet/devices/:id/firewall', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const status = firewallEngine.getDeviceFirewallStatus(db, id);
+      const effectiveRules = firewallEngine.getEffectiveRulesForDevice(db, id);
+      sendJson(res, 200, {
+        device_id: id,
+        status: status || { compliance_status: 'UNKNOWN', active_rules_count: 0 },
+        effective_rules: effectiveRules
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_FIREWALL_STATUS_ERROR', message: err.message });
+    }
+  });
+
+  // 151. GET /api/v1/fleet/devices/:id/listening-ports
+  router.get('/api/v1/fleet/devices/:id/listening-ports', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const ports = firewallEngine.getDeviceListeningPorts(db, id);
+      sendJson(res, 200, { device_id: id, count: ports.length, ports });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_LISTENING_PORTS_ERROR', message: err.message });
+    }
+  });
+
+  // 152. POST /api/v1/fleet/devices/:id/firewall/enforce
+  router.post('/api/v1/fleet/devices/:id/firewall/enforce', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const action = remoteActionEngine.queueRemoteAction({
+        deviceId: id,
+        actionType: 'SYNC_MDM',
+        parameters: { trigger: 'FIREWALL_ENFORCE' },
+        initiatedBy: 'Fleet Administrator'
+      });
+      broadcastEvent('firewall_enforce_dispatched', { device_id: id, action_id: action.id });
+      sendJson(res, 202, { success: true, message: 'Firewall policy enforcement dispatched', action });
+    } catch (err) {
+      sendJson(res, 400, { error: 'FIREWALL_ENFORCE_DISPATCH_ERROR', message: err.message });
     }
   });
 }
