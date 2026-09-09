@@ -37,6 +37,7 @@ import * as whfbEngine from '../services/whfbEngine.js';
 import * as driverUpdateEngine from '../services/driverUpdateEngine.js';
 import * as remoteHelpEngine from '../services/remoteHelpEngine.js';
 import * as featureUpdateEngine from '../services/featureUpdateEngine.js';
+import * as enterpriseAppEngine from '../services/enterpriseAppEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -376,7 +377,8 @@ export function registerNodeRoutes(router) {
         feature_update_policy: featureUpdateEngine.getEffectiveFeaturePolicyForDevice(deviceId),
         active_feature_policy: featureUpdateEngine.getEffectiveFeaturePolicyForDevice(deviceId),
         expedited_quality_update: featureUpdateEngine.getEffectiveExpeditedUpdateForDevice(deviceId),
-        active_expedited_update: featureUpdateEngine.getEffectiveExpeditedUpdateForDevice(deviceId)
+        active_expedited_update: featureUpdateEngine.getEffectiveExpeditedUpdateForDevice(deviceId),
+        pending_portal_installs: enterpriseAppEngine.getPendingDeviceInstalls(db, deviceId)
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -1761,6 +1763,46 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { device_id: id, expedited_update: exp, expedite_script: expediteScript });
     } catch (err) {
       sendJson(res, 500, { error: 'EXPEDITED_UPDATE_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 71. GET /api/v1/nodes/:id/company-portal/catalog (Device queries self-service catalog with installation status)
+  router.get('/api/v1/nodes/:id/company-portal/catalog', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const catalog = enterpriseAppEngine.getCompanyPortalCatalog(getDb(), id);
+      sendJson(res, 200, { device_id: id, catalog, total: catalog.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'PORTAL_CATALOG_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 72. POST /api/v1/nodes/:id/company-portal/request (Device submits self-service app request)
+  router.post('/api/v1/nodes/:id/company-portal/request', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const request = enterpriseAppEngine.createCompanyPortalRequest(getDb(), {
+        ...req.body,
+        device_id: id
+      });
+      sendJson(res, 201, { success: true, request });
+    } catch (err) {
+      sendJson(res, 400, { error: 'PORTAL_REQUEST_ERROR', message: err.message });
+    }
+  });
+
+  // 73. POST /api/v1/nodes/:id/company-portal/requests/:reqId/status (Device agent updates installation progress)
+  router.post('/api/v1/nodes/:id/company-portal/requests/:reqId/status', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { reqId } = req.params;
+    try {
+      const updated = enterpriseAppEngine.updateCompanyPortalRequestStatus(getDb(), reqId, req.body);
+      if (!updated) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Request not found' });
+      sendJson(res, 200, { success: true, request: updated });
+    } catch (err) {
+      sendJson(res, 400, { error: 'PORTAL_STATUS_UPDATE_ERROR', message: err.message });
     }
   });
 }

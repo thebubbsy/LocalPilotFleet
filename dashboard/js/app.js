@@ -170,6 +170,9 @@ const App = {
       case 'featureupdates':
         if (window.FeatureUpdatesTable) window.FeatureUpdatesTable.init();
         break;
+      case 'companyportal':
+        if (window.CompanyPortalTable) window.CompanyPortalTable.init(document.getElementById('view-companyportal') || document.getElementById('tab-companyportal'));
+        break;
       case 'settings':
         this.renderSettings();
         break;

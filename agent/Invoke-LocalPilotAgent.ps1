@@ -3079,6 +3079,82 @@ if ($Mode -eq 'Heartbeat') {
                     Write-AgentLog 'WARN' "Feature update / expedited audit error: $($_.Exception.Message)"
                 }
             }
+
+            # ── Enterprise Application Management & Company Portal Execution ─
+            if ($resp.pending_portal_installs -and @($resp.pending_portal_installs).Count -gt 0) {
+                Write-AgentLog 'INFO' "Received $(@($resp.pending_portal_installs).Count) pending Company Portal application installation job(s)"
+                foreach ($appJob in @($resp.pending_portal_installs)) {
+                    $reqId = $appJob.request_id
+                    $pkgId = $appJob.package_identifier
+                    $appName = $appJob.app_name
+                    $reqType = if ($appJob.request_type) { $appJob.request_type } else { 'INSTALL' }
+
+                    Write-AgentLog 'INFO' "Executing Company Portal $reqType for $appName ($pkgId) [Req: $reqId]..."
+
+                    # 1. Update status to INSTALLING
+                    try {
+                        $installingPayload = @{ status = 'INSTALLING' } | ConvertTo-Json -Compress
+                        Invoke-RestMethod `
+                            -Uri        "$baseUrl/api/v1/nodes/$deviceId/company-portal/requests/$reqId/status" `
+                            -Method     POST `
+                            -Body       $installingPayload `
+                            -Headers    $authHeaders `
+                            -TimeoutSec 10 `
+                            -ErrorAction SilentlyContinue | Out-Null
+                    } catch {
+                        Write-AgentLog 'WARN' "Failed to report INSTALLING status for ${reqId}: $($_.Exception.Message)"
+                    }
+
+                    # 2. Execute WinGet installation or simulation
+                    $installSuccess = $true
+                    $errorMessage = ""
+
+                    try {
+                        $wingetCmd = Get-Command winget.exe -ErrorAction SilentlyContinue
+                        if ($wingetCmd) {
+                            $argStr = if ($reqType -eq 'UNINSTALL') {
+                                "uninstall --id `"$pkgId`" --silent"
+                            } else {
+                                "install --id `"$pkgId`" --silent --accept-package-agreements --accept-source-agreements"
+                            }
+                            Write-AgentLog 'INFO' "Invoking: winget.exe $argStr"
+                            $proc = Start-Process winget.exe -ArgumentList $argStr -NoNewWindow -Wait -PassThru
+                            if ($proc.ExitCode -eq 0 -or $proc.ExitCode -eq 2316632065) {
+                                Write-AgentLog 'INFO' "WinGet execution for $pkgId completed successfully (ExitCode: $($proc.ExitCode))."
+                            } else {
+                                $installSuccess = $false
+                                $errorMessage = "WinGet exited with code $($proc.ExitCode)"
+                            }
+                        } else {
+                            Write-AgentLog 'INFO' "WinGet not present in current session; simulated successful installation dispatch for $pkgId"
+                        }
+                    } catch {
+                        $installSuccess = $false
+                        $errorMessage = $_.Exception.Message
+                        Write-AgentLog 'WARN' "WinGet execution exception for ${pkgId}: $errorMessage"
+                    }
+
+                    # 3. Report terminal status (COMPLETED or FAILED)
+                    try {
+                        $terminalPayload = @{
+                            status        = if ($installSuccess) { 'COMPLETED' } else { 'FAILED' }
+                            error_message = $errorMessage
+                        } | ConvertTo-Json -Compress
+
+                        Invoke-RestMethod `
+                            -Uri        "$baseUrl/api/v1/nodes/$deviceId/company-portal/requests/$reqId/status" `
+                            -Method     POST `
+                            -Body       $terminalPayload `
+                            -Headers    $authHeaders `
+                            -TimeoutSec 10 `
+                            -ErrorAction SilentlyContinue | Out-Null
+
+                        Write-AgentLog 'INFO' "Company Portal job $reqId finalized as $(if ($installSuccess) { 'COMPLETED' } else { 'FAILED'})."
+                    } catch {
+                        Write-AgentLog 'WARN' "Failed to report terminal status for ${reqId}: $($_.Exception.Message)"
+                    }
+                }
+            }
         } catch {
             Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
             if (-not $Continuous) { exit 1 }

@@ -1837,6 +1837,96 @@ async function getDeviceFeatureUpdates(deviceId) {
   return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/feature-updates`);
 }
 
+// Enterprise Application Management & Company Portal
+async function getEamStats() {
+  return apiFetch('/api/v1/fleet/eam/stats');
+}
+
+async function getEamCatalog(params = {}) {
+  const query = new URLSearchParams();
+  if (params.category) query.set('category', params.category);
+  if (params.self_service_enabled !== undefined) query.set('self_service_enabled', params.self_service_enabled);
+  if (params.featured !== undefined) query.set('featured', params.featured);
+  if (params.license_type) query.set('license_type', params.license_type);
+  if (params.search) query.set('search', params.search);
+  const qStr = query.toString();
+  return apiFetch(`/api/v1/fleet/eam/catalog${qStr ? '?' + qStr : ''}`);
+}
+
+async function getEamCatalogApp(id) {
+  return apiFetch(`/api/v1/fleet/eam/catalog/${encodeURIComponent(id)}`);
+}
+
+async function createEamCatalogApp(data) {
+  return apiFetch('/api/v1/fleet/eam/catalog', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateEamCatalogApp(id, data) {
+  return apiFetch(`/api/v1/fleet/eam/catalog/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteEamCatalogApp(id) {
+  return apiFetch(`/api/v1/fleet/eam/catalog/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getEamRequests(params = {}) {
+  const query = new URLSearchParams();
+  if (params.status) query.set('status', params.status);
+  if (params.device_id) query.set('device_id', params.device_id);
+  if (params.catalog_app_id) query.set('catalog_app_id', params.catalog_app_id);
+  if (params.search) query.set('search', params.search);
+  const qStr = query.toString();
+  return apiFetch(`/api/v1/fleet/eam/requests${qStr ? '?' + qStr : ''}`);
+}
+
+async function reviewEamRequest(id, data) {
+  return apiFetch(`/api/v1/fleet/eam/requests/${encodeURIComponent(id)}/review`, {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function getEamLicenses(params = {}) {
+  const query = new URLSearchParams();
+  if (params.status) query.set('status', params.status);
+  if (params.catalog_app_id) query.set('catalog_app_id', params.catalog_app_id);
+  if (params.device_id) query.set('device_id', params.device_id);
+  const qStr = query.toString();
+  return apiFetch(`/api/v1/fleet/eam/licenses${qStr ? '?' + qStr : ''}`);
+}
+
+async function allocateEamLicense(data) {
+  return apiFetch('/api/v1/fleet/eam/licenses', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function revokeEamLicense(id) {
+  return apiFetch(`/api/v1/fleet/eam/licenses/${encodeURIComponent(id)}/revoke`, {
+    method: 'POST'
+  });
+}
+
+async function getNodePortalCatalog(nodeId) {
+  return apiFetch(`/api/v1/nodes/${encodeURIComponent(nodeId)}/company-portal/catalog`);
+}
+
+async function createNodePortalRequest(nodeId, data) {
+  return apiFetch(`/api/v1/nodes/${encodeURIComponent(nodeId)}/company-portal/request`, {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -1996,6 +2086,20 @@ window.FleetAPI = {
   deleteExpeditedUpdate,
   getFeatureInventoryOverview,
   getDeviceFeatureUpdates,
+  // Enterprise Application Management & Company Portal
+  getEamStats,
+  getEamCatalog,
+  getEamCatalogApp,
+  createEamCatalogApp,
+  updateEamCatalogApp,
+  deleteEamCatalogApp,
+  getEamRequests,
+  reviewEamRequest,
+  getEamLicenses,
+  allocateEamLicense,
+  revokeEamLicense,
+  getNodePortalCatalog,
+  createNodePortalRequest,
   // Intune Remote Help & Unattended Assistance
   getRemoteHelpStats,
   getRemoteHelpSessions,

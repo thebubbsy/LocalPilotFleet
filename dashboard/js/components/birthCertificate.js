@@ -613,6 +613,17 @@
         </div>
       </div>
 
+      <!-- ── Enterprise Applications & Self-Service Company Portal ── -->
+      <div class="bc-section" id="bc-eam-section">
+        <div class="bc-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>📦 Enterprise Apps &amp; Company Portal</span>
+          <button class="intune-link-btn" id="btn-bc-view-eam-tab">View Enterprise Apps Blade</button>
+        </div>
+        <div id="bc-eam-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading enterprise apps &amp; license posture…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -2170,7 +2181,63 @@
         }
       });
 
-      window.FleetAPI.getDeviceFeatureUpdates(_currentDevice.id).then(res => {
+    // Fetch and populate Enterprise Applications & Company Portal
+    const eamListEl = body.querySelector('#bc-eam-list');
+    if (eamListEl && _currentDevice?.id) {
+      body.querySelector('#btn-bc-view-eam-tab')?.addEventListener('click', () => {
+        close();
+        if (window.App && typeof window.App.navigate === 'function') {
+          window.App.navigate('companyportal');
+        }
+      });
+
+      Promise.all([
+        window.FleetAPI.getNodePortalCatalog(_currentDevice.id).catch(() => ({ catalog: [] })),
+        window.FleetAPI.getEamLicenses({ device_id: _currentDevice.id }).catch(() => ({ licenses: [] }))
+      ]).then(([portalRes, licRes]) => {
+        const apps = portalRes.catalog || [];
+        const lics = licRes.licenses || [];
+
+        const installedApps = apps.filter(a => a.installation_status === 'COMPLETED');
+        const pendingApps = apps.filter(a => ['PENDING_APPROVAL', 'QUEUED', 'INSTALLING'].includes(a.installation_status));
+
+        let html = '<div style="background:var(--bg-secondary);padding:10px 12px;border-radius:6px;border:1px solid var(--border-color);margin-top:4px;display:flex;flex-direction:column;gap:8px;">';
+
+        html += `
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div>
+              <span style="font-weight:600;color:var(--text-primary);">
+                Managed Enterprise Packages: <strong style="color:#10B981;">${installedApps.length} Installed</strong>
+              </span>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">
+                Allocated software license seats: <strong>${lics.length}</strong>
+              </div>
+            </div>
+            <span class="badge" style="background:${pendingApps.length > 0 ? '#F59E0B22' : '#10B98122'};color:${pendingApps.length > 0 ? '#F59E0B' : '#10B981'};font-weight:700;">
+              ${pendingApps.length > 0 ? '⏳ ' + pendingApps.length + ' Pending Action' : '✔ Up to Date'}
+            </span>
+          </div>
+        `;
+
+        if (lics.length > 0) {
+          html += `
+            <div style="border-top:1px solid var(--border-color);padding-top:6px;">
+              <div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">🔑 Assigned Enterprise License Keys:</div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                ${lics.map(l => `<span class="badge" style="background:rgba(168,85,247,0.15);color:#A855F7;font-family:monospace;font-size:11px;">${esc(l.app_name)}: ${esc(l.license_key)}</span>`).join('')}
+              </div>
+            </div>
+          `;
+        }
+
+        html += '</div>';
+        eamListEl.innerHTML = html;
+      }).catch(err => {
+        eamListEl.innerHTML = '<span style="color:#EF4444;">Failed to load enterprise application status: ' + esc(err.message) + '</span>';
+      });
+    }
+
+    window.FleetAPI.getDeviceFeatureUpdates(_currentDevice.id).then(res => {
         const st = res.status;
         const pol = res.effective_feature_policy;
         const exp = res.effective_expedited_update;

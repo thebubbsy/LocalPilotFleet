@@ -36,6 +36,7 @@ import * as whfbEngine from '../services/whfbEngine.js';
 import * as driverUpdateEngine from '../services/driverUpdateEngine.js';
 import * as remoteHelpEngine from '../services/remoteHelpEngine.js';
 import * as featureUpdateEngine from '../services/featureUpdateEngine.js';
+import * as enterpriseAppEngine from '../services/enterpriseAppEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -5137,6 +5138,133 @@ try {
       sendJson(res, 200, data);
     } catch (err) {
       sendJson(res, 500, { error: 'DEVICE_FEATURE_UPDATES_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 293. GET /api/v1/fleet/eam/stats
+  router.get('/api/v1/fleet/eam/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = enterpriseAppEngine.getCatalogStats(getDb());
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'EAM_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 294. GET /api/v1/fleet/eam/catalog
+  router.get('/api/v1/fleet/eam/catalog', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const apps = enterpriseAppEngine.getCatalogApps(getDb(), req.query);
+      sendJson(res, 200, { apps, total: apps.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'EAM_CATALOG_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 295. POST /api/v1/fleet/eam/catalog
+  router.post('/api/v1/fleet/eam/catalog', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const app = enterpriseAppEngine.createCatalogApp(getDb(), req.body);
+      sendJson(res, 201, { success: true, app });
+    } catch (err) {
+      sendJson(res, 400, { error: 'EAM_CATALOG_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 296. GET /api/v1/fleet/eam/catalog/:id
+  router.get('/api/v1/fleet/eam/catalog/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const app = enterpriseAppEngine.getCatalogApp(getDb(), req.params.id);
+      if (!app) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Application not found' });
+      sendJson(res, 200, { app });
+    } catch (err) {
+      sendJson(res, 500, { error: 'EAM_APP_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 297. PATCH & PUT /api/v1/fleet/eam/catalog/:id
+  const handleUpdateApp = (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const updated = enterpriseAppEngine.updateCatalogApp(getDb(), req.params.id, req.body);
+      if (!updated) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Application not found' });
+      sendJson(res, 200, { success: true, app: updated });
+    } catch (err) {
+      sendJson(res, 400, { error: 'EAM_APP_UPDATE_ERROR', message: err.message });
+    }
+  };
+  router.patch('/api/v1/fleet/eam/catalog/:id', handleUpdateApp);
+  router.put('/api/v1/fleet/eam/catalog/:id', handleUpdateApp);
+
+  // 298. DELETE /api/v1/fleet/eam/catalog/:id
+  router.delete('/api/v1/fleet/eam/catalog/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const success = enterpriseAppEngine.deleteCatalogApp(getDb(), req.params.id);
+      if (!success) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Application not found' });
+      sendJson(res, 200, { success: true, deleted_id: req.params.id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'EAM_APP_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 299. GET /api/v1/fleet/eam/requests
+  router.get('/api/v1/fleet/eam/requests', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const requests = enterpriseAppEngine.getCompanyPortalRequests(getDb(), req.query);
+      sendJson(res, 200, { requests, total: requests.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'EAM_REQUESTS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 300. POST /api/v1/fleet/eam/requests/:id/review
+  router.post('/api/v1/fleet/eam/requests/:id/review', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const updated = enterpriseAppEngine.reviewCompanyPortalRequest(getDb(), req.params.id, req.body);
+      sendJson(res, 200, { success: true, request: updated });
+    } catch (err) {
+      sendJson(res, 400, { error: 'EAM_REQUEST_REVIEW_ERROR', message: err.message });
+    }
+  });
+
+  // 301. GET /api/v1/fleet/eam/licenses
+  router.get('/api/v1/fleet/eam/licenses', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const licenses = enterpriseAppEngine.getLicenseAllocations(getDb(), req.query);
+      sendJson(res, 200, { licenses, total: licenses.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'EAM_LICENSES_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 302. POST /api/v1/fleet/eam/licenses
+  router.post('/api/v1/fleet/eam/licenses', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const allocation = enterpriseAppEngine.allocateLicense(getDb(), req.body);
+      sendJson(res, 201, { success: true, allocation });
+    } catch (err) {
+      sendJson(res, 400, { error: 'EAM_LICENSE_ALLOCATE_ERROR', message: err.message });
+    }
+  });
+
+  // 303. POST /api/v1/fleet/eam/licenses/:id/revoke
+  router.post('/api/v1/fleet/eam/licenses/:id/revoke', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const success = enterpriseAppEngine.revokeLicense(getDb(), req.params.id);
+      if (!success) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'License allocation not found' });
+      sendJson(res, 200, { success: true, revoked_id: req.params.id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'EAM_LICENSE_REVOKE_ERROR', message: err.message });
     }
   });
 }

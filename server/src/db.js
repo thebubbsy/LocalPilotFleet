@@ -1606,6 +1606,65 @@ export function initDb(dbOrPath, options = {}) {
       FOREIGN KEY(feature_policy_id) REFERENCES feature_update_policies(id) ON DELETE SET NULL,
       FOREIGN KEY(expedited_update_id) REFERENCES expedited_quality_updates(id) ON DELETE SET NULL
     );
+
+    -- 85. ENTERPRISE_APP_CATALOG — Intune Suite Enterprise App Catalog & WinGet Repository
+    CREATE TABLE IF NOT EXISTS enterprise_app_catalog (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      publisher TEXT NOT NULL,
+      category TEXT NOT NULL,
+      version TEXT NOT NULL,
+      package_identifier TEXT NOT NULL,
+      source_type TEXT DEFAULT 'WINGET' CHECK(source_type IN ('WINGET', 'MSI', 'EXE', 'INTERNAL_STORE')),
+      download_url TEXT DEFAULT '',
+      silent_install_args TEXT DEFAULT '',
+      silent_uninstall_args TEXT DEFAULT '',
+      icon_url TEXT DEFAULT '',
+      featured INTEGER DEFAULT 0 CHECK(featured IN (0, 1)),
+      self_service_enabled INTEGER DEFAULT 1 CHECK(self_service_enabled IN (0, 1)),
+      license_type TEXT DEFAULT 'FREE' CHECK(license_type IN ('FREE', 'OPEN_SOURCE', 'PER_DEVICE', 'PER_USER', 'ENTERPRISE_SUBSCRIPTION')),
+      total_licenses INTEGER DEFAULT 0,
+      assigned_group_id TEXT DEFAULT NULL,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(assigned_group_id) REFERENCES dynamic_groups(id) ON DELETE SET NULL
+    );
+
+    -- 86. COMPANY_PORTAL_REQUESTS — Self-Service Application Requests, Elevation Approvals & Deployment Queue
+    CREATE TABLE IF NOT EXISTS company_portal_requests (
+      id TEXT PRIMARY KEY,
+      catalog_app_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      user_name TEXT NOT NULL,
+      request_type TEXT DEFAULT 'INSTALL' CHECK(request_type IN ('INSTALL', 'UNINSTALL', 'REPAIR')),
+      status TEXT DEFAULT 'PENDING_APPROVAL' CHECK(status IN ('PENDING_APPROVAL', 'APPROVED', 'REJECTED', 'QUEUED', 'INSTALLING', 'COMPLETED', 'FAILED')),
+      approval_required INTEGER DEFAULT 0 CHECK(approval_required IN (0, 1)),
+      approver_user TEXT DEFAULT '',
+      justification TEXT DEFAULT '',
+      error_message TEXT DEFAULT '',
+      requested_at TEXT DEFAULT (DATETIME('now')),
+      resolved_at TEXT,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(catalog_app_id) REFERENCES enterprise_app_catalog(id) ON DELETE CASCADE,
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    -- 87. APP_LICENSE_ALLOCATIONS — Enterprise Application Seat Allocation & Key Management
+    CREATE TABLE IF NOT EXISTS app_license_allocations (
+      id TEXT PRIMARY KEY,
+      catalog_app_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      user_name TEXT DEFAULT '',
+      license_key TEXT DEFAULT '',
+      status TEXT DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE', 'REVOKED', 'EXPIRED')),
+      allocated_at TEXT DEFAULT (DATETIME('now')),
+      expires_at TEXT,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(catalog_app_id) REFERENCES enterprise_app_catalog(id) ON DELETE CASCADE,
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
   `);
 
   // Indexes
@@ -1831,6 +1890,16 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_devfeaupd_dev ON device_feature_update_status(device_id);
     CREATE INDEX IF NOT EXISTS idx_devfeaupd_fstatus ON device_feature_update_status(feature_update_status);
     CREATE INDEX IF NOT EXISTS idx_devfeaupd_estatus ON device_feature_update_status(expedited_install_status);
+
+    CREATE INDEX IF NOT EXISTS idx_entapp_pkg ON enterprise_app_catalog(package_identifier);
+    CREATE INDEX IF NOT EXISTS idx_entapp_cat ON enterprise_app_catalog(category);
+    CREATE INDEX IF NOT EXISTS idx_entapp_selfservice ON enterprise_app_catalog(self_service_enabled);
+    CREATE INDEX IF NOT EXISTS idx_portreq_dev ON company_portal_requests(device_id);
+    CREATE INDEX IF NOT EXISTS idx_portreq_app ON company_portal_requests(catalog_app_id);
+    CREATE INDEX IF NOT EXISTS idx_portreq_status ON company_portal_requests(status);
+    CREATE INDEX IF NOT EXISTS idx_licalloc_app ON app_license_allocations(catalog_app_id);
+    CREATE INDEX IF NOT EXISTS idx_licalloc_dev ON app_license_allocations(device_id);
+    CREATE INDEX IF NOT EXISTS idx_licalloc_status ON app_license_allocations(status);
   `);
 
   // Schema migrations for existing databases
@@ -4095,7 +4164,7 @@ exit 0`,
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?), DATETIME('now', ?))
     `);
 
-    insertExp.run(
+      insertExp.run(
       'exp-update-zero-day',
       'Emergency 0-Day Hotfix Expedite (KB5044284)',
       'Critical zero-day patch expediting security fixes for Windows kernel privilege escalation vulnerabilities.',
@@ -4107,6 +4176,114 @@ exit 0`,
       'ACTIVE',
       '-2 days', '-2 days'
     );
+  }
+
+  // 37. Enterprise Application Management & Company Portal Seeds
+  const appCatCount = db.prepare('SELECT COUNT(*) as count FROM enterprise_app_catalog').get().count;
+  if (appCatCount === 0) {
+    const insertApp = db.prepare(`
+      INSERT INTO enterprise_app_catalog (id, name, publisher, category, version, package_identifier, source_type, silent_install_args, silent_uninstall_args, icon_url, featured, self_service_enabled, license_type, total_licenses, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?), DATETIME('now', ?))
+    `);
+
+    insertApp.run(
+      'app-vscode',
+      'Visual Studio Code',
+      'Microsoft Corporation',
+      'Developer Tools',
+      '1.93.1',
+      'Microsoft.VisualStudioCode',
+      'WINGET',
+      '--silent --accept-package-agreements --accept-source-agreements',
+      '--silent',
+      'https://code.visualstudio.com/favicon.ico',
+      1, 1, 'FREE', 0, '-10 days', '-10 days'
+    );
+
+    insertApp.run(
+      'app-chrome',
+      'Google Chrome Enterprise',
+      'Google LLC',
+      'Productivity & Browsers',
+      '128.0.6613.120',
+      'Google.Chrome',
+      'WINGET',
+      '--silent --accept-package-agreements --accept-source-agreements',
+      '--silent',
+      'https://www.google.com/chrome/static/images/favicons/favicon-32x32.png',
+      1, 1, 'FREE', 0, '-10 days', '-10 days'
+    );
+
+    insertApp.run(
+      'app-docker',
+      'Docker Desktop',
+      'Docker Inc.',
+      'Developer Tools',
+      '4.34.2',
+      'Docker.DockerDesktop',
+      'WINGET',
+      '--silent --accept-package-agreements --accept-source-agreements',
+      '--silent',
+      'https://www.docker.com/wp-content/uploads/2023/04/cropped-Docker-favicon-32x32.png',
+      1, 1, 'PER_USER', 25, '-10 days', '-10 days'
+    );
+
+    insertApp.run(
+      'app-slack',
+      'Slack Enterprise',
+      'Slack Technologies',
+      'Collaboration',
+      '4.39.95',
+      'SlackTechnologies.Slack',
+      'WINGET',
+      '--silent --accept-package-agreements --accept-source-agreements',
+      '--silent',
+      'https://a.slack-edge.com/80588/marketing/img/meta/favicon-32.png',
+      1, 1, 'PER_USER', 50, '-10 days', '-10 days'
+    );
+
+    insertApp.run(
+      'app-7zip',
+      '7-Zip File Archiver',
+      'Igor Pavlov',
+      'Utilities',
+      '24.08',
+      '7zip.7zip',
+      'WINGET',
+      '--silent --accept-package-agreements --accept-source-agreements',
+      '--silent',
+      'https://www.7-zip.org/favicon.ico',
+      0, 1, 'OPEN_SOURCE', 0, '-10 days', '-10 days'
+    );
+
+    insertApp.run(
+      'app-git',
+      'Git for Windows',
+      'The Git Development Community',
+      'Developer Tools',
+      '2.46.0',
+      'Git.Git',
+      'WINGET',
+      '--silent --accept-package-agreements --accept-source-agreements',
+      '--silent',
+      'https://git-scm.com/favicon.ico',
+      0, 1, 'OPEN_SOURCE', 0, '-10 days', '-10 days'
+    );
+
+    const sampleDev = db.prepare('SELECT id FROM devices LIMIT 1').get();
+    if (sampleDev) {
+      const insertLic = db.prepare(`
+        INSERT INTO app_license_allocations (id, catalog_app_id, device_id, user_name, license_key, status, allocated_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, DATETIME('now', '-5 days'), DATETIME('now', '-5 days'), DATETIME('now', '-5 days'))
+      `);
+      insertLic.run('lic-sample-docker', 'app-docker', sampleDev.id, 'Tony', 'DKR-ENT-8849-XXXX-2026', 'ACTIVE');
+
+      const insertReq = db.prepare(`
+        INSERT INTO company_portal_requests (id, catalog_app_id, device_id, user_name, request_type, status, approval_required, approver_user, justification, requested_at, resolved_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', '-3 days'), DATETIME('now', '-3 days'), DATETIME('now', '-3 days'), DATETIME('now', '-3 days'))
+      `);
+      insertReq.run('req-sample-vscode', 'app-vscode', sampleDev.id, 'Tony', 'INSTALL', 'COMPLETED', 0, 'AutoApproved', 'Core workstation IDE');
+    }
   }
 }
 
