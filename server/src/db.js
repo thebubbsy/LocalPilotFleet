@@ -1003,6 +1003,37 @@ export function initDb(dbOrPath, options = {}) {
       created_by TEXT DEFAULT 'LocalPilot Administrator',
       generated_at TEXT DEFAULT (DATETIME('now'))
     );
+
+    -- 53. ORGANIZATIONAL_MESSAGES — Branded fleet toast and taskbar announcements
+    CREATE TABLE IF NOT EXISTS organizational_messages (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      message_body TEXT NOT NULL,
+      surface TEXT NOT NULL CHECK(surface IN ('TOAST', 'TASKBAR', 'MODAL')),
+      theme TEXT DEFAULT 'INFO' CHECK(theme IN ('INFO', 'WARNING', 'CRITICAL', 'UPDATE', 'ONBOARDING')),
+      target_group_id TEXT DEFAULT 'grp-all',
+      action_url TEXT DEFAULT '',
+      action_label TEXT DEFAULT '',
+      start_date TEXT DEFAULT (DATE('now')),
+      end_date TEXT,
+      frequency TEXT DEFAULT 'ONCE' CHECK(frequency IN ('ONCE', 'DAILY', 'EVERY_HEARTBEAT')),
+      enabled INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    -- 54. DEVICE_MESSAGE_DELIVERIES — Delivery & interaction audit log
+    CREATE TABLE IF NOT EXISTS device_message_deliveries (
+      id TEXT PRIMARY KEY,
+      message_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('PENDING', 'DELIVERED', 'DISMISSED', 'ACTIONED', 'EXPIRED')),
+      delivered_at TEXT,
+      interacted_at TEXT,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(message_id) REFERENCES organizational_messages(id) ON DELETE CASCADE,
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
   `);
 
   // Indexes
@@ -1139,6 +1170,12 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_are_time ON app_reliability_events(occurred_at DESC);
     CREATE INDEX IF NOT EXISTS idx_er_type ON executive_reports(report_type);
     CREATE INDEX IF NOT EXISTS idx_er_time ON executive_reports(generated_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_om_target ON organizational_messages(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_om_enabled ON organizational_messages(enabled);
+    CREATE INDEX IF NOT EXISTS idx_dmd_device ON device_message_deliveries(device_id);
+    CREATE INDEX IF NOT EXISTS idx_dmd_msg ON device_message_deliveries(message_id);
+    CREATE INDEX IF NOT EXISTS idx_dmd_status ON device_message_deliveries(status);
   `);
 
   // Schema migrations for existing databases
@@ -2705,6 +2742,40 @@ exit 0`,
       'grp-workstations', 1,
       JSON.stringify(ASR_RULES_GAMING), '{}', 'AUDIT', 'DISABLED',
       '-1 day', '-1 day'
+    );
+  }
+
+  // 19. Organizational Messages
+  const msgCount = db.prepare('SELECT COUNT(*) as count FROM organizational_messages').get().count;
+  if (msgCount === 0) {
+    const insertMsg = db.prepare(`
+      INSERT OR IGNORE INTO organizational_messages (
+        id, title, message_body, surface, theme, target_group_id, action_url, action_label, start_date, frequency, enabled, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, DATE('now'), ?, 1, DATETIME('now', ?), DATETIME('now', ?))
+    `);
+
+    insertMsg.run(
+      'msg-reboot-reminder',
+      'Windows Quality Updates Installed — Restart Required',
+      'Monthly enterprise security hotfixes have been staged. Please restart your PC to finalize protection.',
+      'TOAST', 'UPDATE', 'grp-all', 'ms-settings:windowsupdate', 'Review Updates', 'ONCE',
+      '-2 days', '-2 days'
+    );
+
+    insertMsg.run(
+      'msg-onboarding-welcome',
+      'Welcome to LocalPilot Enterprise Fleet Management',
+      'Your workstation is enrolled in automated compliance and zero-trust health monitoring.',
+      'TASKBAR', 'ONBOARDING', 'grp-all', 'https://github.com/thebubbsy/LocalPilotFleet', 'View Docs', 'ONCE',
+      '-2 days', '-2 days'
+    );
+
+    insertMsg.run(
+      'msg-security-quarantine-warning',
+      'Zero-Trust Health Advisory: Defender Real-Time Protection',
+      'Ensure real-time anti-malware protection and endpoint firewall remain enabled to prevent automated quarantine.',
+      'MODAL', 'CRITICAL', 'grp-all', 'windowsdefender:', 'Open Defender', 'DAILY',
+      '-2 days', '-2 days'
     );
   }
 }

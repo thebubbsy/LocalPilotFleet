@@ -24,6 +24,7 @@ import * as firewallEngine from '../services/firewallEngine.js';
 import * as scriptsEngine from '../services/scriptsEngine.js';
 import * as asrEngine from '../services/asrEngine.js';
 import * as analyticsEngine from '../services/analyticsEngine.js';
+import * as messagesEngine from '../services/messagesEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -3550,6 +3551,121 @@ try {
     } catch (err) {
       const status = err.message && err.message.includes('not found') ? 404 : 500;
       sendJson(res, status, { error: 'DEVICE_ANALYTICS_ERROR', message: err.message });
+    }
+  });
+
+  // 178. GET /api/v1/fleet/messages/stats
+  router.get('/api/v1/fleet/messages/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const stats = messagesEngine.getMessageStats(db);
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'MESSAGE_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 179. GET /api/v1/fleet/messages
+  router.get('/api/v1/fleet/messages', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const messages = messagesEngine.getMessages(db, req.query || {});
+      sendJson(res, 200, { messages });
+    } catch (err) {
+      sendJson(res, 500, { error: 'MESSAGES_LIST_ERROR', message: err.message });
+    }
+  });
+
+  // 180. POST /api/v1/fleet/messages
+  router.post('/api/v1/fleet/messages', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const created = messagesEngine.createMessage(db, req.body || {});
+      sendJson(res, 201, created);
+    } catch (err) {
+      sendJson(res, 400, { error: 'MESSAGE_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 181. GET /api/v1/fleet/messages/deliveries
+  router.get('/api/v1/fleet/messages/deliveries', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const deliveries = messagesEngine.getMessageDeliveries(db, req.query || {});
+      sendJson(res, 200, { deliveries });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DELIVERIES_LIST_ERROR', message: err.message });
+    }
+  });
+
+  // 182. GET /api/v1/fleet/messages/:id
+  router.get('/api/v1/fleet/messages/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const msg = messagesEngine.getMessage(db, id);
+      if (!msg) {
+        sendJson(res, 404, { error: 'MESSAGE_NOT_FOUND', message: 'Organizational message not found' });
+        return;
+      }
+      sendJson(res, 200, msg);
+    } catch (err) {
+      sendJson(res, 500, { error: 'MESSAGE_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 183. PATCH /api/v1/fleet/messages/:id
+  router.patch('/api/v1/fleet/messages/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const updated = messagesEngine.updateMessage(db, id, req.body || {});
+      sendJson(res, 200, updated);
+    } catch (err) {
+      const status = err.message && err.message.includes('not found') ? 404 : 400;
+      sendJson(res, status, { error: 'MESSAGE_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 184. DELETE /api/v1/fleet/messages/:id
+  router.delete('/api/v1/fleet/messages/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const deleted = messagesEngine.deleteMessage(db, id);
+      sendJson(res, 200, deleted);
+    } catch (err) {
+      const status = err.message && err.message.includes('not found') ? 404 : 500;
+      sendJson(res, status, { error: 'MESSAGE_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 185. POST /api/v1/fleet/devices/:id/toast (Instant urgent toast)
+  router.post('/api/v1/fleet/devices/:id/toast', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const { title, message, theme, action_url, action_label } = req.body || {};
+    try {
+      const db = getDb();
+      const result = messagesEngine.dispatchUrgentToast(db, {
+        deviceId: id,
+        title,
+        messageBody: message,
+        theme,
+        actionUrl: action_url,
+        actionLabel: action_label
+      });
+      sendJson(res, 202, result);
+    } catch (err) {
+      const status = err.message && err.message.includes('not found') ? 404 : 400;
+      sendJson(res, status, { error: 'TOAST_DISPATCH_ERROR', message: err.message });
     }
   });
 }

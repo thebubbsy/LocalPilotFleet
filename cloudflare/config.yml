@@ -5,10 +5,10 @@
 # <TUNNEL-ID> below with the UUID printed by that command.
 
 # The UUID of your named tunnel (from: cloudflared tunnel list)
-tunnel: <TUNNEL-ID>
+tunnel: 151f6973-811e-4c64-8ddc-f0bb59c367ff
 
 # Path to the tunnel credentials JSON written by cloudflared tunnel create
-credentials-file: C:\Users\Tony\.cloudflared\<TUNNEL-ID>.json
+credentials-file: C:\Users\Tony\.cloudflared\151f6973-811e-4c64-8ddc-f0bb59c367ff.json
 
 # Ingress rules -- evaluated top-to-bottom; first match wins
 ingress:

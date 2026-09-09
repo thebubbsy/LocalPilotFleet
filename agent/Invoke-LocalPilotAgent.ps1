@@ -74,6 +74,59 @@ function Write-AgentLog {
     if ($Level -eq 'ERROR') { Write-Warning $entry } else { Write-Host $entry }
 }
 
+# ─── Windows Toast & Balloon Notification Helper ──────────────────────────────
+function Show-WindowsToastNotification {
+    param(
+        [string]$Title,
+        [string]$Message,
+        [string]$Theme = 'INFO'
+    )
+    $shown = $false
+    try {
+        [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+        [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
+
+        $escapedTitle = [System.Security.SecurityElement]::Escape($Title)
+        $escapedMsg   = [System.Security.SecurityElement]::Escape($Message)
+
+        $xmlTemplate = @"
+<toast>
+    <visual>
+        <binding template="ToastGeneric">
+            <text>$escapedTitle</text>
+            <text>$escapedMsg</text>
+        </binding>
+    </visual>
+</toast>
+"@
+        $xmlDoc = New-Object Windows.Data.Xml.Dom.XmlDocument
+        $xmlDoc.LoadXml($xmlTemplate)
+        $toast = [Windows.UI.Notifications.ToastNotification]::new($xmlDoc)
+        $appId = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
+        $notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId)
+        $notifier.Show($toast)
+        $shown = $true
+    } catch {
+        # Fallback to NotifyIcon balloon tip
+        try {
+            Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+            Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
+            $notify = New-Object System.Windows.Forms.NotifyIcon
+            $notify.Icon = [System.Drawing.SystemIcons]::Information
+            $notify.BalloonTipTitle = $Title
+            $notify.BalloonTipText = $Message
+            $notify.Visible = $true
+            $notify.ShowBalloonTip(5000)
+            Start-Sleep -Milliseconds 200
+            $notify.Dispose()
+            $shown = $true
+        } catch {
+            Write-AgentLog 'WARN' "Notification display fallback failed: $($_.Exception.Message)"
+        }
+    }
+    return $shown
+}
+
 # ─── Load configuration (Multi-tiered: Config File -> CLI -> Fleet Authority) ───
 $activeDeviceId = $DeviceId
 $activeNodeToken = $NodeToken
@@ -514,6 +567,36 @@ if ($Mode -eq 'Heartbeat') {
                         Write-AgentLog 'INFO' "Reported remote action [$actId] result: $actStatus"
                     } catch {
                         Write-AgentLog 'ERROR' "Failed to report remote action result for [$actId]: $($_.Exception.Message)"
+                    }
+                }
+            }
+
+            # ── Intune Organizational Messages & User Toast Notifications ─────
+            if ($resp.pending_messages) {
+                $orgMsgs = @($resp.pending_messages)
+                Write-AgentLog 'INFO' "Received $($orgMsgs.Count) pending organizational message(s) to deliver"
+
+                foreach ($msg in $orgMsgs) {
+                    $mId = $msg.id
+                    $mTitle = if ($msg.PSObject.Properties['title']) { $msg.title } else { 'IT Notice' }
+                    $mText = if ($msg.PSObject.Properties['message_body']) { $msg.message_body } elseif ($msg.PSObject.Properties['message']) { $msg.message } else { '' }
+                    $mTheme = if ($msg.PSObject.Properties['theme']) { $msg.theme } else { 'INFO' }
+                    Write-AgentLog 'INFO' "Delivering desktop notification [$mId]: $mTitle"
+
+                    $delivered = Show-WindowsToastNotification -Title $mTitle -Message $mText -Theme $mTheme
+                    $ackStatus = if ($delivered) { 'DELIVERED' } else { 'FAILED' }
+
+                    try {
+                        Invoke-RestMethod `
+                            -Uri        "$baseUrl/api/v1/nodes/$deviceId/messages/$mId/ack" `
+                            -Method     POST `
+                            -Body       (@{ status = $ackStatus } | ConvertTo-Json -Compress) `
+                            -Headers    $authHeaders `
+                            -TimeoutSec 10 `
+                            -ErrorAction Stop | Out-Null
+                        Write-AgentLog 'INFO' "Acknowledged organizational message [$mId] status: $ackStatus"
+                    } catch {
+                        Write-AgentLog 'ERROR' "Failed to acknowledge message [$mId]: $($_.Exception.Message)"
                     }
                 }
             }

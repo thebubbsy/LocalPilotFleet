@@ -134,6 +134,9 @@ const App = {
       case 'analytics':
         if (window.AnalyticsTable) window.AnalyticsTable.init();
         break;
+      case 'messages':
+        if (window.MessagesTable) window.MessagesTable.init();
+        break;
       case 'settings':
         this.renderSettings();
         break;

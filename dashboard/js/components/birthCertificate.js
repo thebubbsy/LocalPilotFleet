@@ -1603,6 +1603,26 @@
       }
     });
 
+    const btnToast = document.getElementById('btn-blade-toast');
+    btnToast?.addEventListener('click', () => {
+      if (!_currentDevice) return;
+      if (window.MessagesTable && typeof window.MessagesTable.openQuickToastModal === 'function') {
+        window.MessagesTable.openQuickToastModal(_currentDevice.id);
+      } else {
+        const title = prompt(`Enter notification title for ${_currentDevice.hostname}:`, "IT Administration Notice");
+        if (!title) return;
+        const message = prompt("Enter notification message:");
+        if (!message) return;
+        window.FleetAPI.dispatchDeviceToast(_currentDevice.id, { title, message })
+          .then(() => {
+            if (typeof showToast === 'function') showToast('Toast Queued', `Notification queued for ${_currentDevice.hostname}`, 'success');
+          })
+          .catch(err => {
+            if (typeof showToast === 'function') showToast('Toast Failed', err.message, 'critical');
+          });
+      }
+    });
+
     const btnRestart = document.getElementById('btn-blade-restart');
     btnRestart?.addEventListener('click', async () => {
       if (!_currentDevice) return;

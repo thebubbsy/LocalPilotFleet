@@ -1166,6 +1166,49 @@ async function getDeviceAnalytics(deviceId) {
   return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/analytics`);
 }
 
+/* ── Organizational Messages & Toast Notifications ─────────────────── */
+async function getMessageStats() {
+  return apiFetch('/api/v1/fleet/messages/stats');
+}
+
+async function getMessages(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/messages${qStr ? '?' + qStr : ''}`);
+}
+
+async function getMessage(id) {
+  return apiFetch(`/api/v1/fleet/messages/${encodeURIComponent(id)}`);
+}
+
+async function createMessage(data) {
+  return apiFetch('/api/v1/fleet/messages', { method: 'POST', body: JSON.stringify(data) });
+}
+
+async function updateMessage(id, data) {
+  return apiFetch(`/api/v1/fleet/messages/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(data) });
+}
+
+async function deleteMessage(id) {
+  return apiFetch(`/api/v1/fleet/messages/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+async function getMessageDeliveries(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/messages/deliveries${qStr ? '?' + qStr : ''}`);
+}
+
+async function dispatchDeviceToast(deviceId, data) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/toast`, { method: 'POST', body: JSON.stringify(data) });
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -1214,6 +1257,15 @@ window.FleetAPI = {
   generateExecutiveReport,
   getExecutiveReport,
   getDeviceAnalytics,
+  // Organizational Messages & Toast Notifications
+  getMessageStats,
+  getMessages,
+  getMessage,
+  createMessage,
+  updateMessage,
+  deleteMessage,
+  getMessageDeliveries,
+  dispatchDeviceToast,
   // Proactive Remediations
   getRemediations,
   getRemediationStats,

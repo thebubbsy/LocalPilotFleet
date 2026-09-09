@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Tests dual-mode LAN / Cloudflare Tunnel connectivity for LocalPilot Fleet.
 
@@ -111,7 +111,7 @@ Write-Info 'Probing LAN route (3 s timeout)...'
 $lanResult = Invoke-HealthCheck -BaseUrl $LanUrl -Key $FleetKey -TimeoutSec 3
 
 if ($lanResult.Success) {
-    $version = if ($lanResult.Body.version) { $lanResult.Body.version } elseif ($lanResult.Body.service) { $lanResult.Body.service } else { 'n/a' }
+    $version = if ($lanResult.Body.PSObject.Properties['version']) { $lanResult.Body.version } elseif ($lanResult.Body.PSObject.Properties['service']) { $lanResult.Body.service } else { 'n/a' }
     Write-Ok "LAN route active (low latency) -- $($lanResult.Latency_ms) ms  |  server: $version"
     Write-Host ''
 
@@ -130,7 +130,7 @@ Write-Info 'Probing Tunnel route (10 s timeout)...'
 $tunnelResult = Invoke-HealthCheck -BaseUrl $TunnelUrl -Key $FleetKey -TimeoutSec 10
 
 if ($tunnelResult.Success) {
-    $version = if ($tunnelResult.Body.version) { $tunnelResult.Body.version } elseif ($tunnelResult.Body.service) { $tunnelResult.Body.service } else { 'n/a' }
+    $version = if ($tunnelResult.Body.PSObject.Properties['version']) { $tunnelResult.Body.version } elseif ($tunnelResult.Body.PSObject.Properties['service']) { $tunnelResult.Body.service } else { 'n/a' }
     Write-Ok "Tunnel route active -- $($tunnelResult.Latency_ms) ms  |  server: $version"
     Write-Warn 'Using tunnel path -- expect higher latency than LAN.'
     Write-Host ''

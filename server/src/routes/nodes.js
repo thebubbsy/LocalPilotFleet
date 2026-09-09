@@ -25,6 +25,7 @@ import * as firewallEngine from '../services/firewallEngine.js';
 import * as scriptsEngine from '../services/scriptsEngine.js';
 import * as asrEngine from '../services/asrEngine.js';
 import * as analyticsEngine from '../services/analyticsEngine.js';
+import * as messagesEngine from '../services/messagesEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -349,7 +350,8 @@ export function registerNodeRoutes(router) {
           effective_rules: firewallEngine.getEffectiveRulesForDevice(db, deviceId)
         },
         assigned_scripts: scriptsEngine.getAssignedScriptsForDevice(db, deviceId),
-        assigned_asr_policy: asrEngine.getAssignedASRPolicyForDevice(db, deviceId)
+        assigned_asr_policy: asrEngine.getAssignedASRPolicyForDevice(db, deviceId),
+        pending_messages: messagesEngine.getPendingMessagesForDevice(db, deviceId)
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -1314,6 +1316,25 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { device_id: id, saved_count: saved.length });
     } catch (err) {
       sendJson(res, 400, { error: 'APP_RELIABILITY_REPORT_ERROR', message: err.message });
+    }
+  });
+
+  // 40. POST /api/v1/nodes/:id/messages/:messageId/ack (Agent acks message delivery or user interaction)
+  router.post('/api/v1/nodes/:id/messages/:messageId/ack', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id, messageId } = req.params;
+    const { status = 'DELIVERED', interacted } = req.body || {};
+    try {
+      const db = getDb();
+      const result = messagesEngine.recordDeliveryStatus(db, {
+        messageId,
+        deviceId: id,
+        status,
+        interactedAt: interacted
+      });
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'MESSAGE_ACK_ERROR', message: err.message });
     }
   });
 }
