@@ -35,6 +35,7 @@ import * as wipEngine from '../services/wipEngine.js';
 import * as whfbEngine from '../services/whfbEngine.js';
 import * as driverUpdateEngine from '../services/driverUpdateEngine.js';
 import * as remoteHelpEngine from '../services/remoteHelpEngine.js';
+import * as featureUpdateEngine from '../services/featureUpdateEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -4979,6 +4980,163 @@ try {
       sendJson(res, 200, data);
     } catch (err) {
       sendJson(res, 500, { error: 'DEVICE_REMOTE_HELP_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // ── Windows Feature Update Profiles & Expedited Quality Updates (280–292) ──
+  // 280. GET /api/v1/fleet/feature-updates/stats
+  router.get('/api/v1/fleet/feature-updates/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = featureUpdateEngine.getFeatureUpdateStats();
+      sendJson(res, 200, { stats, ...stats });
+    } catch (err) {
+      sendJson(res, 500, { error: 'FEATURE_UPDATE_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 281. GET /api/v1/fleet/feature-updates/policies
+  router.get('/api/v1/fleet/feature-updates/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policies = featureUpdateEngine.getFeaturePolicies(req.query);
+      sendJson(res, 200, { policies });
+    } catch (err) {
+      sendJson(res, 500, { error: 'FEATURE_POLICIES_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 282. POST /api/v1/fleet/feature-updates/policies
+  router.post('/api/v1/fleet/feature-updates/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policy = featureUpdateEngine.createFeaturePolicy(req.body || {});
+      sendJson(res, 201, { policy, ...policy });
+    } catch (err) {
+      sendJson(res, 400, { error: 'FEATURE_POLICY_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 283. GET /api/v1/fleet/feature-updates/policies/:id
+  router.get('/api/v1/fleet/feature-updates/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const policy = featureUpdateEngine.getFeaturePolicy(id);
+      if (!policy) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Feature policy not found' });
+      sendJson(res, 200, { policy, ...policy });
+    } catch (err) {
+      sendJson(res, 500, { error: 'FEATURE_POLICY_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 284. PATCH & PUT /api/v1/fleet/feature-updates/policies/:id
+  const handleUpdateFeaturePolicy = (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const policy = featureUpdateEngine.updateFeaturePolicy(id, req.body || {});
+      sendJson(res, 200, { policy, ...policy });
+    } catch (err) {
+      sendJson(res, 400, { error: 'FEATURE_POLICY_UPDATE_ERROR', message: err.message });
+    }
+  };
+  router.patch('/api/v1/fleet/feature-updates/policies/:id', handleUpdateFeaturePolicy);
+  router.put('/api/v1/fleet/feature-updates/policies/:id', handleUpdateFeaturePolicy);
+
+  // 285. DELETE /api/v1/fleet/feature-updates/policies/:id
+  router.delete('/api/v1/fleet/feature-updates/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const result = featureUpdateEngine.deleteFeaturePolicy(id);
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'FEATURE_POLICY_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 286. GET /api/v1/fleet/feature-updates/expedited
+  router.get('/api/v1/fleet/feature-updates/expedited', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const expedited = featureUpdateEngine.getExpeditedUpdates(req.query);
+      sendJson(res, 200, { expedited, expedited_updates: expedited });
+    } catch (err) {
+      sendJson(res, 500, { error: 'EXPEDITED_UPDATES_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 287. POST /api/v1/fleet/feature-updates/expedited
+  router.post('/api/v1/fleet/feature-updates/expedited', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const exp = featureUpdateEngine.createExpeditedUpdate(req.body || {});
+      sendJson(res, 201, { expedited_update: exp, ...exp });
+    } catch (err) {
+      sendJson(res, 400, { error: 'EXPEDITED_UPDATE_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 288. GET /api/v1/fleet/feature-updates/expedited/:id
+  router.get('/api/v1/fleet/feature-updates/expedited/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const exp = featureUpdateEngine.getExpeditedUpdate(id);
+      if (!exp) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Expedited update campaign not found' });
+      sendJson(res, 200, { expedited_update: exp, ...exp });
+    } catch (err) {
+      sendJson(res, 500, { error: 'EXPEDITED_UPDATE_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 289. PATCH & PUT /api/v1/fleet/feature-updates/expedited/:id
+  const handleUpdateExpeditedUpdate = (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const exp = featureUpdateEngine.updateExpeditedUpdate(id, req.body || {});
+      sendJson(res, 200, { expedited_update: exp, ...exp });
+    } catch (err) {
+      sendJson(res, 400, { error: 'EXPEDITED_UPDATE_UPDATE_ERROR', message: err.message });
+    }
+  };
+  router.patch('/api/v1/fleet/feature-updates/expedited/:id', handleUpdateExpeditedUpdate);
+  router.put('/api/v1/fleet/feature-updates/expedited/:id', handleUpdateExpeditedUpdate);
+
+  // 290. DELETE /api/v1/fleet/feature-updates/expedited/:id
+  router.delete('/api/v1/fleet/feature-updates/expedited/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const result = featureUpdateEngine.deleteExpeditedUpdate(id);
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'EXPEDITED_UPDATE_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 291. GET /api/v1/fleet/feature-updates/inventory
+  router.get('/api/v1/fleet/feature-updates/inventory', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const inventory = featureUpdateEngine.getFeatureInventoryOverview();
+      sendJson(res, 200, { inventory });
+    } catch (err) {
+      sendJson(res, 500, { error: 'FEATURE_INVENTORY_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 292. GET /api/v1/fleet/devices/:id/feature-updates
+  router.get('/api/v1/fleet/devices/:id/feature-updates', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const data = featureUpdateEngine.getDeviceFeatureUpdateStatus(id);
+      sendJson(res, 200, data);
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_FEATURE_UPDATES_FETCH_ERROR', message: err.message });
     }
   });
 }

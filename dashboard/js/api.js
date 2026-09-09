@@ -1757,6 +1757,86 @@ async function getDeviceRemoteHelp(deviceId) {
   return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/remote-help`);
 }
 
+
+/* ── Windows Feature Update Profiles & Expedited Quality Updates (WUfB) ── */
+async function getFeatureUpdateStats() {
+  return apiFetch('/api/v1/fleet/feature-updates/stats');
+}
+
+async function getFeaturePolicies(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/feature-updates/policies${qStr ? '?' + qStr : ''}`);
+}
+
+async function getFeaturePolicy(id) {
+  return apiFetch(`/api/v1/fleet/feature-updates/policies/${encodeURIComponent(id)}`);
+}
+
+async function createFeaturePolicy(data) {
+  return apiFetch('/api/v1/fleet/feature-updates/policies', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateFeaturePolicy(id, data) {
+  return apiFetch(`/api/v1/fleet/feature-updates/policies/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteFeaturePolicy(id) {
+  return apiFetch(`/api/v1/fleet/feature-updates/policies/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getExpeditedUpdates(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/feature-updates/expedited${qStr ? '?' + qStr : ''}`);
+}
+
+async function getExpeditedUpdate(id) {
+  return apiFetch(`/api/v1/fleet/feature-updates/expedited/${encodeURIComponent(id)}`);
+}
+
+async function createExpeditedUpdate(data) {
+  return apiFetch('/api/v1/fleet/feature-updates/expedited', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateExpeditedUpdate(id, data) {
+  return apiFetch(`/api/v1/fleet/feature-updates/expedited/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteExpeditedUpdate(id) {
+  return apiFetch(`/api/v1/fleet/feature-updates/expedited/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getFeatureInventoryOverview() {
+  return apiFetch('/api/v1/fleet/feature-updates/inventory');
+}
+
+async function getDeviceFeatureUpdates(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/feature-updates`);
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -1902,6 +1982,20 @@ window.FleetAPI = {
   setDriverApprovalStatus,
   getDriverInventory,
   getDeviceDrivers,
+  // Windows Feature Update Profiles & Expedited Quality Updates (WUfB)
+  getFeatureUpdateStats,
+  getFeaturePolicies,
+  getFeaturePolicy,
+  createFeaturePolicy,
+  updateFeaturePolicy,
+  deleteFeaturePolicy,
+  getExpeditedUpdates,
+  getExpeditedUpdate,
+  createExpeditedUpdate,
+  updateExpeditedUpdate,
+  deleteExpeditedUpdate,
+  getFeatureInventoryOverview,
+  getDeviceFeatureUpdates,
   // Intune Remote Help & Unattended Assistance
   getRemoteHelpStats,
   getRemoteHelpSessions,

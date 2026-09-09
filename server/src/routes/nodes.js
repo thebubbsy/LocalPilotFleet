@@ -36,6 +36,7 @@ import * as wipEngine from '../services/wipEngine.js';
 import * as whfbEngine from '../services/whfbEngine.js';
 import * as driverUpdateEngine from '../services/driverUpdateEngine.js';
 import * as remoteHelpEngine from '../services/remoteHelpEngine.js';
+import * as featureUpdateEngine from '../services/featureUpdateEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -371,7 +372,11 @@ export function registerNodeRoutes(router) {
         wip_policy: wipEngine.getEffectiveWipPolicyForDevice(db, deviceId),
         whfb_policy: whfbEngine.getEffectiveWhfbPolicyForDevice(db, deviceId),
         driver_policy: driverUpdateEngine.getEffectiveDriverPolicyForDevice(db, deviceId),
-        pending_remote_help_sessions: remoteHelpEngine.getPendingSessionsForDevice(deviceId)
+        pending_remote_help_sessions: remoteHelpEngine.getPendingSessionsForDevice(deviceId),
+        feature_update_policy: featureUpdateEngine.getEffectiveFeaturePolicyForDevice(deviceId),
+        active_feature_policy: featureUpdateEngine.getEffectiveFeaturePolicyForDevice(deviceId),
+        expedited_quality_update: featureUpdateEngine.getEffectiveExpeditedUpdateForDevice(deviceId),
+        active_expedited_update: featureUpdateEngine.getEffectiveExpeditedUpdateForDevice(deviceId)
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -1717,6 +1722,45 @@ export function registerNodeRoutes(router) {
       sendJson(res, 201, log);
     } catch (err) {
       sendJson(res, 400, { error: 'REMOTE_HELP_EVENT_ERROR', message: err.message });
+    }
+  });
+
+  // ── Windows Feature Update Profiles & Expedited Quality Updates (68–70) ──
+  // 68. POST /api/v1/nodes/:id/feature-status (Agent reports OS version, build, offering, and expedited patch posture)
+  router.post('/api/v1/nodes/:id/feature-status', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const result = featureUpdateEngine.saveDeviceFeatureUpdateStatus(id, req.body || {});
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'FEATURE_STATUS_SAVE_ERROR', message: err.message });
+    }
+  });
+
+  // 69. GET /api/v1/nodes/:id/feature-policy (Agent queries effective assigned Feature Update policy & version lock script)
+  router.get('/api/v1/nodes/:id/feature-policy', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const policy = featureUpdateEngine.getEffectiveFeaturePolicyForDevice(id);
+      const registryScript = policy ? featureUpdateEngine.generateFeatureRegistryScript(policy) : '';
+      sendJson(res, 200, { device_id: id, policy, effective_feature_policy: policy, registry_script: registryScript });
+    } catch (err) {
+      sendJson(res, 500, { error: 'FEATURE_POLICY_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 70. GET /api/v1/nodes/:id/expedited-update (Agent queries active emergency expedited quality hotfix)
+  router.get('/api/v1/nodes/:id/expedited-update', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const exp = featureUpdateEngine.getEffectiveExpeditedUpdateForDevice(id);
+      const expediteScript = exp ? featureUpdateEngine.generateExpeditedRegistryScript(exp) : '';
+      sendJson(res, 200, { device_id: id, expedited_update: exp, expedite_script: expediteScript });
+    } catch (err) {
+      sendJson(res, 500, { error: 'EXPEDITED_UPDATE_FETCH_ERROR', message: err.message });
     }
   });
 }

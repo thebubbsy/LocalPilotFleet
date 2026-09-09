@@ -167,6 +167,9 @@ const App = {
       case 'remotehelp':
         if (window.RemoteHelpTable) window.RemoteHelpTable.init();
         break;
+      case 'featureupdates':
+        if (window.FeatureUpdatesTable) window.FeatureUpdatesTable.init();
+        break;
       case 'settings':
         this.renderSettings();
         break;

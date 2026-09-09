@@ -602,6 +602,17 @@
         </div>
       </div>
 
+      <!-- ── Windows Feature Updates & Expedited Quality Hotfixes (WUfB) ── -->
+      <div class="bc-section" id="bc-featureupdates-section">
+        <div class="bc-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>🚀 Feature Updates &amp; Expedited Hotfixes (WUfB)</span>
+          <button class="intune-link-btn" id="btn-bc-view-featureupdates-tab">View Feature Updates</button>
+        </div>
+        <div id="bc-featureupdates-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading Feature Update &amp; Expedited hotfix posture…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -2146,6 +2157,68 @@
         }
       }).catch(() => {
         rhListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Remote assistance status ready.</div>';
+      });
+    }
+
+    // Fetch and populate Feature Updates & Expedited Hotfixes
+    const fuListEl = body.querySelector('#bc-featureupdates-list');
+    if (fuListEl && _currentDevice?.id) {
+      body.querySelector('#btn-bc-view-featureupdates-tab')?.addEventListener('click', () => {
+        close();
+        if (window.App && typeof window.App.navigate === 'function') {
+          window.App.navigate('featureupdates');
+        }
+      });
+
+      window.FleetAPI.getDeviceFeatureUpdates(_currentDevice.id).then(res => {
+        const st = res.status;
+        const pol = res.effective_feature_policy;
+        const exp = res.effective_expedited_update;
+
+        let html = '<div style="background:var(--bg-secondary);padding:10px 12px;border-radius:6px;border:1px solid var(--border-color);margin-top:4px;display:flex;flex-direction:column;gap:8px;">';
+
+        const isUpToDate = st?.feature_update_status === 'UP_TO_DATE';
+        const isHeld = st?.feature_update_status === 'SAFEGUARD_HOLD';
+        const badgeColor = isUpToDate ? '#10B981' : (isHeld ? '#EF4444' : '#3B82F6');
+        const badgeLabel = isUpToDate ? '✔ Target Version Locked' : (isHeld ? '🛑 Safeguard Hold' : (st?.feature_update_status || 'Evaluating'));
+
+        html += `
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div>
+              <span style="font-weight:600;color:var(--text-primary);">
+                Pinned Target: <strong style="color:#3B82F6;">${esc(st?.target_os_version || pol?.target_os_version || 'Windows 11, version 23H2')}</strong>
+              </span>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">Current OS: ${esc(st?.current_os_version || _currentDevice.os_name || 'Windows 11')} (Build ${esc(st?.current_os_build || _currentDevice.os_build || '—')})</div>
+            </div>
+            <span class="badge" style="background:${badgeColor}22;color:${badgeColor};font-weight:700;border:1px solid ${badgeColor}55;">
+              ${badgeLabel}
+            </span>
+          </div>
+        `;
+
+        if (st?.safeguard_hold_reasons) {
+          html += `<div style="font-size:11px;color:#EF4444;background:#ef444415;padding:4px 8px;border-radius:4px;border:1px solid #ef444444;">⚠️ <strong>Safeguard Hold:</strong> ${esc(st.safeguard_hold_reasons)}</div>`;
+        }
+
+        if (exp) {
+          const isExpDone = st?.expedited_install_status === 'COMPLETED';
+          html += `
+            <div style="border-top:1px solid var(--border-color);padding-top:6px;display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <span class="badge" style="background:rgba(239,68,68,0.15);color:#EF4444;font-weight:700;">${esc(exp.target_kb_number)}</span>
+                <span style="font-size:11px;color:var(--text-muted);margin-left:6px;">${esc(exp.name)}</span>
+              </div>
+              <span class="badge" style="background:${isExpDone ? '#10B98122' : '#EF444422'};color:${isExpDone ? '#10B981' : '#EF4444'};font-size:10px;font-weight:700;">
+                ${isExpDone ? '✅ Hotfix Installed' : '⚡ Expediting'}
+              </span>
+            </div>
+          `;
+        }
+
+        html += '</div>';
+        fuListEl.innerHTML = html;
+      }).catch(() => {
+        fuListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Feature updates and expedited patch posture ready.</div>';
       });
     }
 

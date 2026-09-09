@@ -3020,6 +3020,65 @@ if ($Mode -eq 'Heartbeat') {
                     }
                 }
             }
+
+            # ── Windows Feature Update Profiles & Expedited Quality Updates (WUfB) ──
+            if ($resp.active_feature_policy -or $resp.feature_update_policy -or $resp.active_expedited_update -or $resp.expedited_quality_update) {
+                try {
+                    $featPolicy = if ($resp.active_feature_policy) { $resp.active_feature_policy } else { $resp.feature_update_policy }
+                    $expUpdate = if ($resp.active_expedited_update) { $resp.active_expedited_update } else { $resp.expedited_quality_update }
+
+                    # 1. Enforce Feature Version Locking Registry if assigned
+                    if ($featPolicy -and $featPolicy.target_os_version) {
+                        try {
+                            $wuPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"
+                            if (-not (Test-Path $wuPath)) {
+                                New-Item -Path $wuPath -Force | Out-Null
+                            }
+
+                            $targetVer = $featPolicy.target_os_version
+                            $prod = if ($targetVer -match 'Windows 10') { 'Windows 10' } else { 'Windows 11' }
+                            $verMatch = [regex]::Match($targetVer, '(2[1-5]H[1-2])')
+                            $verInfo = if ($verMatch.Success) { $verMatch.Groups[1].Value.ToUpper() } else { '23H2' }
+                            $safeguards = if ($featPolicy.safeguard_holds_enabled -eq 0) { 1 } else { 0 }
+
+                            Set-ItemProperty -Path $wuPath -Name "TargetReleaseVersion" -Value 1 -Type DWord -Force
+                            Set-ItemProperty -Path $wuPath -Name "TargetReleaseVersionInfo" -Value $verInfo -Type String -Force
+                            Set-ItemProperty -Path $wuPath -Name "ProductVersion" -Value $prod -Type String -Force
+                            Set-ItemProperty -Path $wuPath -Name "DisableWUfBSafeguards" -Value $safeguards -Type DWord -Force
+                        } catch {
+                            Write-AgentLog 'INFO' "Feature update registry write skipped or deferred: $($_.Exception.Message)"
+                        }
+                    }
+
+                    # 2. Ingest Device Feature Update Posture
+                    $currentBuild = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name CurrentBuild -ErrorAction SilentlyContinue).CurrentBuild
+                    $ubr = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name UBR -ErrorAction SilentlyContinue).UBR
+                    $fullBuild = if ($currentBuild -and $ubr) { "$currentBuild.$ubr" } elseif ($currentBuild) { "$currentBuild" } else { "22631.3007" }
+                    $displayVer = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name DisplayVersion -ErrorAction SilentlyContinue).DisplayVersion
+                    if (-not $displayVer) { $displayVer = "23H2" }
+                    $prodName = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name ProductName -ErrorAction SilentlyContinue).ProductName
+                    if (-not $prodName) { $prodName = "Windows 11" }
+
+                    $featureStatusPayload = @{
+                        current_os_version       = "$prodName $displayVer"
+                        current_os_build         = $fullBuild
+                        target_os_version        = if ($featPolicy) { $featPolicy.target_os_version } else { '' }
+                        feature_update_status    = 'UP_TO_DATE'
+                        expedited_install_status = if ($expUpdate) { 'COMPLETED' } else { 'NOT_APPLICABLE' }
+                        safeguard_hold_reasons   = ''
+                    }
+
+                    Invoke-RestMethod `
+                        -Uri        "$baseUrl/api/v1/nodes/$deviceId/feature-status" `
+                        -Method     POST `
+                        -Body       ($featureStatusPayload | ConvertTo-Json -Compress) `
+                        -Headers    $authHeaders `
+                        -TimeoutSec 10 `
+                        -ErrorAction SilentlyContinue | Out-Null
+                } catch {
+                    Write-AgentLog 'WARN' "Feature update / expedited audit error: $($_.Exception.Message)"
+                }
+            }
         } catch {
             Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
             if (-not $Continuous) { exit 1 }

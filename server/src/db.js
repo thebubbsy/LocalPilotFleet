@@ -1551,6 +1551,61 @@ export function initDb(dbOrPath, options = {}) {
       FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
       FOREIGN KEY(session_id) REFERENCES remote_help_sessions(id) ON DELETE SET NULL
     );
+
+    -- 82. FEATURE_UPDATE_POLICIES — Target OS Version Pinning & Staged Feature Rollouts
+    CREATE TABLE IF NOT EXISTS feature_update_policies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      target_group_id TEXT DEFAULT NULL,
+      target_os_version TEXT NOT NULL,
+      rollout_type TEXT DEFAULT 'IMMEDIATELY' CHECK(rollout_type IN ('IMMEDIATELY', 'SPECIFIC_DATE', 'GRADUAL')),
+      rollout_start_date TEXT,
+      rollout_end_date TEXT,
+      days_between_groups INTEGER DEFAULT 0,
+      safeguard_holds_enabled INTEGER DEFAULT 1 CHECK(safeguard_holds_enabled IN (0, 1)),
+      enabled INTEGER DEFAULT 1 CHECK(enabled IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET NULL
+    );
+
+    -- 83. EXPEDITED_QUALITY_UPDATES — Emergency Zero-Day Patching & Maintenance Window Overrides
+    CREATE TABLE IF NOT EXISTS expedited_quality_updates (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      target_group_id TEXT DEFAULT NULL,
+      target_kb_number TEXT NOT NULL,
+      cve_reference TEXT DEFAULT '',
+      min_os_version TEXT DEFAULT '',
+      days_until_forced_reboot INTEGER DEFAULT 1,
+      override_active_hours INTEGER DEFAULT 1 CHECK(override_active_hours IN (0, 1)),
+      status TEXT DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE', 'PAUSED', 'EXPIRED', 'COMPLETED')),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET NULL
+    );
+
+    -- 84. DEVICE_FEATURE_UPDATE_STATUS — Workstation Target Version Alignment & Expedited Patch Posture
+    CREATE TABLE IF NOT EXISTS device_feature_update_status (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL UNIQUE,
+      feature_policy_id TEXT DEFAULT NULL,
+      expedited_update_id TEXT DEFAULT NULL,
+      current_os_version TEXT NOT NULL,
+      current_os_build TEXT NOT NULL,
+      target_os_version TEXT DEFAULT '',
+      feature_update_status TEXT DEFAULT 'UP_TO_DATE' CHECK(feature_update_status IN ('OFFERING', 'INSTALLING', 'PENDING_REBOOT', 'UP_TO_DATE', 'SAFEGUARD_HOLD', 'ERROR')),
+      expedited_install_status TEXT DEFAULT 'NOT_APPLICABLE' CHECK(expedited_install_status IN ('NOT_APPLICABLE', 'PENDING', 'DOWNLOADING', 'INSTALLING', 'PENDING_REBOOT', 'COMPLETED', 'FAILED')),
+      safeguard_hold_reasons TEXT DEFAULT '',
+      last_scanned_at TEXT,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(feature_policy_id) REFERENCES feature_update_policies(id) ON DELETE SET NULL,
+      FOREIGN KEY(expedited_update_id) REFERENCES expedited_quality_updates(id) ON DELETE SET NULL
+    );
   `);
 
   // Indexes
@@ -1768,6 +1823,14 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_rh_audit_sess ON remote_help_audit_log(session_id);
     CREATE INDEX IF NOT EXISTS idx_rh_audit_dev ON remote_help_audit_log(device_id);
     CREATE INDEX IF NOT EXISTS idx_rh_audit_time ON remote_help_audit_log(timestamp DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_feapol_target ON feature_update_policies(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_feapol_enabled ON feature_update_policies(enabled);
+    CREATE INDEX IF NOT EXISTS idx_expupd_target ON expedited_quality_updates(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_expupd_status ON expedited_quality_updates(status);
+    CREATE INDEX IF NOT EXISTS idx_devfeaupd_dev ON device_feature_update_status(device_id);
+    CREATE INDEX IF NOT EXISTS idx_devfeaupd_fstatus ON device_feature_update_status(feature_update_status);
+    CREATE INDEX IF NOT EXISTS idx_devfeaupd_estatus ON device_feature_update_status(expedited_install_status);
   `);
 
   // Schema migrations for existing databases
@@ -3994,6 +4057,56 @@ exit 0`,
       insertAudit.run('rh-audit-3', 'sess-sample-completed', sampleDevice.id, 'Helpdesk Tier 1 Admin', 'CONTROL_GRANTED', 'Interactive mouse and keyboard control granted by user', '-110 minutes');
       insertAudit.run('rh-audit-4', 'sess-sample-completed', sampleDevice.id, 'Helpdesk Tier 1 Admin', 'SESSION_TERMINATED', 'Assistance session concluded successfully', '-1 hours');
     }
+  }
+
+  // 36. Feature Update Policies & Expedited Quality Updates Seeds
+  const featPolCount = db.prepare('SELECT COUNT(*) as count FROM feature_update_policies').get().count;
+  if (featPolCount === 0) {
+    const insertFeat = db.prepare(`
+      INSERT INTO feature_update_policies (id, name, description, target_group_id, target_os_version, rollout_type, safeguard_holds_enabled, enabled, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?), DATETIME('now', ?))
+    `);
+
+    insertFeat.run(
+      'feat-pol-w11-23h2-pin',
+      'Windows 11 23H2 Enterprise Version Lock',
+      'Pins all production workstations to Windows 11 23H2, preventing automatic feature upgrades to 24H2 until validated.',
+      null,
+      'Windows 11, version 23H2',
+      'IMMEDIATELY',
+      1, 1, '-10 days', '-10 days'
+    );
+
+    insertFeat.run(
+      'feat-pol-w11-24h2-canary',
+      'Windows 11 24H2 Canary Staging Profile',
+      'Targets early adopter developer and testing rigs for Windows 11 24H2 rollout.',
+      null,
+      'Windows 11, version 24H2',
+      'IMMEDIATELY',
+      1, 1, '-10 days', '-10 days'
+    );
+  }
+
+  const expUpdCount = db.prepare('SELECT COUNT(*) as count FROM expedited_quality_updates').get().count;
+  if (expUpdCount === 0) {
+    const insertExp = db.prepare(`
+      INSERT INTO expedited_quality_updates (id, name, description, target_group_id, target_kb_number, cve_reference, days_until_forced_reboot, override_active_hours, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?), DATETIME('now', ?))
+    `);
+
+    insertExp.run(
+      'exp-update-zero-day',
+      'Emergency 0-Day Hotfix Expedite (KB5044284)',
+      'Critical zero-day patch expediting security fixes for Windows kernel privilege escalation vulnerabilities.',
+      null,
+      'KB5044284',
+      'CVE-2026-21840',
+      0,
+      1,
+      'ACTIVE',
+      '-2 days', '-2 days'
+    );
   }
 }
 
