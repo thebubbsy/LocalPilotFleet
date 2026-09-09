@@ -89,6 +89,14 @@ async function deleteDevice(id) {
   });
 }
 
+async function getDeviceSoftware(id) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(id)}/software`);
+}
+
+async function getDiscoveredApps() {
+  return apiFetch('/api/v1/fleet/discovered-apps');
+}
+
 /* ── Groups ─────────────────────────────────────────────────────────── */
 async function getGroups() {
   return apiFetch('/api/v1/fleet/groups');
@@ -1927,6 +1935,104 @@ async function createNodePortalRequest(nodeId, data) {
   });
 }
 
+// Threat & Vulnerability Management (TVM) & Security Baselines
+async function getTvmStats() {
+  return apiFetch('/api/v1/fleet/tvm/stats');
+}
+
+async function getTvmVulnerabilities(params = {}) {
+  const query = new URLSearchParams();
+  if (params.severity) query.set('severity', params.severity);
+  if (params.exploit_status) query.set('exploit_status', params.exploit_status);
+  if (params.patch_status) query.set('patch_status', params.patch_status);
+  if (params.software_name) query.set('software_name', params.software_name);
+  if (params.search) query.set('search', params.search);
+  const qStr = query.toString();
+  return apiFetch(`/api/v1/fleet/tvm/vulnerabilities${qStr ? '?' + qStr : ''}`);
+}
+
+async function getTvmVulnerability(cveId) {
+  return apiFetch(`/api/v1/fleet/tvm/vulnerabilities/${encodeURIComponent(cveId)}`);
+}
+
+async function createTvmVulnerability(data) {
+  return apiFetch('/api/v1/fleet/tvm/vulnerabilities', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateTvmVulnerability(cveId, data) {
+  return apiFetch(`/api/v1/fleet/tvm/vulnerabilities/${encodeURIComponent(cveId)}`, {
+    method: 'PUT',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteTvmVulnerability(cveId) {
+  return apiFetch(`/api/v1/fleet/tvm/vulnerabilities/${encodeURIComponent(cveId)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getTvmBaselines(params = {}) {
+  const query = new URLSearchParams();
+  if (params.category) query.set('category', params.category);
+  if (params.enabled !== undefined) query.set('enabled', params.enabled);
+  const qStr = query.toString();
+  return apiFetch(`/api/v1/fleet/tvm/baselines${qStr ? '?' + qStr : ''}`);
+}
+
+async function getTvmBaseline(id) {
+  return apiFetch(`/api/v1/fleet/tvm/baselines/${encodeURIComponent(id)}`);
+}
+
+async function createTvmBaseline(data) {
+  return apiFetch('/api/v1/fleet/tvm/baselines', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateTvmBaseline(id, data) {
+  return apiFetch(`/api/v1/fleet/tvm/baselines/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteTvmBaseline(id) {
+  return apiFetch(`/api/v1/fleet/tvm/baselines/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getDeviceTvmVulnerabilities(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/vulnerabilities`);
+}
+
+async function assessDeviceVulnerabilities(deviceId, software = []) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/assess-vulnerabilities`, {
+    method: 'POST',
+    body: JSON.stringify({ software })
+  });
+}
+
+async function getNodeVulnerabilities(nodeId) {
+  return apiFetch(`/api/v1/nodes/${encodeURIComponent(nodeId)}/vulnerabilities`);
+}
+
+async function scanNodeVulnerabilities(nodeId, software = []) {
+  return apiFetch(`/api/v1/nodes/${encodeURIComponent(nodeId)}/vulnerabilities/scan`, {
+    method: 'POST',
+    body: JSON.stringify({ software })
+  });
+}
+
+async function getNodeBaselines(nodeId) {
+  return apiFetch(`/api/v1/nodes/${encodeURIComponent(nodeId)}/baselines`);
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -2100,6 +2206,23 @@ window.FleetAPI = {
   revokeEamLicense,
   getNodePortalCatalog,
   createNodePortalRequest,
+  // TVM & Security Baselines
+  getTvmStats,
+  getTvmVulnerabilities,
+  getTvmVulnerability,
+  createTvmVulnerability,
+  updateTvmVulnerability,
+  deleteTvmVulnerability,
+  getTvmBaselines,
+  getTvmBaseline,
+  createTvmBaseline,
+  updateTvmBaseline,
+  deleteTvmBaseline,
+  getDeviceTvmVulnerabilities,
+  assessDeviceVulnerabilities,
+  getNodeVulnerabilities,
+  scanNodeVulnerabilities,
+  getNodeBaselines,
   // Intune Remote Help & Unattended Assistance
   getRemoteHelpStats,
   getRemoteHelpSessions,
@@ -2261,6 +2384,13 @@ window.FleetAPI = {
   getBulkActions,
   createBulkAction,
   getBulkAction,
+  // Devices
+  getDevices,
+  getDevice,
+  updateDevice,
+  deleteDevice,
+  getDeviceSoftware,
+  getDiscoveredApps,
   // Groups
   getGroups,
   createGroup,

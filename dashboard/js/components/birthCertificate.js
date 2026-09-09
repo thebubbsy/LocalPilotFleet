@@ -48,6 +48,67 @@
     return fp.match(/.{1,8}/g).join(':');
   }
 
+  /* ── Helper: Resolve High-Fidelity App Icons (WinGet, Windows Store, CDN) ── */
+  function getAppIcon(name, publisher, wingetId) {
+    const n = (name || '').toLowerCase();
+    const p = (publisher || '').toLowerCase();
+    const w = (wingetId || '').toLowerCase();
+
+    // 1. Direct Known Brand Logos from SimpleIcons / Official High-Res CDN
+    if (n.includes('chrome')) return 'https://cdn.simpleicons.org/googlechrome/4285F4';
+    if (n.includes('edge')) return 'https://cdn.simpleicons.org/microsoftedge/0078D7';
+    if (n.includes('visual studio code') || n.includes('vscode') || w.includes('visualstudiocode')) return 'https://cdn.simpleicons.org/visualstudiocode/007ACC';
+    if (n.includes('visual studio') && !n.includes('code')) return 'https://cdn.simpleicons.org/visualstudio/5C2D91';
+    if (n.includes('git ') || n === 'git' || w.includes('git.git')) return 'https://cdn.simpleicons.org/git/F05032';
+    if (n.includes('docker')) return 'https://cdn.simpleicons.org/docker/2496ED';
+    if (n.includes('slack')) return 'https://cdn.simpleicons.org/slack/4A154B';
+    if (n.includes('discord')) return 'https://cdn.simpleicons.org/discord/5865F2';
+    if (n.includes('spotify')) return 'https://cdn.simpleicons.org/spotify/1ED760';
+    if (n.includes('zoom')) return 'https://cdn.simpleicons.org/zoom/2D8CFF';
+    if (n.includes('steam')) return 'https://cdn.simpleicons.org/steam/000000';
+    if (n.includes('7-zip') || n.includes('7zip') || w.includes('7zip')) return 'https://cdn.simpleicons.org/7zip/000000';
+    if (n.includes('notepad++') || n.includes('notepadplusplus')) return 'https://cdn.simpleicons.org/notepadplusplus/90E59A';
+    if (n.includes('vlc')) return 'https://cdn.simpleicons.org/vlcmediaplayer/FF8800';
+    if (n.includes('python')) return 'https://cdn.simpleicons.org/python/3776AB';
+    if (n.includes('node.js') || n.includes('nodejs')) return 'https://cdn.simpleicons.org/nodedotjs/5FA04E';
+    if (n.includes('firefox')) return 'https://cdn.simpleicons.org/firefox/FF7139';
+    if (n.includes('brave')) return 'https://cdn.simpleicons.org/brave/FB542B';
+    if (n.includes('powershell')) return 'https://cdn.simpleicons.org/powershell/5391FE';
+    if (n.includes('terminal')) return 'https://cdn.simpleicons.org/windowsterminal/4D4D4D';
+    if (n.includes('filezilla')) return 'https://cdn.simpleicons.org/filezilla/BF0000';
+    if (n.includes('postman')) return 'https://cdn.simpleicons.org/postman/FF6C37';
+    if (n.includes('obsidian')) return 'https://cdn.simpleicons.org/obsidian/7C3AED';
+    if (n.includes('obs studio')) return 'https://cdn.simpleicons.org/obsstudio/302E31';
+    if (n.includes('acrobat') || n.includes('adobe reader') || (n.includes('adobe') && n.includes('pdf'))) return 'https://cdn.simpleicons.org/adobeacrobatreader/EC1C24';
+    if (n.includes('photoshop')) return 'https://cdn.simpleicons.org/adobephotoshop/31A8FF';
+    if (n.includes('word')) return 'https://cdn.simpleicons.org/microsoftword/2B579A';
+    if (n.includes('excel')) return 'https://cdn.simpleicons.org/microsoftexcel/217346';
+    if (n.includes('powerpoint')) return 'https://cdn.simpleicons.org/microsoftpowerpoint/D24726';
+    if (n.includes('outlook')) return 'https://cdn.simpleicons.org/microsoftoutlook/0072C6';
+    if (n.includes('onedrive')) return 'https://cdn.simpleicons.org/microsoftonedrive/0078D4';
+    if (n.includes('teams')) return 'https://cdn.simpleicons.org/microsoftteams/6264A7';
+    if (n.includes('office') || n.includes('microsoft 365')) return 'https://cdn.simpleicons.org/microsoftoffice/D83B01';
+    if (n.includes('dropbox')) return 'https://cdn.simpleicons.org/dropbox/0061FF';
+    if (n.includes('github')) return 'https://cdn.simpleicons.org/github/181717';
+    if (n.includes('wireshark')) return 'https://cdn.simpleicons.org/wireshark/1679A7';
+    if (n.includes('blender')) return 'https://cdn.simpleicons.org/blender/E87D0D';
+    if (n.includes('unity')) return 'https://cdn.simpleicons.org/unity/000000';
+    if (n.includes('epic games')) return 'https://cdn.simpleicons.org/epicgames/313131';
+    if (n.includes('sublime text')) return 'https://cdn.simpleicons.org/sublimetext/FF9800';
+    if (n.includes('telegram')) return 'https://cdn.simpleicons.org/telegram/26A5E4';
+    if (n.includes('whatsapp')) return 'https://cdn.simpleicons.org/whatsapp/25D366';
+
+    // 2. Publisher-based Favicons
+    if (p.includes('google')) return 'https://www.google.com/s2/favicons?domain=google.com&sz=64';
+    if (p.includes('microsoft')) return 'https://www.google.com/s2/favicons?domain=microsoft.com&sz=64';
+    if (p.includes('adobe')) return 'https://www.google.com/s2/favicons?domain=adobe.com&sz=64';
+    if (p.includes('apple')) return 'https://www.google.com/s2/favicons?domain=apple.com&sz=64';
+    if (p.includes('mozilla')) return 'https://www.google.com/s2/favicons?domain=mozilla.org&sz=64';
+    if (p.includes('oracle')) return 'https://www.google.com/s2/favicons?domain=oracle.com&sz=64';
+
+    return null;
+  }
+
   let _currentDevice = null;
 
   /* ── Open drawer with device data ──────────────────────────────── */
@@ -624,6 +685,17 @@
         </div>
       </div>
 
+      <!-- ── Threat & Vulnerability Management (TVM) & Security Baselines ── -->
+      <div class="bc-section" id="bc-tvm-section">
+        <div class="bc-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>🛡️ Vulnerabilities (TVM) &amp; Security Baselines</span>
+          <button class="intune-link-btn" id="btn-bc-view-tvm-tab">View TVM Blade</button>
+        </div>
+        <div id="bc-tvm-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading vulnerability exposures &amp; baseline compliance…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -644,25 +716,63 @@
         </div>
       ` : ''}
 
-      <!-- ── Installed Software (from latest telemetry, if present) ── -->
-      ${software.length > 0 ? `
-        <div class="bc-section">
-          <div class="bc-section-title">📦 Installed Software (${software.length})</div>
-          <input class="search-input bc-soft-search" id="bc-soft-search" placeholder="🔍 Filter software…" style="margin-bottom:8px;padding-left:12px;">
-          <table class="bc-sub-table" id="bc-soft-table">
-            <thead><tr><th>Name</th><th>Version</th><th>Publisher</th></tr></thead>
-            <tbody id="bc-soft-tbody">
-              ${software.map(s => `
-                <tr>
-                  <td>${esc(s.name || s.display_name)}</td>
-                  <td>${esc(s.version || '—')}</td>
-                  <td>${esc(s.publisher || '—')}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
+      <!-- ── Installed Software & Store/WinGet App Inventory ── -->
+      <div class="bc-section" id="bc-software-section">
+        <div class="bc-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>📦 Installed Software (${software.length})</span>
+          <span style="font-size:11px;color:var(--text-muted);font-weight:normal;">Auto-harvested via background telemetry</span>
         </div>
-      ` : ''}
+        ${software.length > 0 ? `
+          <div style="margin-bottom:8px;position:relative;">
+            <input class="search-input bc-soft-search" id="bc-soft-search" placeholder="🔍 Search installed applications, publishers, or versions…" style="width:100%;padding:7px 12px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:6px;color:var(--text-primary);font-size:12px;">
+          </div>
+          <div style="max-height:360px;overflow-y:auto;border:1px solid var(--border-color);border-radius:6px;">
+            <table class="bc-sub-table" id="bc-soft-table" style="margin:0;">
+              <thead>
+                <tr style="position:sticky;top:0;background:var(--bg-secondary);z-index:2;">
+                  <th style="width:40px;"></th>
+                  <th>Application Name</th>
+                  <th>Version</th>
+                  <th>Publisher</th>
+                  <th>Source</th>
+                </tr>
+              </thead>
+              <tbody id="bc-soft-tbody">
+                ${software.map(s => {
+                  const iconUrl = getAppIcon(s.name || s.display_name, s.publisher, s.winget_id);
+                  const isAppx = s.install_type === 'AppX' || (s.name && s.name.includes('.') && !s.name.includes(' '));
+                  const isWinget = Boolean(s.winget_id);
+                  const sourceTag = isWinget ? 'WinGet' : (isAppx ? 'Microsoft Store' : 'Desktop (Win32/MSI)');
+                  const sourceColor = isWinget ? '#3B82F6' : (isAppx ? '#10B981' : '#8B5CF6');
+                  return `
+                    <tr class="bc-soft-row">
+                      <td style="text-align:center;padding:6px;">
+                        ${iconUrl ? `
+                          <img src="${iconUrl}" width="22" height="22" style="border-radius:4px;object-fit:contain;vertical-align:middle;" onerror="this.outerHTML='<span style=\\'font-size:18px;\\'>📦</span>'" alt="icon">
+                        ` : `
+                          <span style="font-size:18px;">${isAppx ? '🛍️' : '📦'}</span>
+                        `}
+                      </td>
+                      <td style="font-weight:600;color:var(--text-primary);">${esc(s.name || s.display_name)}</td>
+                      <td><span class="badge" style="font-family:monospace;background:var(--bg-secondary);border:1px solid var(--border-color);">${esc(s.version || '—')}</span></td>
+                      <td style="color:var(--text-muted);font-size:11px;">${esc(s.publisher || '—')}</td>
+                      <td>
+                        <span class="badge" style="background:${sourceColor}18;color:${sourceColor};font-size:10px;font-weight:600;border:1px solid ${sourceColor}44;">
+                          ${sourceTag}
+                        </span>
+                      </td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        ` : `
+          <div style="background:var(--bg-secondary);padding:14px;border-radius:6px;border:1px dashed var(--border-color);text-align:center;color:var(--text-muted);font-size:12px;">
+            <span>ℹ️</span> No software inventory collected yet. The agent audits installed software automatically during background telemetry cycles.
+          </div>
+        `}
+      </div>
 
       <!-- ── Remote Actions & Diagnostic Logs ── -->
       <div class="bc-section">
@@ -2234,6 +2344,66 @@
         eamListEl.innerHTML = html;
       }).catch(err => {
         eamListEl.innerHTML = '<span style="color:#EF4444;">Failed to load enterprise application status: ' + esc(err.message) + '</span>';
+      });
+    }
+
+    // Fetch and populate TVM & Security Baselines Posture
+    const tvmListEl = body.querySelector('#bc-tvm-list');
+    if (tvmListEl && _currentDevice?.id) {
+      body.querySelector('#btn-bc-view-tvm-tab')?.addEventListener('click', () => {
+        close();
+        if (window.App && typeof window.App.navigate === 'function') {
+          window.App.navigate('vulnerabilities');
+        }
+      });
+
+      Promise.all([
+        window.FleetAPI.getDeviceVulnerabilities(_currentDevice.id).catch(() => ({ exposures: [] })),
+        window.FleetAPI.getSecurityBaselines().catch(() => ({ baselines: [] }))
+      ]).then(([vulnRes, baseRes]) => {
+        const exposures = vulnRes.exposures || [];
+        const baselines = baseRes.baselines || [];
+
+        const unmitigated = exposures.filter(e => e.status !== 'REMEDIATED');
+        const criticals = unmitigated.filter(e => e.severity === 'CRITICAL');
+
+        let html = '<div style="background:var(--bg-secondary);padding:10px 12px;border-radius:6px;border:1px solid var(--border-color);margin-top:4px;display:flex;flex-direction:column;gap:8px;">';
+
+        html += `
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div>
+              <span style="font-weight:600;color:var(--text-primary);">
+                Defender TVM Posture: <strong style="color:${unmitigated.length === 0 ? '#10B981' : (criticals.length > 0 ? '#EF4444' : '#F59E0B')};">${unmitigated.length === 0 ? 'CLEAN (0 CVEs)' : `${unmitigated.length} Active Exposure(s)`}</strong>
+              </span>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">
+                ${baselines.length} Enterprise Security Baseline(s) enforced
+              </div>
+            </div>
+            <span class="badge" style="background:${unmitigated.length === 0 ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)'};color:${unmitigated.length === 0 ? '#10B981' : '#EF4444'};font-weight:700;">
+              ${criticals.length > 0 ? `🚨 ${criticals.length} CRITICAL` : (unmitigated.length > 0 ? `⚠️ ${unmitigated.length} VULN` : '✔ COMPLIANT')}
+            </span>
+          </div>
+        `;
+
+        if (unmitigated.length > 0) {
+          html += `
+            <div style="border-top:1px solid var(--border-color);padding-top:6px;">
+              <div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Top Discovered CVEs:</div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                ${unmitigated.slice(0, 4).map(e => `
+                  <span class="badge" style="background:${e.severity === 'CRITICAL' ? 'rgba(239,68,68,0.2)' : 'rgba(245,158,11,0.2)'};color:${e.severity === 'CRITICAL' ? '#EF4444' : '#F59E0B'};font-family:monospace;font-size:11px;">
+                    ${esc(e.cve_id)} (CVSS ${e.cvss_score || '?'})
+                  </span>
+                `).join('')}
+              </div>
+            </div>
+          `;
+        }
+
+        html += '</div>';
+        tvmListEl.innerHTML = html;
+      }).catch(err => {
+        tvmListEl.innerHTML = '<span style="color:#EF4444;">Failed to load vulnerability posture: ' + esc(err.message) + '</span>';
       });
     }
 

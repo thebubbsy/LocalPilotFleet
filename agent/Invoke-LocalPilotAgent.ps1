@@ -3155,6 +3155,60 @@ if ($Mode -eq 'Heartbeat') {
                     }
                 }
             }
+
+            # ── Threat & Vulnerability Management (TVM) & Security Baselines Audit ─
+            try {
+                $installedSwList = @()
+                $uninstallPaths = @(
+                    "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+                    "HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+                )
+                foreach ($uPath in $uninstallPaths) {
+                    if (Test-Path $uPath) {
+                        Get-ItemProperty $uPath -ErrorAction SilentlyContinue | ForEach-Object {
+                            $dn = $null
+                            try { $dn = $_.DisplayName } catch {}
+                            if ($dn) {
+                                $dv = ''
+                                try { $dv = [string]$_.DisplayVersion } catch {}
+                                $installedSwList += @{
+                                    name    = [string]$dn
+                                    version = $dv
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if ($installedSwList.Count -gt 0) {
+                    $scanPayload = @{ software = $installedSwList } | ConvertTo-Json -Compress
+                    $scanResult = Invoke-RestMethod `
+                        -Uri        "$baseUrl/api/v1/nodes/$deviceId/vulnerabilities/scan" `
+                        -Method     POST `
+                        -Body       $scanPayload `
+                        -Headers    $authHeaders `
+                        -TimeoutSec 15 `
+                        -ErrorAction SilentlyContinue
+
+                    if ($scanResult -and $scanResult.matched_count -gt 0) {
+                        Write-AgentLog 'WARN' "TVM Vulnerability scan matched $($scanResult.matched_count) active CVE exposure(s)!"
+                    }
+                }
+
+                # Audit assigned Security Baselines
+                $baselinesResp = Invoke-RestMethod `
+                    -Uri        "$baseUrl/api/v1/nodes/$deviceId/baselines" `
+                    -Method     GET `
+                    -Headers    $authHeaders `
+                    -TimeoutSec 10 `
+                    -ErrorAction SilentlyContinue
+
+                if ($baselinesResp -and $baselinesResp.baselines -and @($baselinesResp.baselines).Count -gt 0) {
+                    Write-AgentLog 'INFO' "Auditing $(@($baselinesResp.baselines).Count) assigned Intune Security Baseline(s)..."
+                }
+            } catch {
+                Write-AgentLog 'WARN' "TVM / Security Baseline audit check error: $($_.Exception.Message)"
+            }
         } catch {
             Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
             if (-not $Continuous) { exit 1 }

@@ -38,6 +38,7 @@ import * as driverUpdateEngine from '../services/driverUpdateEngine.js';
 import * as remoteHelpEngine from '../services/remoteHelpEngine.js';
 import * as featureUpdateEngine from '../services/featureUpdateEngine.js';
 import * as enterpriseAppEngine from '../services/enterpriseAppEngine.js';
+import * as vulnerabilityEngine from '../services/vulnerabilityEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -456,9 +457,18 @@ export function registerNodeRoutes(router) {
           secure_boot_enabled = COALESCE(?, secure_boot_enabled),
           bitlocker_status = COALESCE(?, bitlocker_status),
           primary_user = COALESCE(?, primary_user),
+          installed_software_json = COALESCE(?, installed_software_json),
           updated_at = DATETIME('now')
         WHERE id = ?
-      `).run(tpmPresent, tpmEnabled, secureBoot, bitlockerStatus, reportedUser, deviceId);
+      `).run(
+        tpmPresent,
+        tpmEnabled,
+        secureBoot,
+        bitlockerStatus,
+        reportedUser,
+        installedSoftware.length > 0 ? JSON.stringify(installedSoftware) : null,
+        deviceId
+      );
 
       // 3. Re-evaluate dynamic groups
       const activeGroups = dynamicGroupsService.reevaluateDeviceMemberships(db, deviceId, { disk_free_gb: diskFreeGb }, installedSoftware);
@@ -1803,6 +1813,56 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { success: true, request: updated });
     } catch (err) {
       sendJson(res, 400, { error: 'PORTAL_STATUS_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 74. GET /api/v1/nodes/:id/vulnerabilities (Agent queries active CVE vulnerabilities affecting it)
+  router.get('/api/v1/nodes/:id/vulnerabilities', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const vulns = vulnerabilityEngine.getDeviceVulnerabilities(getDb(), id, { status: 'ACTIVE' });
+      sendJson(res, 200, { device_id: id, active_vulnerabilities: vulns, count: vulns.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'NODE_VULNS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 75. POST /api/v1/nodes/:id/vulnerabilities/scan (Agent submits installed software for CVE assessment)
+  router.post('/api/v1/nodes/:id/vulnerabilities/scan', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const software = req.body.software || [];
+      if (Array.isArray(software) && software.length > 0) {
+        try {
+          getDb().prepare("UPDATE devices SET installed_software_json = ?, updated_at = DATETIME('now') WHERE id = ?")
+            .run(JSON.stringify(software), id);
+        } catch {}
+      }
+      const activeVulns = vulnerabilityEngine.assessDeviceVulnerabilities(getDb(), id, software);
+      sendJson(res, 200, { success: true, device_id: id, active_vulnerabilities: activeVulns, count: activeVulns.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'NODE_VULN_SCAN_ERROR', message: err.message });
+    }
+  });
+
+  // 76. GET /api/v1/nodes/:id/baselines (Agent queries assigned security baseline audit & remediation scripts)
+  router.get('/api/v1/nodes/:id/baselines', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const baselines = vulnerabilityEngine.getSecurityBaselines(getDb(), { enabled: 1 });
+      const payloads = baselines.map(b => ({
+        id: b.id,
+        name: b.name,
+        category: b.category,
+        audit_script: vulnerabilityEngine.generateBaselineAuditScript(b),
+        remediation_script: vulnerabilityEngine.generateBaselineRemediationScript(b)
+      }));
+      sendJson(res, 200, { device_id: id, baselines: payloads, count: payloads.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'NODE_BASELINES_FETCH_ERROR', message: err.message });
     }
   });
 }

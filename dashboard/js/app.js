@@ -173,6 +173,9 @@ const App = {
       case 'companyportal':
         if (window.CompanyPortalTable) window.CompanyPortalTable.init(document.getElementById('view-companyportal') || document.getElementById('tab-companyportal'));
         break;
+      case 'vulnerabilities':
+        if (window.VulnerabilitiesTable) window.VulnerabilitiesTable.init(document.getElementById('view-vulnerabilities') || document.getElementById('tab-vulnerabilities'));
+        break;
       case 'settings':
         this.renderSettings();
         break;

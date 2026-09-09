@@ -37,6 +37,7 @@ import * as driverUpdateEngine from '../services/driverUpdateEngine.js';
 import * as remoteHelpEngine from '../services/remoteHelpEngine.js';
 import * as featureUpdateEngine from '../services/featureUpdateEngine.js';
 import * as enterpriseAppEngine from '../services/enterpriseAppEngine.js';
+import * as vulnerabilityEngine from '../services/vulnerabilityEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -215,15 +216,87 @@ export function registerFleetRoutes(router) {
         LIMIT 20
       `).all(deviceId);
 
+      let installedSoftware = [];
+      try { installedSoftware = JSON.parse(device.installed_software_json || '[]'); } catch {}
+
       sendJson(res, 200, {
         ...device,
         tags,
+        installed_software: installedSoftware,
         assigned_groups: groups,
         telemetry_snapshots: snapshots,
         security_events: events
       });
     } catch (err) {
       sendJson(res, 500, { error: 'DEVICE_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 3b. GET /api/v1/fleet/devices/:id/software (Device Installed Software Catalog)
+  router.get('/api/v1/fleet/devices/:id/software', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const device = db.prepare('SELECT id, hostname, friendly_name, installed_software_json FROM devices WHERE id = ?').get(req.params.id);
+      if (!device) {
+        sendJson(res, 404, { error: 'NOT_FOUND', message: `Device ${req.params.id} not found` });
+        return;
+      }
+      let software = [];
+      try { software = JSON.parse(device.installed_software_json || '[]'); } catch {}
+      sendJson(res, 200, {
+        device_id: device.id,
+        hostname: device.hostname,
+        friendly_name: device.friendly_name,
+        total_count: software.length,
+        software
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: 'SOFTWARE_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 3c. GET /api/v1/fleet/discovered-apps (Fleet-wide Discovered Applications)
+  router.get('/api/v1/fleet/discovered-apps', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const rows = db.prepare('SELECT id, hostname, installed_software_json FROM devices WHERE installed_software_json IS NOT NULL').all();
+      const appMap = new Map();
+
+      for (const r of rows) {
+        let swList = [];
+        try { swList = JSON.parse(r.installed_software_json || '[]'); } catch {}
+        for (const s of swList) {
+          const name = s.name || s.display_name;
+          if (!name) continue;
+          const key = name.toLowerCase().trim();
+          if (!appMap.has(key)) {
+            appMap.set(key, {
+              name,
+              publisher: s.publisher || 'Unknown Publisher',
+              version: s.version || s.display_version || '',
+              winget_id: s.winget_id || '',
+              install_type: s.install_type || (s.name && s.name.includes('.') && !s.name.includes(' ') ? 'AppX' : 'Win32'),
+              device_count: 0,
+              devices: []
+            });
+          }
+          const entry = appMap.get(key);
+          if (!entry.devices.some(d => d.id === r.id)) {
+            entry.device_count++;
+            entry.devices.push({ id: r.id, hostname: r.hostname });
+          }
+        }
+      }
+
+      const discovered = Array.from(appMap.values()).sort((a, b) => b.device_count - a.device_count || a.name.localeCompare(b.name));
+      sendJson(res, 200, {
+        total_discovered_apps: discovered.length,
+        apps: discovered
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DISCOVERED_APPS_ERROR', message: err.message });
     }
   });
 
@@ -5265,6 +5338,163 @@ try {
       sendJson(res, 200, { success: true, revoked_id: req.params.id });
     } catch (err) {
       sendJson(res, 500, { error: 'EAM_LICENSE_REVOKE_ERROR', message: err.message });
+    }
+  });
+
+  // 304. GET /api/v1/fleet/tvm/stats
+  router.get('/api/v1/fleet/tvm/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = vulnerabilityEngine.getVulnerabilityStats(getDb());
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'TVM_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 305. GET /api/v1/fleet/tvm/vulnerabilities
+  router.get('/api/v1/fleet/tvm/vulnerabilities', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const vulns = vulnerabilityEngine.getVulnerabilities(getDb(), req.query);
+      sendJson(res, 200, { vulnerabilities: vulns, total: vulns.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'TVM_VULNS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 306. POST /api/v1/fleet/tvm/vulnerabilities
+  router.post('/api/v1/fleet/tvm/vulnerabilities', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const vuln = vulnerabilityEngine.createVulnerability(getDb(), req.body);
+      sendJson(res, 201, { success: true, vulnerability: vuln });
+    } catch (err) {
+      sendJson(res, 400, { error: 'TVM_VULN_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 307. GET /api/v1/fleet/tvm/vulnerabilities/:cveId
+  router.get('/api/v1/fleet/tvm/vulnerabilities/:cveId', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const vuln = vulnerabilityEngine.getVulnerability(getDb(), req.params.cveId);
+      if (!vuln) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Vulnerability not found' });
+      sendJson(res, 200, { vulnerability: vuln });
+    } catch (err) {
+      sendJson(res, 500, { error: 'TVM_VULN_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 308. PATCH & PUT /api/v1/fleet/tvm/vulnerabilities/:cveId
+  const handleUpdateVuln = (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const updated = vulnerabilityEngine.updateVulnerability(getDb(), req.params.cveId, req.body);
+      if (!updated) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Vulnerability not found' });
+      sendJson(res, 200, { success: true, vulnerability: updated });
+    } catch (err) {
+      sendJson(res, 400, { error: 'TVM_VULN_UPDATE_ERROR', message: err.message });
+    }
+  };
+  router.patch('/api/v1/fleet/tvm/vulnerabilities/:cveId', handleUpdateVuln);
+  router.put('/api/v1/fleet/tvm/vulnerabilities/:cveId', handleUpdateVuln);
+
+  // 309. DELETE /api/v1/fleet/tvm/vulnerabilities/:cveId
+  router.delete('/api/v1/fleet/tvm/vulnerabilities/:cveId', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const success = vulnerabilityEngine.deleteVulnerability(getDb(), req.params.cveId);
+      if (!success) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Vulnerability not found' });
+      sendJson(res, 200, { success: true, deleted_cve_id: req.params.cveId });
+    } catch (err) {
+      sendJson(res, 500, { error: 'TVM_VULN_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 310. GET /api/v1/fleet/tvm/baselines
+  router.get('/api/v1/fleet/tvm/baselines', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const baselines = vulnerabilityEngine.getSecurityBaselines(getDb(), req.query);
+      sendJson(res, 200, { baselines, total: baselines.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'TVM_BASELINES_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 311. POST /api/v1/fleet/tvm/baselines
+  router.post('/api/v1/fleet/tvm/baselines', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const baseline = vulnerabilityEngine.createSecurityBaseline(getDb(), req.body);
+      sendJson(res, 201, { success: true, baseline });
+    } catch (err) {
+      sendJson(res, 400, { error: 'TVM_BASELINE_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 312. GET /api/v1/fleet/tvm/baselines/:id
+  router.get('/api/v1/fleet/tvm/baselines/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const baseline = vulnerabilityEngine.getSecurityBaseline(getDb(), req.params.id);
+      if (!baseline) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Baseline not found' });
+      const auditScript = vulnerabilityEngine.generateBaselineAuditScript(baseline);
+      const remediationScript = vulnerabilityEngine.generateBaselineRemediationScript(baseline);
+      sendJson(res, 200, { baseline, audit_script: auditScript, remediation_script: remediationScript });
+    } catch (err) {
+      sendJson(res, 500, { error: 'TVM_BASELINE_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 313. PATCH & PUT /api/v1/fleet/tvm/baselines/:id
+  const handleUpdateBaseline = (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const updated = vulnerabilityEngine.updateSecurityBaseline(getDb(), req.params.id, req.body);
+      if (!updated) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Baseline not found' });
+      sendJson(res, 200, { success: true, baseline: updated });
+    } catch (err) {
+      sendJson(res, 400, { error: 'TVM_BASELINE_UPDATE_ERROR', message: err.message });
+    }
+  };
+  router.patch('/api/v1/fleet/tvm/baselines/:id', handleUpdateBaseline);
+  router.put('/api/v1/fleet/tvm/baselines/:id', handleUpdateBaseline);
+
+  // 314. DELETE /api/v1/fleet/tvm/baselines/:id
+  router.delete('/api/v1/fleet/tvm/baselines/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const success = vulnerabilityEngine.deleteSecurityBaseline(getDb(), req.params.id);
+      if (!success) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Baseline not found' });
+      sendJson(res, 200, { success: true, deleted_id: req.params.id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'TVM_BASELINE_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 315. GET /api/v1/fleet/devices/:id/vulnerabilities
+  router.get('/api/v1/fleet/devices/:id/vulnerabilities', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const vulns = vulnerabilityEngine.getDeviceVulnerabilities(getDb(), id, req.query);
+      sendJson(res, 200, { device_id: id, vulnerabilities: vulns, total: vulns.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_VULNS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 316. POST /api/v1/fleet/devices/:id/assess-vulnerabilities
+  router.post('/api/v1/fleet/devices/:id/assess-vulnerabilities', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const assessed = vulnerabilityEngine.assessDeviceVulnerabilities(getDb(), id, req.body.software || []);
+      sendJson(res, 200, { success: true, device_id: id, active_vulnerabilities: assessed, total: assessed.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_VULNS_ASSESS_ERROR', message: err.message });
     }
   });
 }

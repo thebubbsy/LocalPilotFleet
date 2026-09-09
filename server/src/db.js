@@ -84,6 +84,7 @@ export function initDb(dbOrPath, options = {}) {
       bitlocker_status TEXT DEFAULT 'Disabled' CHECK(bitlocker_status IN ('FullyEncrypted', 'FullyDecrypted', 'EncryptionInProgress', 'Disabled')),
       primary_user TEXT,
       tags_json TEXT DEFAULT '[]',
+      installed_software_json TEXT DEFAULT '[]',
       assigned_group TEXT,
       node_token_hash TEXT NOT NULL,
       agent_version TEXT NOT NULL,
@@ -1650,6 +1651,58 @@ export function initDb(dbOrPath, options = {}) {
       FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
     );
 
+    -- 88. SECURITY_VULNERABILITIES — Defender Vulnerability Management (TVM) Knowledgebase
+    CREATE TABLE IF NOT EXISTS security_vulnerabilities (
+      cve_id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      description TEXT,
+      software_name TEXT NOT NULL,
+      affected_versions TEXT NOT NULL,
+      cvss_score REAL NOT NULL,
+      severity TEXT NOT NULL CHECK(severity IN ('CRITICAL', 'HIGH', 'MEDIUM', 'LOW')),
+      exploit_status TEXT DEFAULT 'NONE' CHECK(exploit_status IN ('NONE', 'UNPROVEN', 'ACTIVE_EXPLOIT_POC', 'WEAPONIZED_WILD')),
+      patch_status TEXT DEFAULT 'VENDOR_PATCH_AVAILABLE' CHECK(patch_status IN ('VENDOR_PATCH_AVAILABLE', 'MITIGATION_AVAILABLE', 'UNPATCHED')),
+      cpe_identifier TEXT DEFAULT '',
+      remediation_guidance TEXT DEFAULT '',
+      published_date TEXT,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    -- 89. DEVICE_VULNERABILITIES — Workstation CVE Exposure & Posture
+    CREATE TABLE IF NOT EXISTS device_vulnerabilities (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      cve_id TEXT NOT NULL,
+      detected_software_name TEXT NOT NULL,
+      detected_version TEXT NOT NULL,
+      status TEXT DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE', 'RESOLVED', 'EXCEPTION_APPROVED', 'MITIGATED')),
+      risk_score REAL DEFAULT 0.0,
+      remediation_script TEXT DEFAULT '',
+      first_detected_at TEXT DEFAULT (DATETIME('now')),
+      resolved_at TEXT,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(cve_id) REFERENCES security_vulnerabilities(cve_id) ON DELETE CASCADE,
+      UNIQUE(device_id, cve_id)
+    );
+
+    -- 90. SECURITY_BASELINE_ASSESSMENTS — Intune & Defender Hardened Security Baselines
+    CREATE TABLE IF NOT EXISTS security_baseline_assessments (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      category TEXT NOT NULL,
+      description TEXT,
+      target_group_id TEXT DEFAULT NULL,
+      baseline_type TEXT DEFAULT 'WINDOWS_11_ENTERPRISE',
+      enforcement_rules TEXT NOT NULL,
+      enabled INTEGER DEFAULT 1 CHECK(enabled IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET NULL
+    );
+
     -- 87. APP_LICENSE_ALLOCATIONS — Enterprise Application Seat Allocation & Key Management
     CREATE TABLE IF NOT EXISTS app_license_allocations (
       id TEXT PRIMARY KEY,
@@ -1900,6 +1953,15 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_licalloc_app ON app_license_allocations(catalog_app_id);
     CREATE INDEX IF NOT EXISTS idx_licalloc_dev ON app_license_allocations(device_id);
     CREATE INDEX IF NOT EXISTS idx_licalloc_status ON app_license_allocations(status);
+
+    CREATE INDEX IF NOT EXISTS idx_secvuln_sev ON security_vulnerabilities(severity);
+    CREATE INDEX IF NOT EXISTS idx_secvuln_cvss ON security_vulnerabilities(cvss_score DESC);
+    CREATE INDEX IF NOT EXISTS idx_secvuln_sw ON security_vulnerabilities(software_name);
+    CREATE INDEX IF NOT EXISTS idx_devvuln_dev ON device_vulnerabilities(device_id);
+    CREATE INDEX IF NOT EXISTS idx_devvuln_cve ON device_vulnerabilities(cve_id);
+    CREATE INDEX IF NOT EXISTS idx_devvuln_status ON device_vulnerabilities(status);
+    CREATE INDEX IF NOT EXISTS idx_secbase_target ON security_baseline_assessments(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_secbase_enabled ON security_baseline_assessments(enabled);
   `);
 
   // Schema migrations for existing databases
@@ -1944,6 +2006,10 @@ export function initDb(dbOrPath, options = {}) {
         PRAGMA foreign_keys = ON;
       `);
     }
+
+    try {
+      db.exec("ALTER TABLE devices ADD COLUMN installed_software_json TEXT DEFAULT '[]'");
+    } catch {}
   } catch (migErr) {
     console.warn('[DB Migration Warning]:', migErr.message);
   }
@@ -4283,6 +4349,178 @@ exit 0`,
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', '-3 days'), DATETIME('now', '-3 days'), DATETIME('now', '-3 days'), DATETIME('now', '-3 days'))
       `);
       insertReq.run('req-sample-vscode', 'app-vscode', sampleDev.id, 'Tony', 'INSTALL', 'COMPLETED', 0, 'AutoApproved', 'Core workstation IDE');
+    }
+  }
+
+  // 38. Vulnerability Management (TVM) & Security Baselines Seeds
+  const vulnCount = db.prepare('SELECT COUNT(*) as count FROM security_vulnerabilities').get().count;
+  if (vulnCount === 0) {
+    const insertVuln = db.prepare(`
+      INSERT INTO security_vulnerabilities (cve_id, title, description, software_name, affected_versions, cvss_score, severity, exploit_status, patch_status, cpe_identifier, remediation_guidance, published_date, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?), DATETIME('now', ?))
+    `);
+
+    insertVuln.run(
+      'CVE-2026-21840',
+      'Windows Kernel Local Privilege Escalation Vulnerability',
+      'Flaw in ntoskrnl.exe memory management allowing standard user to acquire NT AUTHORITY\\SYSTEM privileges.',
+      'Windows 11 Enterprise',
+      '< 22631.4317',
+      8.8,
+      'HIGH',
+      'ACTIVE_EXPLOIT_POC',
+      'VENDOR_PATCH_AVAILABLE',
+      'cpe:2.3:o:microsoft:windows_11:*:*:*:*:*:*:*:*',
+      'Deploy emergency expedited quality update KB5044284 or upgrade to 24H2 baseline.',
+      '2026-08-12',
+      '-20 days', '-20 days'
+    );
+
+    insertVuln.run(
+      'CVE-2026-30122',
+      'OpenSSL Handshake Parsing Heap Buffer Overflow (RCE)',
+      'Remote code execution vulnerability during TLS 1.3 key exchange message parsing with zero authentication.',
+      'OpenSSL',
+      '< 3.3.2',
+      9.8,
+      'CRITICAL',
+      'WEAPONIZED_WILD',
+      'VENDOR_PATCH_AVAILABLE',
+      'cpe:2.3:a:openssl:openssl:*:*:*:*:*:*:*:*',
+      'Upgrade OpenSSL packages to 3.3.2 or later across all developer and server runtimes.',
+      '2026-08-25',
+      '-15 days', '-15 days'
+    );
+
+    insertVuln.run(
+      'CVE-2025-49211',
+      'Google Chrome V8 Engine Type Confusion Remote Code Execution',
+      'Type confusion in V8 JavaScript engine allowing sandbox escape and arbitrary memory execution.',
+      'Google Chrome',
+      '< 128.0.6613.120',
+      8.8,
+      'HIGH',
+      'ACTIVE_EXPLOIT_POC',
+      'VENDOR_PATCH_AVAILABLE',
+      'cpe:2.3:a:google:chrome:*:*:*:*:*:*:*:*',
+      'Update Google Chrome Enterprise via Enterprise App Management to version 128.0.6613.120+.',
+      '2026-08-28',
+      '-12 days', '-12 days'
+    );
+
+    insertVuln.run(
+      'CVE-2024-38063',
+      'Windows TCP/IP Remote Code Execution Vulnerability',
+      'Integer underflow in Windows IPv6 packet processing allowing unauthenticated remote code execution.',
+      'Windows TCP/IP Stack',
+      '< 22631.4037',
+      9.8,
+      'CRITICAL',
+      'ACTIVE_EXPLOIT_POC',
+      'VENDOR_PATCH_AVAILABLE',
+      'cpe:2.3:o:microsoft:windows_11:*:*:*:*:*:*:*:*',
+      'Apply Microsoft August cumulative update or temporarily disable IPv6 on untrusted network interfaces.',
+      '2024-08-13',
+      '-30 days', '-30 days'
+    );
+
+    insertVuln.run(
+      'CVE-2023-4863',
+      'libwebp Lossless Compression Heap Buffer Overflow',
+      'Out-of-bounds write in libwebp rendering allowing remote code execution via malicious WebP image containers.',
+      '7-Zip File Archiver',
+      '< 24.08',
+      8.8,
+      'HIGH',
+      'WEAPONIZED_WILD',
+      'VENDOR_PATCH_AVAILABLE',
+      'cpe:2.3:a:7-zip:7-zip:*:*:*:*:*:*:*:*',
+      'Update 7-Zip archiver to version 24.08 or later using WinGet package repository.',
+      '2023-09-12',
+      '-40 days', '-40 days'
+    );
+  }
+
+  const baselineCount = db.prepare('SELECT COUNT(*) as count FROM security_baseline_assessments').get().count;
+  if (baselineCount === 0) {
+    const insertBase = db.prepare(`
+      INSERT INTO security_baseline_assessments (id, name, category, description, target_group_id, baseline_type, enforcement_rules, enabled, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?), DATETIME('now', ?))
+    `);
+
+    const baselineRules = JSON.stringify([
+      {
+        id: 'rule-lsa-prot',
+        name: 'Enable LSA Protection (RunAsPPL)',
+        registry_path: 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Lsa',
+        value_name: 'RunAsPPL',
+        expected_value: 1,
+        remediation_script: 'Set-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Lsa" -Name "RunAsPPL" -Value 1 -Type DWord'
+      },
+      {
+        id: 'rule-cred-guard',
+        name: 'Enable Windows Defender Credential Guard',
+        registry_path: 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\DeviceGuard',
+        value_name: 'EnableVirtualizationBasedSecurity',
+        expected_value: 1,
+        remediation_script: 'Set-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\DeviceGuard" -Name "EnableVirtualizationBasedSecurity" -Value 1 -Type DWord'
+      },
+      {
+        id: 'rule-smbv1',
+        name: 'Disable Insecure Legacy SMBv1 Protocol',
+        registry_path: 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\LanmanServer\\Parameters',
+        value_name: 'SMB1',
+        expected_value: 0,
+        remediation_script: 'Set-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\LanmanServer\\Parameters" -Name "SMB1" -Value 0 -Type DWord'
+      },
+      {
+        id: 'rule-ps-logging',
+        name: 'Enforce PowerShell Script Block Logging (Event 4104)',
+        registry_path: 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\PowerShell\\ScriptBlockLogging',
+        value_name: 'EnableScriptBlockLogging',
+        expected_value: 1,
+        remediation_script: 'New-Item -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\PowerShell\\ScriptBlockLogging" -Force -ErrorAction SilentlyContinue; Set-ItemProperty -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\PowerShell\\ScriptBlockLogging" -Name "EnableScriptBlockLogging" -Value 1 -Type DWord'
+      }
+    ]);
+
+    insertBase.run(
+      'base-win11-sec-baseline',
+      'Windows 11 Enterprise Hardened Security Baseline',
+      'OPERATING_SYSTEM',
+      'Microsoft Intune recommended security baseline enforcing LSA Protection, Credential Guard, SMBv1 disabling, and Script Block Logging.',
+      null,
+      'WINDOWS_11_ENTERPRISE',
+      baselineRules,
+      1,
+      '-15 days', '-15 days'
+    );
+
+    const sampleDev = db.prepare('SELECT id FROM devices LIMIT 1').get();
+    if (sampleDev) {
+      const insertDevVuln = db.prepare(`
+        INSERT INTO device_vulnerabilities (id, device_id, cve_id, detected_software_name, detected_version, status, risk_score, first_detected_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, DATETIME('now', '-5 days'), DATETIME('now', '-5 days'), DATETIME('now', '-5 days'))
+      `);
+
+      insertDevVuln.run(
+        'dv-sample-1',
+        sampleDev.id,
+        'CVE-2026-21840',
+        'Windows 11 Enterprise',
+        '22631.3880',
+        'ACTIVE',
+        8.8
+      );
+
+      insertDevVuln.run(
+        'dv-sample-2',
+        sampleDev.id,
+        'CVE-2024-38063',
+        'Windows TCP/IP Stack',
+        '22631.3880',
+        'ACTIVE',
+        9.8
+      );
     }
   }
 }

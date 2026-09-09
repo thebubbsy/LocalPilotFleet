@@ -11,6 +11,57 @@
   let _groups = [];
   let _searchTerm = '';
   let _filterType = 'all';
+  let _activeSubView = 'managed';
+  let _discoveredApps = [];
+  let _discoveredSearch = '';
+
+  
+  function getAppIcon(name, publisher, wingetId) {
+    const n = (name || '').toLowerCase();
+    const p = (publisher || '').toLowerCase();
+    const w = (wingetId || '').toLowerCase();
+
+    if (n.includes('chrome')) return 'https://cdn.simpleicons.org/googlechrome/4285F4';
+    if (n.includes('edge')) return 'https://cdn.simpleicons.org/microsoftedge/0078D7';
+    if (n.includes('visual studio code') || n.includes('vscode') || w.includes('visualstudiocode')) return 'https://cdn.simpleicons.org/visualstudiocode/007ACC';
+    if (n.includes('visual studio') && !n.includes('code')) return 'https://cdn.simpleicons.org/visualstudio/5C2D91';
+    if (n.includes('git ') || n === 'git' || w.includes('git.git')) return 'https://cdn.simpleicons.org/git/F05032';
+    if (n.includes('docker')) return 'https://cdn.simpleicons.org/docker/2496ED';
+    if (n.includes('slack')) return 'https://cdn.simpleicons.org/slack/4A154B';
+    if (n.includes('discord')) return 'https://cdn.simpleicons.org/discord/5865F2';
+    if (n.includes('spotify')) return 'https://cdn.simpleicons.org/spotify/1ED760';
+    if (n.includes('zoom')) return 'https://cdn.simpleicons.org/zoom/2D8CFF';
+    if (n.includes('steam')) return 'https://cdn.simpleicons.org/steam/000000';
+    if (n.includes('7-zip') || n.includes('7zip') || w.includes('7zip')) return 'https://cdn.simpleicons.org/7zip/000000';
+    if (n.includes('notepad++') || n.includes('notepadplusplus')) return 'https://cdn.simpleicons.org/notepadplusplus/90E59A';
+    if (n.includes('vlc')) return 'https://cdn.simpleicons.org/vlcmediaplayer/FF8800';
+    if (n.includes('python')) return 'https://cdn.simpleicons.org/python/3776AB';
+    if (n.includes('node.js') || n.includes('nodejs')) return 'https://cdn.simpleicons.org/nodedotjs/5FA04E';
+    if (n.includes('firefox')) return 'https://cdn.simpleicons.org/firefox/FF7139';
+    if (n.includes('brave')) return 'https://cdn.simpleicons.org/brave/FB542B';
+    if (n.includes('powershell')) return 'https://cdn.simpleicons.org/powershell/5391FE';
+    if (n.includes('terminal')) return 'https://cdn.simpleicons.org/windowsterminal/4D4D4D';
+    if (n.includes('filezilla')) return 'https://cdn.simpleicons.org/filezilla/BF0000';
+    if (n.includes('postman')) return 'https://cdn.simpleicons.org/postman/FF6C37';
+    if (n.includes('obsidian')) return 'https://cdn.simpleicons.org/obsidian/7C3AED';
+    if (n.includes('acrobat') || n.includes('adobe reader') || (n.includes('adobe') && n.includes('pdf'))) return 'https://cdn.simpleicons.org/adobeacrobatreader/EC1C24';
+    if (n.includes('word')) return 'https://cdn.simpleicons.org/microsoftword/2B579A';
+    if (n.includes('excel')) return 'https://cdn.simpleicons.org/microsoftexcel/217346';
+    if (n.includes('powerpoint')) return 'https://cdn.simpleicons.org/microsoftpowerpoint/D24726';
+    if (n.includes('outlook')) return 'https://cdn.simpleicons.org/microsoftoutlook/0072C6';
+    if (n.includes('teams')) return 'https://cdn.simpleicons.org/microsoftteams/6264A7';
+    if (n.includes('office') || n.includes('microsoft 365')) return 'https://cdn.simpleicons.org/microsoftoffice/D83B01';
+    if (n.includes('dropbox')) return 'https://cdn.simpleicons.org/dropbox/0061FF';
+    if (n.includes('github')) return 'https://cdn.simpleicons.org/github/181717';
+
+    if (p.includes('google')) return 'https://www.google.com/s2/favicons?domain=google.com&sz=64';
+    if (p.includes('microsoft')) return 'https://www.google.com/s2/favicons?domain=microsoft.com&sz=64';
+    if (p.includes('adobe')) return 'https://www.google.com/s2/favicons?domain=adobe.com&sz=64';
+    if (p.includes('apple')) return 'https://www.google.com/s2/favicons?domain=apple.com&sz=64';
+    if (p.includes('mozilla')) return 'https://www.google.com/s2/favicons?domain=mozilla.org&sz=64';
+
+    return null;
+  }
 
   function esc(str) {
     if (str === null || str === undefined) return '';
@@ -26,15 +77,17 @@
     if (!container) return;
 
     try {
-      const [appsData, statsData, groupsData] = await Promise.all([
+      const [appsData, statsData, groupsData, discData] = await Promise.all([
         window.FleetAPI.getApps(),
         window.FleetAPI.getAppStats(),
-        window.FleetAPI.getGroups()
+        window.FleetAPI.getGroups(),
+        (window.FleetAPI.getDiscoveredApps ? window.FleetAPI.getDiscoveredApps().catch(() => ({ apps: [] })) : Promise.resolve({ apps: [] }))
       ]);
 
       _apps = Array.isArray(appsData) ? appsData : [];
       _stats = statsData || {};
       _groups = Array.isArray(groupsData) ? groupsData : (groupsData.groups || []);
+      _discoveredApps = discData?.apps || [];
 
       render();
     } catch (err) {
@@ -66,6 +119,129 @@
     }
 
     container.innerHTML = `
+      <!-- ── View Mode Switcher ── -->
+      <div style="display:flex;gap:10px;margin-bottom:18px;border-bottom:1px solid var(--border-color);padding-bottom:12px;">
+        <button class="intune-btn ${_activeSubView === 'managed' ? 'primary' : ''}" id="btn-tab-managed-apps" style="font-size:12px;padding:6px 14px;border-radius:6px;">
+          <span>📦</span> Managed Enterprise Packages (${_apps.length})
+        </button>
+        <button class="intune-btn ${_activeSubView === 'discovered' ? 'primary' : ''}" id="btn-tab-discovered-apps" style="font-size:12px;padding:6px 14px;border-radius:6px;">
+          <span>🔍</span> Discovered Apps — Fleet Inventory (${_discoveredApps.length})
+        </button>
+      </div>
+
+      ${_activeSubView === 'discovered' ? renderDiscoveredView() : renderManagedView()}
+    `;
+
+    bindEvents(container);
+  }
+
+  function renderDiscoveredView() {
+    let list = _discoveredApps;
+    if (_discoveredSearch) {
+      const q = _discoveredSearch.toLowerCase();
+      list = list.filter(a =>
+        (a.name && a.name.toLowerCase().includes(q)) ||
+        (a.publisher && a.publisher.toLowerCase().includes(q)) ||
+        (a.version && a.version.toLowerCase().includes(q))
+      );
+    }
+
+    return `
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-title">Discovered Applications</span>
+            <span class="kpi-icon">🔍</span>
+          </div>
+          <div class="kpi-value">${_discoveredApps.length}</div>
+          <div class="kpi-footer">Unique packages inventoried across fleet</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-title">Inventory Harvest</span>
+            <span class="kpi-icon">💻</span>
+          </div>
+          <div class="kpi-value" style="color:var(--status-online);">Automated</div>
+          <div class="kpi-footer">Harvested via background node telemetry</div>
+        </div>
+      </div>
+
+      <div class="intune-toolbar">
+        <div class="toolbar-left">
+          <div class="search-wrap" style="width:380px;">
+            <input type="text" class="intune-input" id="discovered-apps-search" placeholder="Search discovered apps, publishers, or versions..." value="${esc(_discoveredSearch)}" style="width:100%;">
+          </div>
+        </div>
+      </div>
+
+      <div class="intune-table-wrap">
+        <table class="intune-table">
+          <thead>
+            <tr>
+              <th style="width:40px;"></th>
+              <th>Application Name</th>
+              <th>Publisher</th>
+              <th>Version</th>
+              <th>Source / Type</th>
+              <th>Installed Devices</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${list.length === 0 ? `
+              <tr><td colspan="6" style="text-align:center;padding:32px;color:var(--text-muted);">No discovered applications found matching query.</td></tr>
+            ` : list.map(app => {
+              const iconUrl = getAppIcon(app.name, app.publisher, app.winget_id);
+              const isAppx = app.install_type === 'AppX';
+              const isWinget = Boolean(app.winget_id);
+              const sourceTag = isWinget ? 'WinGet' : (isAppx ? 'Microsoft Store' : 'Desktop (Win32/MSI)');
+              const sourceColor = isWinget ? '#3B82F6' : (isAppx ? '#10B981' : '#8B5CF6');
+              return `
+                <tr>
+                  <td style="text-align:center;padding:6px;">
+                    ${iconUrl ? `
+                      <img src="${iconUrl}" width="22" height="22" style="border-radius:4px;object-fit:contain;vertical-align:middle;" onerror="this.outerHTML='<span style=\\'font-size:18px;\\'>📦</span>'" alt="icon">
+                    ` : `
+                      <span style="font-size:18px;">${isAppx ? '🛍️' : '📦'}</span>
+                    `}
+                  </td>
+                  <td style="font-weight:600;color:var(--text-primary);">${esc(app.name)}</td>
+                  <td style="color:var(--text-muted);font-size:12px;">${esc(app.publisher || 'Unknown Publisher')}</td>
+                  <td><span class="badge" style="font-family:monospace;background:var(--bg-secondary);border:1px solid var(--border-color);">${esc(app.version || '—')}</span></td>
+                  <td>
+                    <span class="badge" style="background:${sourceColor}18;color:${sourceColor};font-size:10px;font-weight:600;border:1px solid ${sourceColor}44;">
+                      ${sourceTag}
+                    </span>
+                  </td>
+                  <td>
+                    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                      <span class="badge" style="background:rgba(59,130,246,0.15);color:#3B82F6;font-weight:700;">${app.device_count} device(s)</span>
+                      ${(app.devices || []).map(d => `<span class="badge" style="background:var(--bg-secondary);border:1px solid var(--border-color);font-size:10px;">${esc(d.hostname)}</span>`).join('')}
+                    </div>
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function renderManagedView() {
+    let filtered = _apps;
+    if (_searchTerm) {
+      const term = _searchTerm.toLowerCase();
+      filtered = filtered.filter(a =>
+        (a.name && a.name.toLowerCase().includes(term)) ||
+        (a.publisher && a.publisher.toLowerCase().includes(term)) ||
+        (a.package_identifier && a.package_identifier.toLowerCase().includes(term))
+      );
+    }
+    if (_filterType !== 'all') {
+      filtered = filtered.filter(a => a.app_type === _filterType);
+    }
+
+    return `
       <!-- ── KPI Cards ── -->
       <div class="kpi-grid">
         <div class="kpi-card">
@@ -216,6 +392,22 @@
   }
 
   function bindEvents(container) {
+    container.querySelector('#btn-tab-managed-apps')?.addEventListener('click', () => {
+      _activeSubView = 'managed';
+      render();
+    });
+
+    container.querySelector('#btn-tab-discovered-apps')?.addEventListener('click', () => {
+      _activeSubView = 'discovered';
+      render();
+    });
+
+    const discSearch = container.querySelector('#discovered-apps-search');
+    discSearch?.addEventListener('input', (e) => {
+      _discoveredSearch = e.target.value;
+      render();
+    });
+
     const searchInput = container.querySelector('#apps-search');
     searchInput?.addEventListener('input', (e) => {
       _searchTerm = e.target.value;
