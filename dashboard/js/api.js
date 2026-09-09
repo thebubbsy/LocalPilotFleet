@@ -1935,6 +1935,116 @@ async function createNodePortalRequest(nodeId, data) {
   });
 }
 
+// Windows 365 Cloud PC & Virtual Workstation Fleet
+async function getCloudPcStats() {
+  return apiFetch('/api/v1/fleet/cloud-pc/stats');
+}
+
+async function getCloudPcPolicies() {
+  return apiFetch('/api/v1/fleet/cloud-pc/policies');
+}
+
+async function getCloudPcPolicy(id) {
+  return apiFetch(`/api/v1/fleet/cloud-pc/policies/${encodeURIComponent(id)}`);
+}
+
+async function createCloudPcPolicy(data) {
+  return apiFetch('/api/v1/fleet/cloud-pc/policies', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateCloudPcPolicy(id, data) {
+  return apiFetch(`/api/v1/fleet/cloud-pc/policies/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteCloudPcPolicy(id) {
+  return apiFetch(`/api/v1/fleet/cloud-pc/policies/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getCloudPcInstances(params = {}) {
+  const query = new URLSearchParams();
+  if (params.provisioning_status) query.set('provisioning_status', params.provisioning_status);
+  if (params.policy_id) query.set('policy_id', params.policy_id);
+  if (params.primary_user) query.set('primary_user', params.primary_user);
+  const qStr = query.toString();
+  return apiFetch(`/api/v1/fleet/cloud-pc/instances${qStr ? '?' + qStr : ''}`);
+}
+
+async function getCloudPcInstance(id) {
+  return apiFetch(`/api/v1/fleet/cloud-pc/instances/${encodeURIComponent(id)}`);
+}
+
+async function createCloudPcInstance(data) {
+  return apiFetch('/api/v1/fleet/cloud-pc/instances', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateCloudPcInstance(id, data) {
+  return apiFetch(`/api/v1/fleet/cloud-pc/instances/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteCloudPcInstance(id) {
+  return apiFetch(`/api/v1/fleet/cloud-pc/instances/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function reprovisionCloudPc(id) {
+  return apiFetch(`/api/v1/fleet/cloud-pc/instances/${encodeURIComponent(id)}/reprovision`, {
+    method: 'POST'
+  });
+}
+
+async function setCloudPcGracePeriod(id, days = 7) {
+  return apiFetch(`/api/v1/fleet/cloud-pc/instances/${encodeURIComponent(id)}/grace-period`, {
+    method: 'POST',
+    body: JSON.stringify({ days })
+  });
+}
+
+async function getCloudPcRestorePoints(params = {}) {
+  const query = new URLSearchParams();
+  if (params.cloud_pc_id) query.set('cloud_pc_id', params.cloud_pc_id);
+  if (params.status) query.set('status', params.status);
+  const qStr = query.toString();
+  return apiFetch(`/api/v1/fleet/cloud-pc/restore-points${qStr ? '?' + qStr : ''}`);
+}
+
+async function createCloudPcRestorePoint(data) {
+  return apiFetch('/api/v1/fleet/cloud-pc/restore-points', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function restoreCloudPcPoint(id) {
+  return apiFetch(`/api/v1/fleet/cloud-pc/restore-points/${encodeURIComponent(id)}/restore`, {
+    method: 'POST'
+  });
+}
+
+async function deleteCloudPcRestorePoint(id) {
+  return apiFetch(`/api/v1/fleet/cloud-pc/restore-points/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getCloudPcProvisionScript(policyId, name) {
+  return apiFetch(`/api/v1/fleet/cloud-pc/provision-script?policy_id=${encodeURIComponent(policyId || '')}&name=${encodeURIComponent(name || '')}`);
+}
+
 // Windows Autopatch & Automated Patch Release Cadence
 async function getAutopatchStats() {
   return apiFetch('/api/v1/fleet/autopatch/stats');

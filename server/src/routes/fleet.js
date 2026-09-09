@@ -39,6 +39,7 @@ import * as featureUpdateEngine from '../services/featureUpdateEngine.js';
 import * as enterpriseAppEngine from '../services/enterpriseAppEngine.js';
 import * as vulnerabilityEngine from '../services/vulnerabilityEngine.js';
 import * as autopatchEngine from '../services/autopatchEngine.js';
+import * as cloudPcEngine from '../services/cloudPcEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -5635,6 +5636,218 @@ try {
       sendJson(res, 200, { device_id: req.params.id, autopatch: status });
     } catch (err) {
       sendJson(res, 500, { error: 'DEVICE_AUTOPATCH_ERROR', message: err.message });
+    }
+  });
+
+
+  // 329. GET /api/v1/fleet/cloud-pc/stats
+  router.get('/api/v1/fleet/cloud-pc/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      sendJson(res, 200, cloudPcEngine.getCloudPcStats(getDb()));
+    } catch (err) {
+      sendJson(res, 500, { error: 'CLOUD_PC_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 330. GET /api/v1/fleet/cloud-pc/policies
+  router.get('/api/v1/fleet/cloud-pc/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policies = cloudPcEngine.getProvisioningPolicies(getDb());
+      sendJson(res, 200, { policies, count: policies.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'CLOUD_PC_POLICIES_ERROR', message: err.message });
+    }
+  });
+
+  // 331. POST /api/v1/fleet/cloud-pc/policies
+  router.post('/api/v1/fleet/cloud-pc/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policy = cloudPcEngine.createProvisioningPolicy(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, policy });
+    } catch (err) {
+      sendJson(res, 500, { error: 'CLOUD_PC_POLICY_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 332. GET /api/v1/fleet/cloud-pc/policies/:id
+  router.get('/api/v1/fleet/cloud-pc/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policy = cloudPcEngine.getProvisioningPolicy(getDb(), req.params.id);
+      if (!policy) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Policy not found' });
+      sendJson(res, 200, policy);
+    } catch (err) {
+      sendJson(res, 500, { error: 'CLOUD_PC_POLICY_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 333. PUT /api/v1/fleet/cloud-pc/policies/:id
+  router.put('/api/v1/fleet/cloud-pc/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policy = cloudPcEngine.updateProvisioningPolicy(getDb(), req.params.id, req.body || {});
+      if (!policy) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Policy not found' });
+      sendJson(res, 200, { success: true, policy });
+    } catch (err) {
+      sendJson(res, 500, { error: 'CLOUD_PC_POLICY_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 334. DELETE /api/v1/fleet/cloud-pc/policies/:id
+  router.delete('/api/v1/fleet/cloud-pc/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const success = cloudPcEngine.deleteProvisioningPolicy(getDb(), req.params.id);
+      if (!success) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Policy not found' });
+      sendJson(res, 200, { success: true, deleted_id: req.params.id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'CLOUD_PC_POLICY_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 335. GET /api/v1/fleet/cloud-pc/instances
+  router.get('/api/v1/fleet/cloud-pc/instances', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const instances = cloudPcEngine.getCloudPcInstances(getDb(), req.query);
+      sendJson(res, 200, { instances, count: instances.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'CLOUD_PC_INSTANCES_ERROR', message: err.message });
+    }
+  });
+
+  // 336. POST /api/v1/fleet/cloud-pc/instances
+  router.post('/api/v1/fleet/cloud-pc/instances', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const instance = cloudPcEngine.createCloudPcInstance(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, instance });
+    } catch (err) {
+      sendJson(res, 500, { error: 'CLOUD_PC_INSTANCE_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 337. GET /api/v1/fleet/cloud-pc/instances/:id
+  router.get('/api/v1/fleet/cloud-pc/instances/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const instance = cloudPcEngine.getCloudPcInstance(getDb(), req.params.id);
+      if (!instance) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Cloud PC instance not found' });
+      sendJson(res, 200, instance);
+    } catch (err) {
+      sendJson(res, 500, { error: 'CLOUD_PC_INSTANCE_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 338. PUT /api/v1/fleet/cloud-pc/instances/:id
+  router.put('/api/v1/fleet/cloud-pc/instances/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const instance = cloudPcEngine.updateCloudPcInstance(getDb(), req.params.id, req.body || {});
+      if (!instance) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Cloud PC instance not found' });
+      sendJson(res, 200, { success: true, instance });
+    } catch (err) {
+      sendJson(res, 500, { error: 'CLOUD_PC_INSTANCE_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 339. DELETE /api/v1/fleet/cloud-pc/instances/:id
+  router.delete('/api/v1/fleet/cloud-pc/instances/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const success = cloudPcEngine.deleteCloudPcInstance(getDb(), req.params.id);
+      if (!success) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Cloud PC instance not found' });
+      sendJson(res, 200, { success: true, deleted_id: req.params.id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'CLOUD_PC_INSTANCE_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 340. POST /api/v1/fleet/cloud-pc/instances/:id/reprovision
+  router.post('/api/v1/fleet/cloud-pc/instances/:id/reprovision', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const instance = cloudPcEngine.triggerReprovisioning(getDb(), req.params.id);
+      if (!instance) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Cloud PC instance not found' });
+      sendJson(res, 200, { success: true, instance });
+    } catch (err) {
+      sendJson(res, 500, { error: 'CLOUD_PC_REPROVISION_ERROR', message: err.message });
+    }
+  });
+
+  // 341. POST /api/v1/fleet/cloud-pc/instances/:id/grace-period
+  router.post('/api/v1/fleet/cloud-pc/instances/:id/grace-period', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const days = parseInt(req.body?.days, 10) || 7;
+      const instance = cloudPcEngine.setGracePeriod(getDb(), req.params.id, days);
+      if (!instance) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Cloud PC instance not found' });
+      sendJson(res, 200, { success: true, instance });
+    } catch (err) {
+      sendJson(res, 500, { error: 'CLOUD_PC_GRACE_PERIOD_ERROR', message: err.message });
+    }
+  });
+
+  // 342. GET /api/v1/fleet/cloud-pc/restore-points
+  router.get('/api/v1/fleet/cloud-pc/restore-points', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const points = cloudPcEngine.getRestorePoints(getDb(), req.query);
+      sendJson(res, 200, { restore_points: points, count: points.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'CLOUD_PC_RESTORE_POINTS_ERROR', message: err.message });
+    }
+  });
+
+  // 343. POST /api/v1/fleet/cloud-pc/restore-points
+  router.post('/api/v1/fleet/cloud-pc/restore-points', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const point = cloudPcEngine.createRestorePoint(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, restore_point: point });
+    } catch (err) {
+      sendJson(res, 500, { error: 'CLOUD_PC_RESTORE_POINT_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 344. POST /api/v1/fleet/cloud-pc/restore-points/:id/restore
+  router.post('/api/v1/fleet/cloud-pc/restore-points/:id/restore', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const instance = cloudPcEngine.triggerRestorePointRecovery(getDb(), req.params.id);
+      if (!instance) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Restore point not found' });
+      sendJson(res, 200, { success: true, instance });
+    } catch (err) {
+      sendJson(res, 500, { error: 'CLOUD_PC_RECOVER_ERROR', message: err.message });
+    }
+  });
+
+  // 345. DELETE /api/v1/fleet/cloud-pc/restore-points/:id
+  router.delete('/api/v1/fleet/cloud-pc/restore-points/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const success = cloudPcEngine.deleteRestorePoint(getDb(), req.params.id);
+      if (!success) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Restore point not found' });
+      sendJson(res, 200, { success: true, deleted_id: req.params.id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'CLOUD_PC_RESTORE_POINT_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 346. GET /api/v1/fleet/cloud-pc/provision-script
+  router.get('/api/v1/fleet/cloud-pc/provision-script', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policyId = req.query.policy_id;
+      const policy = policyId ? cloudPcEngine.getProvisioningPolicy(getDb(), policyId) : null;
+      const vmName = req.query.name || 'CloudPC-NewVM';
+      const script = cloudPcEngine.generateHyperVProvisionScript(policy, vmName);
+      sendJson(res, 200, { success: true, script });
+    } catch (err) {
+      sendJson(res, 500, { error: 'CLOUD_PC_SCRIPT_ERROR', message: err.message });
     }
   });
 

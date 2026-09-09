@@ -2022,6 +2022,63 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_autopatch_dep_dev ON autopatch_device_deployments(device_id);
     CREATE INDEX IF NOT EXISTS idx_autopatch_dep_ring ON autopatch_device_deployments(ring_id);
     CREATE INDEX IF NOT EXISTS idx_autopatch_dep_status ON autopatch_device_deployments(install_status);
+
+    -- 95. CLOUD_PC_PROVISIONING_POLICIES — Windows 365 / Hyper-V Provisioning Configurations
+    CREATE TABLE IF NOT EXISTS cloud_pc_provisioning_policies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      sku_name TEXT NOT NULL DEFAULT 'Standard 2vCPU / 8GB RAM / 128GB Storage',
+      vcpu_count INTEGER NOT NULL DEFAULT 2,
+      ram_gb INTEGER NOT NULL DEFAULT 8,
+      storage_gb INTEGER NOT NULL DEFAULT 128,
+      os_image TEXT NOT NULL DEFAULT 'Windows 11 Enterprise 24H2',
+      join_type TEXT NOT NULL DEFAULT 'ENTRA_JOIN' CHECK(join_type IN ('ENTRA_JOIN', 'HYBRID_ENTRA', 'LOCAL_HYPERV_STANDALONE')),
+      target_group_id TEXT DEFAULT 'grp-all',
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET DEFAULT
+    );
+
+    -- 96. CLOUD_PC_INSTANCES — Virtual Workstations & Cloud PC State Machine
+    CREATE TABLE IF NOT EXISTS cloud_pc_instances (
+      id TEXT PRIMARY KEY,
+      policy_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      hostname TEXT NOT NULL,
+      primary_user TEXT NOT NULL,
+      host_device_id TEXT,
+      provisioning_status TEXT NOT NULL DEFAULT 'PROVISIONED' CHECK(provisioning_status IN ('PROVISIONING', 'PROVISIONED', 'IN_GRACE_PERIOD', 'REPROVISIONING', 'OFFLINE', 'DEPROVISIONED')),
+      grace_period_ends_at TEXT,
+      ip_address TEXT,
+      ram_bytes INTEGER DEFAULT 8589934592,
+      disk_free_gb REAL DEFAULT 95.0,
+      last_active_at TEXT DEFAULT (DATETIME('now')),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(policy_id) REFERENCES cloud_pc_provisioning_policies(id) ON DELETE CASCADE,
+      FOREIGN KEY(host_device_id) REFERENCES devices(id) ON DELETE SET NULL
+    );
+
+    -- 97. CLOUD_PC_RESTORE_POINTS — Virtual Machine Disaster Recovery & Snapshots
+    CREATE TABLE IF NOT EXISTS cloud_pc_restore_points (
+      id TEXT PRIMARY KEY,
+      cloud_pc_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      restore_point_type TEXT NOT NULL DEFAULT 'USER_SNAPSHOT' CHECK(restore_point_type IN ('AUTOMATIC_DISASTER_RECOVERY', 'USER_SNAPSHOT', 'PRE_PATCH_RESTORE')),
+      size_bytes INTEGER DEFAULT 10737418240,
+      captured_at TEXT DEFAULT (DATETIME('now')),
+      status TEXT NOT NULL DEFAULT 'READY' CHECK(status IN ('CAPTURING', 'READY', 'RESTORING', 'EXPIRED')),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(cloud_pc_id) REFERENCES cloud_pc_instances(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_cpc_policy_target ON cloud_pc_provisioning_policies(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_cpc_inst_policy ON cloud_pc_instances(policy_id);
+    CREATE INDEX IF NOT EXISTS idx_cpc_inst_host ON cloud_pc_instances(host_device_id);
+    CREATE INDEX IF NOT EXISTS idx_cpc_inst_status ON cloud_pc_instances(provisioning_status);
+    CREATE INDEX IF NOT EXISTS idx_cpc_rp_cpc ON cloud_pc_restore_points(cloud_pc_id);
+    CREATE INDEX IF NOT EXISTS idx_cpc_rp_status ON cloud_pc_restore_points(status);
   `);
 
   // Schema migrations for existing databases
@@ -4626,6 +4683,92 @@ exit 0`,
         0
       );
     }
+  }
+
+  // 34. Seed Windows 365 Cloud PC & Virtual Workstations
+  const cpcPolicyCount = db.prepare('SELECT COUNT(*) as c FROM cloud_pc_provisioning_policies').get().c;
+  if (cpcPolicyCount === 0) {
+    const insertPolicy = db.prepare(`
+      INSERT INTO cloud_pc_provisioning_policies (id, name, description, sku_name, vcpu_count, ram_gb, storage_gb, os_image, join_type, target_group_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    insertPolicy.run(
+      'cpc-pol-developer',
+      'Engineering & Developer High-Perf Cloud PC',
+      '8vCPU / 32GB RAM developer workstation optimized for Visual Studio, Docker, and local AI inferencing.',
+      'Premium 8vCPU / 32GB RAM / 512GB Storage',
+      8,
+      32,
+      512,
+      'Windows 11 Enterprise 24H2 Dev Edition',
+      'ENTRA_JOIN',
+      'grp-all'
+    );
+    insertPolicy.run(
+      'cpc-pol-standard',
+      'Standard Knowledge Worker Virtual PC',
+      'General productivity virtual workstation with Office 365 and Edge.',
+      'Standard 2vCPU / 8GB RAM / 128GB Storage',
+      2,
+      8,
+      128,
+      'Windows 11 Enterprise 24H2',
+      'LOCAL_HYPERV_STANDALONE',
+      'grp-all'
+    );
+
+    const dev = db.prepare('SELECT id FROM devices LIMIT 1').get();
+    const hostId = dev ? dev.id : null;
+
+    const insertCpc = db.prepare(`
+      INSERT INTO cloud_pc_instances (id, policy_id, name, hostname, primary_user, host_device_id, provisioning_status, ip_address, ram_bytes, disk_free_gb)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    insertCpc.run(
+      'cpc-inst-01',
+      'cpc-pol-developer',
+      'CloudPC-Tony-DevBox',
+      'CPC-TONY-DEV01',
+      'Tony',
+      hostId,
+      'PROVISIONED',
+      '192.168.1.185',
+      34359738368,
+      380.5
+    );
+    insertCpc.run(
+      'cpc-inst-02',
+      'cpc-pol-standard',
+      'CloudPC-Guest-Worker',
+      'CPC-GUEST-01',
+      'GuestUser',
+      hostId,
+      'PROVISIONED',
+      '192.168.1.186',
+      8589934592,
+      92.4
+    );
+
+    const insertRp = db.prepare(`
+      INSERT INTO cloud_pc_restore_points (id, cloud_pc_id, name, restore_point_type, size_bytes, status)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    insertRp.run(
+      'rp-snap-01',
+      'cpc-inst-01',
+      'Daily Automated DR Snapshot - 2026-09-09',
+      'AUTOMATIC_DISASTER_RECOVERY',
+      15032385536,
+      'READY'
+    );
+    insertRp.run(
+      'rp-snap-02',
+      'cpc-inst-01',
+      'Pre-Update Clean Checkpoint',
+      'PRE_PATCH_RESTORE',
+      12884901888,
+      'READY'
+    );
   }
 }
 

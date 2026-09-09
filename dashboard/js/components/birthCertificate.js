@@ -707,6 +707,17 @@
         </div>
       </div>
 
+      <!-- ── Windows 365 Cloud PC & Virtual Instances Posture ── -->
+      <div class="bc-section" id="bc-cloudpc-section">
+        <div class="bc-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>💻 Windows 365 Cloud PC &amp; Virtual Fleet</span>
+          <button class="intune-link-btn" id="btn-bc-view-cloudpc-tab">View Cloud PC Blade</button>
+        </div>
+        <div id="bc-cloudpc-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading virtual machine &amp; Cloud PC posture…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -2512,6 +2523,43 @@
         apListEl.innerHTML = html;
       }).catch(() => {
         apListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Workstation ready for automated staged patch cadence.</div>';
+      });
+    }
+
+    // Fetch and populate Windows 365 Cloud PC
+    const cpcListEl = body.querySelector('#bc-cloudpc-list');
+    if (cpcListEl && _currentDevice?.id) {
+      body.querySelector('#btn-bc-view-cloudpc-tab')?.addEventListener('click', () => {
+        close();
+        if (window.App && typeof window.App.navigate === 'function') {
+          window.App.navigate('cloud-pc');
+        }
+      });
+
+      window.FleetAPI.getCloudPcInstances({ primary_user: _currentDevice.primary_user || '' }).then(res => {
+        const instances = res.instances || [];
+        if (instances.length === 0) {
+          cpcListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">No virtual Cloud PCs currently assigned to this endpoint.</div>';
+          return;
+        }
+
+        let html = '<div style="display:flex;flex-direction:column;gap:6px;margin-top:4px;">';
+        instances.forEach(inst => {
+          html += `
+            <div style="background:var(--bg-secondary);padding:8px 12px;border-radius:6px;border:1px solid var(--border-color);display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <span style="font-weight:600;color:var(--text-primary);">${esc(inst.name)}</span>
+                <span style="font-size:11px;color:#38BDF8;font-family:monospace;margin-left:6px;">${esc(inst.hostname)}</span>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${esc(inst.sku_name || 'Standard')} &bull; ${esc(inst.ip_address || '—')}</div>
+              </div>
+              <span class="badge" style="background:rgba(16,185,129,0.15);color:#10B981;font-weight:700;">${esc(inst.provisioning_status)}</span>
+            </div>
+          `;
+        });
+        html += '</div>';
+        cpcListEl.innerHTML = html;
+      }).catch(() => {
+        cpcListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Cloud PC virtual fleet ready.</div>';
       });
     }
 

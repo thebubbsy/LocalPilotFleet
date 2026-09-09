@@ -3261,6 +3261,61 @@ if ($Mode -eq 'Heartbeat') {
             } catch {
                 Write-AgentLog 'WARN' "Windows Autopatch check error: $($_.Exception.Message)"
             }
+
+            # ── 34. Windows 365 Cloud PC & Hyper-V / WSL2 Virtual Machine Harvest ──
+            try {
+                $vms = @()
+                # 1. Hyper-V VMs if feature available
+                try {
+                    $hypervVms = Get-VM -ErrorAction SilentlyContinue
+                    if ($hypervVms) {
+                        foreach ($v in $hypervVms) {
+                            $vms += @{
+                                name         = [string]$v.Name
+                                state        = [string]$v.State
+                                cpu_cores    = [int]$v.ProcessorCount
+                                memory_mb    = [int]($v.MemoryAssigned / 1MB)
+                                uptime_sec   = [int]$v.Uptime.TotalSeconds
+                                hypervisor   = 'Hyper-V'
+                            }
+                        }
+                    }
+                } catch {}
+
+                # 2. WSL2 Distributions if available
+                try {
+                    $wslOutput = & wsl.exe -l -v 2>&1
+                    if ($LASTEXITCODE -eq 0 -and $wslOutput) {
+                        $lines = $wslOutput | Out-String -Stream | Select-Object -Skip 1
+                        foreach ($line in $lines) {
+                            $clean = $line -replace '\x00','' -replace '\*',''
+                            $parts = $clean.Trim() -split '\s+'
+                            if ($parts.Count -ge 3) {
+                                $vms += @{
+                                    name       = $parts[0]
+                                    state      = $parts[1]
+                                    version    = $parts[2]
+                                    hypervisor = 'WSL2'
+                                }
+                            }
+                        }
+                    }
+                } catch {}
+
+                if ($vms.Count -gt 0) {
+                    Write-AgentLog 'INFO' "Reported $(@($vms).Count) local virtual machine(s) (Hyper-V/WSL2) to Fleet Virtual Cloud inventory"
+                    $cpcReportPayload = @{ vms = $vms }
+                    Invoke-RestMethod `
+                        -Uri        "$baseUrl/api/v1/nodes/$deviceId/cloud-pc/report" `
+                        -Method     POST `
+                        -Headers    $authHeaders `
+                        -Body       ($cpcReportPayload | ConvertTo-Json -Depth 3 -Compress) `
+                        -TimeoutSec 10 `
+                        -ErrorAction SilentlyContinue | Out-Null
+                }
+            } catch {
+                Write-AgentLog 'WARN' "Cloud PC / VM inventory check error: $($_.Exception.Message)"
+            }
         } catch {
             Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
             if (-not $Continuous) { exit 1 }

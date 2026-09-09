@@ -179,6 +179,9 @@ const App = {
       case 'autopatch':
         if (window.AutopatchTable) window.AutopatchTable.init(document.getElementById('view-autopatch') || document.getElementById('tab-autopatch'));
         break;
+      case 'cloud-pc':
+        if (window.CloudPcTable) window.CloudPcTable.init(document.getElementById('view-cloud-pc') || document.getElementById('tab-cloud-pc'));
+        break;
       case 'settings':
         this.renderSettings();
         break;

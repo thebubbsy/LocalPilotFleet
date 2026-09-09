@@ -40,6 +40,7 @@ import * as featureUpdateEngine from '../services/featureUpdateEngine.js';
 import * as enterpriseAppEngine from '../services/enterpriseAppEngine.js';
 import * as vulnerabilityEngine from '../services/vulnerabilityEngine.js';
 import * as autopatchEngine from '../services/autopatchEngine.js';
+import * as cloudPcEngine from '../services/cloudPcEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -1891,6 +1892,31 @@ export function registerNodeRoutes(router) {
       sendJson(res, 500, { error: 'NODE_BASELINES_FETCH_ERROR', message: err.message });
     }
   });
+
+  // 79. GET /api/v1/nodes/:id/cloud-pc (Node queries assigned Cloud PC / VM instances)
+  router.get('/api/v1/nodes/:id/cloud-pc', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const instances = getDb().prepare('SELECT * FROM cloud_pc_instances WHERE host_device_id = ?').all(id);
+      sendJson(res, 200, { device_id: id, cloud_pcs: instances, count: instances.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'NODE_CLOUD_PC_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 80. POST /api/v1/nodes/:id/cloud-pc/report (Node reports local Hyper-V / WSL2 VMs)
+  router.post('/api/v1/nodes/:id/cloud-pc/report', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const vms = req.body?.vms || [];
+      sendJson(res, 200, { success: true, device_id: id, reported_vms_count: vms.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'NODE_CLOUD_PC_REPORT_ERROR', message: err.message });
+    }
+  });
+
 }
 
 export default registerNodeRoutes;
