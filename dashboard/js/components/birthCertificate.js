@@ -481,6 +481,17 @@
         </div>
       </div>
 
+      <!-- ── Endpoint Analytics & Health Score ── -->
+      <div class="bc-section" id="bc-analytics-section">
+        <div class="bc-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>📊 Endpoint Analytics &amp; Health Score</span>
+          <button class="intune-link-btn" id="btn-bc-view-analytics-tab">View Analytics</button>
+        </div>
+        <div id="bc-analytics-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading performance &amp; reliability score…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -1431,6 +1442,47 @@
         asrListEl.innerHTML = html;
       }).catch(err => {
         asrListEl.innerHTML = `<div style="color:var(--text-muted);font-size:12px;">Pending ASR synchronization.</div>`;
+      });
+    }
+
+    // Fetch and populate Endpoint Analytics & Health Score
+    const analyticsListEl = body.querySelector('#bc-analytics-list');
+    if (analyticsListEl && _currentDevice?.id) {
+      body.querySelector('#btn-bc-view-analytics-tab')?.addEventListener('click', () => {
+        close();
+        if (window.App && typeof window.App.navigate === 'function') {
+          window.App.navigate('analytics');
+        }
+      });
+
+      window.FleetAPI.getDeviceAnalytics(_currentDevice.id).then(res => {
+        const snap = res.latest_snapshot;
+        if (!snap) {
+          analyticsListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">No analytics snapshot recorded yet for this device.</div>';
+          return;
+        }
+
+        const score = snap.overall_health_score;
+        const color = score >= 85 ? '#10B981' : (score >= 70 ? '#F59E0B' : '#EF4444');
+        const bootSec = (snap.boot_duration_ms / 1000).toFixed(1);
+        const signinSec = (snap.signin_duration_ms / 1000).toFixed(1);
+
+        let html = `
+          <div style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:12px;display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <span style="font-size:13px;font-weight:600;color:var(--text-primary);">Device Experience Score</span>
+              <span class="status-pill" style="color:${color};border-color:${color};font-size:12px;font-weight:700;">${score} / 100</span>
+            </div>
+            <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--text-muted);">
+              <div>Startup: <span style="color:var(--text-primary);font-weight:600;">${snap.startup_score}/100</span> (Boot: ${bootSec}s, Sign-in: ${signinSec}s)</div>
+              <div>Reliability: <span style="color:var(--text-primary);font-weight:600;">${snap.reliability_score}/100</span> (${snap.app_crash_count_24h} crashes)</div>
+              <div>Resource: <span style="color:var(--text-primary);font-weight:600;">${snap.resource_score}/100</span></div>
+            </div>
+          </div>
+        `;
+        analyticsListEl.innerHTML = html;
+      }).catch(err => {
+        analyticsListEl.innerHTML = `<div style="color:var(--text-muted);font-size:12px;">Analytics telemetry pending heartbeat sync.</div>`;
       });
     }
 

@@ -24,6 +24,7 @@ import * as remoteActionEngine from '../services/remoteActionEngine.js';
 import * as firewallEngine from '../services/firewallEngine.js';
 import * as scriptsEngine from '../services/scriptsEngine.js';
 import * as asrEngine from '../services/asrEngine.js';
+import * as analyticsEngine from '../services/analyticsEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -1274,6 +1275,45 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { device_id: id, saved_count: saved.length });
     } catch (err) {
       sendJson(res, 400, { error: 'ASR_EVENTS_REPORT_ERROR', message: err.message });
+    }
+  });
+
+  // 38. POST /api/v1/nodes/:id/analytics-snapshot (Agent reports boot/sign-in & performance metrics)
+  router.post('/api/v1/nodes/:id/analytics-snapshot', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const snapshot = analyticsEngine.saveAnalyticsSnapshot(db, {
+        deviceId: id,
+        bootDurationMs: body.boot_duration_ms,
+        signinDurationMs: body.signin_duration_ms,
+        appCrashCount24h: body.app_crash_count_24h,
+        appHangCount24h: body.app_hang_count_24h,
+        cpuSpikePct: body.cpu_spike_pct,
+        ramPressurePct: body.ram_pressure_pct,
+        diskQueueDepth: body.disk_queue_depth
+      });
+      sendJson(res, 201, snapshot);
+    } catch (err) {
+      sendJson(res, 400, { error: 'ANALYTICS_SNAPSHOT_ERROR', message: err.message });
+    }
+  });
+
+  // 39. POST /api/v1/nodes/:id/app-reliability (Agent reports application crashes and hangs)
+  router.post('/api/v1/nodes/:id/app-reliability', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    const events = Array.isArray(body) ? body : (body.events || []);
+    try {
+      const db = getDb();
+      const saved = analyticsEngine.saveAppReliabilityEvents(db, id, events);
+      broadcastEvent('app_reliability_events_reported', { device_id: id, count: saved.length });
+      sendJson(res, 200, { device_id: id, saved_count: saved.length });
+    } catch (err) {
+      sendJson(res, 400, { error: 'APP_RELIABILITY_REPORT_ERROR', message: err.message });
     }
   });
 }

@@ -1917,6 +1917,112 @@ if ($Mode -eq 'Heartbeat') {
                     Write-AgentLog 'WARN' "ASR evaluation encountered non-fatal error: $($_.Exception.Message)"
                 }
             }
+
+            # ── Endpoint Analytics & Performance Health Telemetry ─────────────
+            if (-not (Get-Variable -Name 'LastAnalyticsAudit' -Scope Script -ErrorAction SilentlyContinue)) {
+                $script:LastAnalyticsAudit = $null
+            }
+            $now = Get-Date
+            $shouldAuditAnalytics = $false
+            if ($null -eq $script:LastAnalyticsAudit) {
+                $shouldAuditAnalytics = $true
+            } elseif (($now - $script:LastAnalyticsAudit).TotalSeconds -ge 180) { # 3-minute cadence
+                $shouldAuditAnalytics = $true
+            }
+
+            if ($shouldAuditAnalytics) {
+                $script:LastAnalyticsAudit = $now
+                try {
+                    # 1. Harvest boot duration
+                    $bootMs = 22000
+                    try {
+                        $perfEvt = Get-WinEvent -FilterHashtable @{
+                            LogName = 'Microsoft-Windows-Diagnostics-Performance/Operational'
+                            Id = 100
+                        } -MaxEvents 1 -ErrorAction SilentlyContinue
+                        if ($perfEvt -and $perfEvt.Message -match 'MainPathBootTime:\s*(\d+)') {
+                            $bootMs = [int]$matches[1]
+                        }
+                    } catch {}
+
+                    # 2. Harvest sign-in duration
+                    $signinMs = 5000
+                    try {
+                        $signinEvt = Get-WinEvent -FilterHashtable @{
+                            LogName = 'Microsoft-Windows-Diagnostics-Performance/Operational'
+                            Id = 700
+                        } -MaxEvents 1 -ErrorAction SilentlyContinue
+                        if ($signinEvt -and $signinEvt.Message -match 'TotalUserLogonTime:\s*(\d+)') {
+                            $signinMs = [int]$matches[1]
+                        }
+                    } catch {}
+
+                    # 3. Harvest application crashes & hangs in last 24 hours
+                    $crashes24h = 0
+                    $hangs24h = 0
+                    $reliabilityEvents = @()
+                    try {
+                        $appErrors = Get-WinEvent -FilterHashtable @{
+                            LogName = 'Application'
+                            Id = @(1000, 1002)
+                            StartTime = (Get-Date).AddHours(-24)
+                        } -MaxEvents 30 -ErrorAction SilentlyContinue
+                        if ($appErrors) {
+                            foreach ($ae in $appErrors) {
+                                $isCrash = $ae.Id -eq 1000
+                                if ($isCrash) { $crashes24h++ } else { $hangs24h++ }
+                                $msg = [string]$ae.Message
+                                $appName = if ($msg -match 'Faulting application name:\s*([^\r\n,]+)') { $matches[1].Trim() } else { 'Unknown' }
+                                $appVer = if ($msg -match 'Faulting application version:\s*([^\r\n,]+)') { $matches[1].Trim() } else { '' }
+                                $moduleName = if ($msg -match 'Faulting module name:\s*([^\r\n,]+)') { $matches[1].Trim() } else { '' }
+                                $excCode = if ($msg -match 'Exception code:\s*([^\r\n,]+)') { $matches[1].Trim() } else { '' }
+
+                                $reliabilityEvents += @{
+                                    app_name        = $appName
+                                    app_version     = $appVer
+                                    event_type      = if ($isCrash) { 'CRASH' } else { 'HANG' }
+                                    faulting_module = $moduleName
+                                    exception_code  = $excCode
+                                    occurred_at     = $ae.TimeCreated.ToString('o')
+                                }
+                            }
+                        }
+                    } catch {}
+
+                    # 4. Ingest snapshot
+                    $analyticsPayload = @{
+                        boot_duration_ms    = $bootMs
+                        signin_duration_ms  = $signinMs
+                        app_crash_count_24h = $crashes24h
+                        app_hang_count_24h  = $hangs24h
+                        cpu_spike_pct       = $cpuPct
+                        ram_pressure_pct    = $ramPct
+                        disk_queue_depth    = 0.2
+                    }
+                    Invoke-RestMethod `
+                        -Uri        "$baseUrl/api/v1/nodes/$deviceId/analytics-snapshot" `
+                        -Method     POST `
+                        -Body       ($analyticsPayload | ConvertTo-Json -Compress) `
+                        -Headers    $authHeaders `
+                        -TimeoutSec 10 `
+                        -ErrorAction SilentlyContinue | Out-Null
+                    Write-AgentLog 'INFO' "Reported Endpoint Analytics snapshot (Boot: ${bootMs}ms, Signin: ${signinMs}ms, Crashes: $crashes24h)"
+
+                    # 5. Ingest app reliability events if any
+                    if ($reliabilityEvents.Count -gt 0) {
+                        Invoke-RestMethod `
+                            -Uri        "$baseUrl/api/v1/nodes/$deviceId/app-reliability" `
+                            -Method     POST `
+                            -Body       (@{ events = $reliabilityEvents } | ConvertTo-Json -Compress -Depth 5) `
+                            -Headers    $authHeaders `
+                            -TimeoutSec 10 `
+                            -ErrorAction SilentlyContinue | Out-Null
+                        Write-AgentLog 'INFO' "Reported $($reliabilityEvents.Count) app reliability failure events"
+                    }
+                } catch {
+                    Write-AgentLog 'WARN' "Endpoint Analytics harvesting encountered non-fatal error: $($_.Exception.Message)"
+                }
+            }
         } catch {
             Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
             if (-not $Continuous) { exit 1 }

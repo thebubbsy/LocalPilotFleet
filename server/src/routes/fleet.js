@@ -23,6 +23,7 @@ import * as remoteActionEngine from '../services/remoteActionEngine.js';
 import * as firewallEngine from '../services/firewallEngine.js';
 import * as scriptsEngine from '../services/scriptsEngine.js';
 import * as asrEngine from '../services/asrEngine.js';
+import * as analyticsEngine from '../services/analyticsEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -3453,6 +3454,102 @@ try {
       sendJson(res, 200, status);
     } catch (err) {
       sendJson(res, 500, { error: 'DEVICE_ASR_ERROR', message: err.message });
+    }
+  });
+
+  // 171. GET /api/v1/fleet/analytics/scores
+  router.get('/api/v1/fleet/analytics/scores', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const scores = analyticsEngine.getFleetAnalyticsScores(db);
+      sendJson(res, 200, scores);
+    } catch (err) {
+      sendJson(res, 500, { error: 'ANALYTICS_SCORES_ERROR', message: err.message });
+    }
+  });
+
+  // 172. GET /api/v1/fleet/analytics/top-crashes
+  router.get('/api/v1/fleet/analytics/top-crashes', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const crashes = analyticsEngine.getTopCrashingApps(db, req.query?.limit || 10);
+      sendJson(res, 200, { top_crashes: crashes });
+    } catch (err) {
+      sendJson(res, 500, { error: 'ANALYTICS_CRASHES_ERROR', message: err.message });
+    }
+  });
+
+  // 173. GET /api/v1/fleet/analytics/startup-performance
+  router.get('/api/v1/fleet/analytics/startup-performance', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const startup = analyticsEngine.getStartupPerformanceSummary(db);
+      sendJson(res, 200, startup);
+    } catch (err) {
+      sendJson(res, 500, { error: 'STARTUP_PERF_ERROR', message: err.message });
+    }
+  });
+
+  // 174. GET /api/v1/fleet/reports
+  router.get('/api/v1/fleet/reports', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const reports = analyticsEngine.getExecutiveReports(db, req.query?.limit || 20);
+      sendJson(res, 200, { reports });
+    } catch (err) {
+      sendJson(res, 500, { error: 'REPORTS_LIST_ERROR', message: err.message });
+    }
+  });
+
+  // 175. POST /api/v1/fleet/reports/generate
+  router.post('/api/v1/fleet/reports/generate', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { report_type, created_by } = req.body || {};
+    try {
+      const db = getDb();
+      const report = analyticsEngine.generateExecutiveReport(db, report_type || 'FLEET_HEALTH', created_by || 'LocalPilot Administrator');
+      sendJson(res, 201, report);
+    } catch (err) {
+      sendJson(res, 400, { error: 'REPORT_GENERATE_ERROR', message: err.message });
+    }
+  });
+
+  // 176. GET /api/v1/fleet/reports/:id
+  router.get('/api/v1/fleet/reports/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const row = db.prepare('SELECT * FROM executive_reports WHERE id = ?').get(id);
+      if (!row) {
+        sendJson(res, 404, { error: 'REPORT_NOT_FOUND', message: 'Report not found' });
+        return;
+      }
+      sendJson(res, 200, {
+        ...row,
+        parameters: JSON.parse(row.parameters_json || '{}'),
+        summary: JSON.parse(row.summary_json || '{}')
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: 'REPORT_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 177. GET /api/v1/fleet/devices/:id/analytics
+  router.get('/api/v1/fleet/devices/:id/analytics', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const result = analyticsEngine.getDeviceAnalytics(db, id);
+      sendJson(res, 200, result);
+    } catch (err) {
+      const status = err.message && err.message.includes('not found') ? 404 : 500;
+      sendJson(res, status, { error: 'DEVICE_ANALYTICS_ERROR', message: err.message });
     }
   });
 }

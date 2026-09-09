@@ -1134,6 +1134,38 @@ async function getDeviceASRStatus(deviceId) {
   return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/asr`);
 }
 
+/* ── Endpoint Analytics & Executive Reports ────────────────────────── */
+async function getAnalyticsScores() {
+  return apiFetch('/api/v1/fleet/analytics/scores');
+}
+
+async function getTopCrashes(limit = 10) {
+  return apiFetch(`/api/v1/fleet/analytics/top-crashes?limit=${encodeURIComponent(limit)}`);
+}
+
+async function getStartupPerformance() {
+  return apiFetch('/api/v1/fleet/analytics/startup-performance');
+}
+
+async function getExecutiveReports(limit = 20) {
+  return apiFetch(`/api/v1/fleet/reports?limit=${encodeURIComponent(limit)}`);
+}
+
+async function generateExecutiveReport(reportType = 'FLEET_HEALTH') {
+  return apiFetch('/api/v1/fleet/reports/generate', {
+    method: 'POST',
+    body: JSON.stringify({ report_type: reportType })
+  });
+}
+
+async function getExecutiveReport(id) {
+  return apiFetch(`/api/v1/fleet/reports/${encodeURIComponent(id)}`);
+}
+
+async function getDeviceAnalytics(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/analytics`);
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -1174,6 +1206,14 @@ window.FleetAPI = {
   deleteASRPolicy,
   getASREvents,
   getDeviceASRStatus,
+  // Endpoint Analytics & Executive Reports
+  getAnalyticsScores,
+  getTopCrashes,
+  getStartupPerformance,
+  getExecutiveReports,
+  generateExecutiveReport,
+  getExecutiveReport,
+  getDeviceAnalytics,
   // Proactive Remediations
   getRemediations,
   getRemediationStats,

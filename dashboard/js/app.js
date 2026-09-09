@@ -131,6 +131,9 @@ const App = {
       case 'remote-actions':
         if (window.RemoteActionsTable) window.RemoteActionsTable.init();
         break;
+      case 'analytics':
+        if (window.AnalyticsTable) window.AnalyticsTable.init();
+        break;
       case 'settings':
         this.renderSettings();
         break;

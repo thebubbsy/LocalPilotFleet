@@ -959,6 +959,50 @@ export function initDb(dbOrPath, options = {}) {
       created_at TEXT DEFAULT (DATETIME('now')),
       FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
     );
+
+    -- 50. DEVICE_ANALYTICS_SNAPSHOTS — Endpoint Analytics performance & health metrics
+    CREATE TABLE IF NOT EXISTS device_analytics_snapshots (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      boot_duration_ms INTEGER DEFAULT 0,
+      signin_duration_ms INTEGER DEFAULT 0,
+      app_crash_count_24h INTEGER DEFAULT 0,
+      app_hang_count_24h INTEGER DEFAULT 0,
+      cpu_spike_pct REAL DEFAULT 0,
+      ram_pressure_pct REAL DEFAULT 0,
+      disk_queue_depth REAL DEFAULT 0,
+      overall_health_score INTEGER DEFAULT 100,
+      startup_score INTEGER DEFAULT 100,
+      reliability_score INTEGER DEFAULT 100,
+      resource_score INTEGER DEFAULT 100,
+      snapshot_date TEXT DEFAULT (DATE('now')),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    -- 51. APP_RELIABILITY_EVENTS — Application crash and hang telemetry (Events 1000, 1002)
+    CREATE TABLE IF NOT EXISTS app_reliability_events (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      app_name TEXT NOT NULL,
+      app_version TEXT DEFAULT '',
+      event_type TEXT NOT NULL CHECK(event_type IN ('CRASH', 'HANG')),
+      faulting_module TEXT DEFAULT '',
+      exception_code TEXT DEFAULT '',
+      occurred_at TEXT,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    -- 52. EXECUTIVE_REPORTS — Compiled executive compliance & fleet audit reports
+    CREATE TABLE IF NOT EXISTS executive_reports (
+      id TEXT PRIMARY KEY,
+      report_type TEXT NOT NULL CHECK(report_type IN ('FLEET_HEALTH', 'COMPLIANCE_AUDIT', 'SECURITY_POSTURE', 'ENDPOINT_ANALYTICS')),
+      parameters_json TEXT DEFAULT '{}',
+      summary_json TEXT DEFAULT '{}',
+      created_by TEXT DEFAULT 'LocalPilot Administrator',
+      generated_at TEXT DEFAULT (DATETIME('now'))
+    );
   `);
 
   // Indexes
@@ -1086,6 +1130,15 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_asr_events_device ON asr_events(device_id);
     CREATE INDEX IF NOT EXISTS idx_asr_events_occurred ON asr_events(occurred_at DESC);
     CREATE INDEX IF NOT EXISTS idx_asr_events_rule ON asr_events(rule_id);
+
+    CREATE INDEX IF NOT EXISTS idx_das_device ON device_analytics_snapshots(device_id);
+    CREATE INDEX IF NOT EXISTS idx_das_date ON device_analytics_snapshots(snapshot_date DESC);
+    CREATE INDEX IF NOT EXISTS idx_are_device ON app_reliability_events(device_id);
+    CREATE INDEX IF NOT EXISTS idx_are_app ON app_reliability_events(app_name);
+    CREATE INDEX IF NOT EXISTS idx_are_type ON app_reliability_events(event_type);
+    CREATE INDEX IF NOT EXISTS idx_are_time ON app_reliability_events(occurred_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_er_type ON executive_reports(report_type);
+    CREATE INDEX IF NOT EXISTS idx_er_time ON executive_reports(generated_at DESC);
   `);
 
   // Schema migrations for existing databases

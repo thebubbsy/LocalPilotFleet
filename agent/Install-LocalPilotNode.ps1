@@ -61,11 +61,11 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 # ─── Constants ───────────────────────────────────────────────────────────────
-$AGENT_VERSION  = '1.0.0'
-$INSTALL_DIR    = 'C:\ProgramData\LocalPilotFleet'
-$CONFIG_FILE    = "$INSTALL_DIR\config.json"
-$LOG_FILE       = "$INSTALL_DIR\install.log"
-$SCRIPT_DIR     = $PSScriptRoot
+$AGENT_VERSION = '1.0.0'
+$INSTALL_DIR   = 'C:\ProgramData\LocalPilotFleet'
+$CONFIG_FILE   = "$INSTALL_DIR\config.json"
+$LOG_FILE      = "$INSTALL_DIR\install.log"
+$SCRIPT_DIR    = $PSScriptRoot
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 function Write-Step {
@@ -109,13 +109,13 @@ try {
 # ─── Step 3: Harvest hardware fingerprint ────────────────────────────────────
 Write-Step '3/7' 'Harvesting hardware fingerprint for enrollment...'
 
-$compSys   = Get-CimInstance -ClassName Win32_ComputerSystem       -ErrorAction SilentlyContinue
+$compSys   = Get-CimInstance -ClassName Win32_ComputerSystem         -ErrorAction SilentlyContinue
 $compProd  = Get-CimInstance -ClassName Win32_ComputerSystemProduct -ErrorAction SilentlyContinue
 $baseBoard = Get-CimInstance -ClassName Win32_BaseBoard             -ErrorAction SilentlyContinue
-$os        = Get-CimInstance -ClassName Win32_OperatingSystem       -ErrorAction SilentlyContinue
-$cpu       = Get-CimInstance -ClassName Win32_Processor             -ErrorAction SilentlyContinue | Select-Object -First 1
-$gpu       = Get-CimInstance -ClassName Win32_VideoController       -ErrorAction SilentlyContinue | Select-Object -First 1
-$battery   = Get-CimInstance -ClassName Win32_Battery               -ErrorAction SilentlyContinue | Select-Object -First 1
+$os        = Get-CimInstance -ClassName Win32_OperatingSystem        -ErrorAction SilentlyContinue
+$cpu       = Get-CimInstance -ClassName Win32_Processor              -ErrorAction SilentlyContinue | Select-Object -First 1
+$gpu       = Get-CimInstance -ClassName Win32_VideoController        -ErrorAction SilentlyContinue | Select-Object -First 1
+$battery   = Get-CimInstance -ClassName Win32_Battery                -ErrorAction SilentlyContinue | Select-Object -First 1
 $tpm       = Get-CimInstance -Namespace 'ROOT\CIMV2\Security\MicrosoftTpm' -ClassName Win32_Tpm -ErrorAction SilentlyContinue | Select-Object -First 1
 $nicConfig = Get-CimInstance -ClassName Win32_NetworkAdapterConfiguration -ErrorAction SilentlyContinue |
              Where-Object { $_.IPEnabled -and $_.IPAddress } | Select-Object -First 1
@@ -142,9 +142,9 @@ try {
     $blVol = Get-BitLockerVolume -MountPoint 'C:' -ErrorAction SilentlyContinue
     if ($blVol) {
         $bitlockerStatus = switch ($blVol.ProtectionStatus) {
-            'On'  { 'FullyEncrypted' }
-            'Off' { 'Disabled' }
-            default { 'Disabled' }
+            'On'      { 'FullyEncrypted' }
+            'Off'     { 'Disabled' }
+            default   { 'Disabled' }
         }
     }
 } catch { }
@@ -190,18 +190,18 @@ function Get-AutopilotHardwareData {
     } catch {}
 
     try {
-        $cs = Get-CimInstance Win32_ComputerSystemProduct -ErrorAction SilentlyContinue
+        $cs      = Get-CimInstance Win32_ComputerSystemProduct -ErrorAction SilentlyContinue
         $biosObj = Get-CimInstance Win32_BIOS -ErrorAction SilentlyContinue
-        $bbObj = Get-CimInstance Win32_BaseBoard -ErrorAction SilentlyContinue
-        $cpuObj = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
+        $bbObj   = Get-CimInstance Win32_BaseBoard -ErrorAction SilentlyContinue
+        $cpuObj  = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
 
-        $uId = if ($cs -and $cs.UUID) { $cs.UUID } else { '00000000-0000-0000-0000-000000000000' }
-        $bSn = if ($biosObj -and $biosObj.SerialNumber) { $biosObj.SerialNumber } else { 'UNKNOWN-BIOS-SN' }
+        $uId  = if ($cs -and $cs.UUID) { $cs.UUID } else { '00000000-0000-0000-0000-000000000000' }
+        $bSn  = if ($biosObj -and $biosObj.SerialNumber) { $biosObj.SerialNumber } else { 'UNKNOWN-BIOS-SN' }
         $bbSn = if ($bbObj -and $bbObj.SerialNumber) { $bbObj.SerialNumber } else { 'UNKNOWN-BB-SN' }
         $cpId = if ($cpuObj -and $cpuObj.ProcessorId) { $cpuObj.ProcessorId } else { 'CPU-0' }
 
-        $rawSeed = "OA3:$uId:$bSn:$bbSn:$cpId"
-        $sha = [System.Security.Cryptography.SHA256]::Create()
+        $rawSeed   = "OA3:${uId}:${bSn}:${bbSn}:${cpId}"
+        $sha       = [System.Security.Cryptography.SHA256]::Create()
         $hashBytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($rawSeed))
         return "OA3_SYNTH_$([Convert]::ToBase64String($hashBytes))"
     } catch {
@@ -259,22 +259,22 @@ $activeServerUrl = $ServerUrl
 # Try LAN first, fall back to Cloudflare Tunnel
 try {
     $enrollResponse = Invoke-RestMethod `
-        -Uri     "$ServerUrl/api/v1/nodes/enroll" `
-        -Method  POST `
-        -Body    $enrollJson `
-        -Headers $enrollHeaders `
-        -TimeoutSec 8 `
+        -Uri         "$ServerUrl/api/v1/nodes/enroll" `
+        -Method      POST `
+        -Body        $enrollJson `
+        -Headers     $enrollHeaders `
+        -TimeoutSec  8 `
         -ErrorAction Stop
 } catch {
     if ($CloudflareUrl) {
         Write-Warn "LAN enrollment unreachable ($($_.Exception.Message)). Falling back to Cloudflare Tunnel: $CloudflareUrl"
         $activeServerUrl = $CloudflareUrl
         $enrollResponse = Invoke-RestMethod `
-            -Uri     "$CloudflareUrl/api/v1/nodes/enroll" `
-            -Method  POST `
-            -Body    $enrollJson `
-            -Headers $enrollHeaders `
-            -TimeoutSec 15 `
+            -Uri         "$CloudflareUrl/api/v1/nodes/enroll" `
+            -Method      POST `
+            -Body        $enrollJson `
+            -Headers     $enrollHeaders `
+            -TimeoutSec  15 `
             -ErrorAction Stop
     } else {
         Write-Fail "Enrollment failed and no Cloudflare fallback configured."
@@ -300,16 +300,16 @@ $hbInterval = if ($enrollResponse.heartbeat_interval_sec) { $enrollResponse.hear
 $telInterval = if ($enrollResponse.telemetry_interval_min) { $enrollResponse.telemetry_interval_min } else { 30 }
 
 $config = @{
-    device_id             = $deviceId
-    node_token            = $nodeToken
-    server_url            = $ServerUrl
-    cloudflare_url        = $CloudflareUrl
-    active_server_url     = $activeServerUrl
-    hostname              = $env:COMPUTERNAME
-    device_name           = $DeviceName
-    group                 = $Group
-    agent_version         = $AGENT_VERSION
-    enrolled_at           = (Get-Date).ToString('o')
+    device_id              = $deviceId
+    node_token             = $nodeToken
+    server_url             = $ServerUrl
+    cloudflare_url         = $CloudflareUrl
+    active_server_url      = $activeServerUrl
+    hostname               = $env:COMPUTERNAME
+    device_name            = $DeviceName
+    group                  = $Group
+    agent_version          = $AGENT_VERSION
+    enrolled_at            = (Get-Date).ToString('o')
     heartbeat_interval_sec = $hbInterval
     telemetry_interval_min = $telInterval
 }
@@ -355,9 +355,9 @@ foreach ($script in $scriptsToCopy) {
 # ─── Step 7: Register Scheduled Tasks ────────────────────────────────────────
 Write-Step '7/7' 'Registering Scheduled Tasks...'
 
-$psExe     = 'powershell.exe'
-$commonArgs = '-NonInteractive -NoProfile -ExecutionPolicy Bypass -File'
-$agentScript   = "`"$INSTALL_DIR\Invoke-LocalPilotAgent.ps1`""
+$psExe          = 'powershell.exe'
+$commonArgs     = '-NonInteractive -NoProfile -ExecutionPolicy Bypass -File'
+$agentScript    = "`"$INSTALL_DIR\Invoke-LocalPilotAgent.ps1`""
 $watchdogScript = "`"$INSTALL_DIR\Watchdog-SecurityEvent.ps1`""
 
 # ── Task 1: LocalPilot-Heartbeat (every 5 minutes) ───────────────────────────
@@ -447,7 +447,7 @@ $watchdogXml = @"
   <Actions Context="Author">
     <Exec>
       <Command>powershell.exe</Command>
-      <Arguments>-NonInteractive -NoProfile -ExecutionPolicy Bypass -File "$INSTALL_DIR\Watchdog-SecurityEvent.ps1"</Arguments>
+      <Arguments>-NonInteractive -NoProfile -ExecutionPolicy Bypass -File &quot;${INSTALL_DIR}\Watchdog-SecurityEvent.ps1&quot;</Arguments>
     </Exec>
   </Actions>
 </Task>
@@ -471,20 +471,20 @@ Write-Host '===============================================================' -Fo
 Write-Host '  LocalPilot Fleet Node Agent - Installation Complete!' -ForegroundColor Green
 Write-Host '===============================================================' -ForegroundColor Magenta
 Write-Host ''
-Write-Host "  Device Name   : $DeviceName" -ForegroundColor White
-Write-Host "  Hostname      : $env:COMPUTERNAME" -ForegroundColor White
-Write-Host "  Device ID     : $deviceId" -ForegroundColor White
-Write-Host "  Server URL    : $ServerUrl" -ForegroundColor White
+Write-Host "  Device Name    : $DeviceName" -ForegroundColor White
+Write-Host "  Hostname       : $env:COMPUTERNAME" -ForegroundColor White
+Write-Host "  Device ID      : $deviceId" -ForegroundColor White
+Write-Host "  Server URL     : $ServerUrl" -ForegroundColor White
 if ($CloudflareUrl) {
-    Write-Host "  Cloudflare URL: $CloudflareUrl" -ForegroundColor White
+    Write-Host "  Cloudflare URL : $CloudflareUrl" -ForegroundColor White
 }
-Write-Host "  Config File   : $CONFIG_FILE" -ForegroundColor White
-Write-Host "  Agent Version : $AGENT_VERSION" -ForegroundColor White
+Write-Host "  Config File    : $CONFIG_FILE" -ForegroundColor White
+Write-Host "  Agent Version  : $AGENT_VERSION" -ForegroundColor White
 Write-Host ''
 Write-Host '  Scheduled Tasks:' -ForegroundColor Cyan
-Write-Host '    LocalPilot-Heartbeat  ->` every 5 min (SYSTEM)' -ForegroundColor White
-Write-Host '    LocalPilot-Telemetry  ->` every 30 min (SYSTEM)' -ForegroundColor White
-Write-Host '    LocalPilot-Watchdog   ->` event-driven (SYSTEM)' -ForegroundColor White
+Write-Host '    LocalPilot-Heartbeat  -> every 5 min (SYSTEM)' -ForegroundColor White
+Write-Host '    LocalPilot-Telemetry  -> every 30 min (SYSTEM)' -ForegroundColor White
+Write-Host '    LocalPilot-Watchdog   -> event-driven (SYSTEM)' -ForegroundColor White
 Write-Host ''
 Write-Host '  The node is now live. Check the Fleet dashboard at:' -ForegroundColor Cyan
 Write-Host "    $activeServerUrl" -ForegroundColor Yellow
