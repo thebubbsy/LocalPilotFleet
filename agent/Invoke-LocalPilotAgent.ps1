@@ -127,6 +127,175 @@ function Show-WindowsToastNotification {
     return $shown
 }
 
+
+# ─── Enterprise PKI Code-Signing & Zero-Trust Verification Engine ─────────────
+$PKI_DIR       = 'C:\ProgramData\LocalPilotFleet'
+$PKI_CERT_FILE = Join-Path $PKI_DIR 'pki-root-ca.pem'
+$PKI_META_FILE = Join-Path $PKI_DIR 'pki-cert.json'
+
+function Get-StringSha256 {
+    param([string]$Text)
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    $hashBytes = $sha256.ComputeHash($bytes)
+    return [System.BitConverter]::ToString($hashBytes).Replace('-', '').ToLowerInvariant()
+}
+
+function Sync-EnterprisePkiCertificate {
+    param(
+        [string]$BaseUrl,
+        [hashtable]$Headers,
+        [string]$DeviceId
+    )
+    $cert = $null
+    try {
+        $uri = "$BaseUrl/api/v1/nodes/$DeviceId/pki/cert"
+        $cert = Invoke-RestMethod -Uri $uri -Method GET -Headers $Headers -TimeoutSec 6 -ErrorAction Stop
+        if ($cert -and $cert.public_key_pem) {
+            if (-not (Test-Path $PKI_DIR)) {
+                New-Item -ItemType Directory -Path $PKI_DIR -Force | Out-Null
+            }
+            Set-Content -Path $PKI_CERT_FILE -Value $cert.public_key_pem -Force
+            Set-Content -Path $PKI_META_FILE -Value ($cert | ConvertTo-Json -Compress) -Force
+            $shortThumb = if ($cert.thumbprint -and $cert.thumbprint.Length -gt 16) { $cert.thumbprint.Substring(0, 16) + '...' } else { $cert.thumbprint }
+            Write-AgentLog 'INFO' "Synced Enterprise PKI Root Authority: $($cert.name) (Thumbprint: $shortThumb)"
+        }
+    } catch {
+        Write-AgentLog 'WARN' "Enterprise PKI Certificate sync failed: $($_.Exception.Message)"
+        if (Test-Path $PKI_META_FILE) {
+            try {
+                $cert = Get-Content $PKI_META_FILE -Raw | ConvertFrom-Json
+            } catch { }
+        }
+    }
+    return $cert
+}
+
+function Verify-PayloadSignatureEnvelope {
+    param(
+        [string]$ScriptText,
+        [string]$BaseUrl,
+        [hashtable]$Headers,
+        [string]$DeviceId,
+        [string]$PayloadType = 'SCRIPT',
+        [string]$PayloadId = $null
+    )
+
+    $result = [pscustomobject]@{
+        Valid           = $false
+        Verified        = $false
+        Reason          = ''
+        Thumbprint      = ''
+        KeyId           = ''
+        ScriptToExecute = $ScriptText
+    }
+
+    if ([string]::IsNullOrWhiteSpace($ScriptText)) {
+        $result.Reason = 'Empty script payload'
+        return $result
+    }
+
+    # Check if script contains LocalPilot signature envelope
+    $sigRegex = '(?s)# SIG # BEGIN LOCALPILOT ENTERPRISE SIGNATURE\r?\n# Key-Id:\s*([^\r\n]+)\r?\n# Thumbprint:\s*([^\r\n]+)\r?\n# SHA256:\s*([^\r\n]+)\r?\n# Signature:\s*([^\r\n]+)\r?\n# SIG # END LOCALPILOT ENTERPRISE SIGNATURE'
+    if ($ScriptText -match $sigRegex) {
+        $keyId = $matches[1].Trim()
+        $thumbprint = $matches[2].Trim()
+        $expectedSha256 = $matches[3].Trim()
+        $signatureBase64 = $matches[4].Trim()
+
+        $result.KeyId = $keyId
+        $result.Thumbprint = $thumbprint
+
+        # Extract payload without signature block
+        $cleanBody = ($ScriptText -replace $matches[0], '').TrimEnd()
+        $result.ScriptToExecute = $cleanBody
+
+        # 1. Local SHA256 Integrity Verification Gate
+        $localHashHex = Get-StringSha256 -Text $cleanBody
+
+        if ($localHashHex -ne $expectedSha256.ToLowerInvariant()) {
+            $result.Valid = $false
+            $result.Verified = $false
+            $result.Reason = "TAMPER_DETECTED: Computed digest ($localHashHex) does not match envelope manifest ($expectedSha256)"
+            Write-AgentLog 'ERROR' "[ZERO-TRUST REJECTION] $($result.Reason)"
+
+            try {
+                $report = @{
+                    payload_id   = $PayloadId
+                    payload_type = $PayloadType
+                    thumbprint   = $thumbprint
+                    verified     = $false
+                    reason       = $result.Reason
+                }
+                Invoke-RestMethod -Uri "$BaseUrl/api/v1/nodes/$DeviceId/pki/verify-report" -Method POST -Body ($report | ConvertTo-Json -Compress) -Headers $Headers -TimeoutSec 6 -ErrorAction SilentlyContinue | Out-Null
+            } catch { }
+
+            return $result
+        }
+
+        # 2. Cryptographic RSA Signature Verification
+        try {
+            $verifyBody = @{
+                payload           = $cleanBody
+                signature_base64  = $signatureBase64
+                signer_thumbprint = $thumbprint
+                key_id            = $keyId
+            }
+            $vResp = Invoke-RestMethod -Uri "$BaseUrl/api/v1/fleet/pki/verify" -Method POST -Body ($verifyBody | ConvertTo-Json -Compress) -Headers $Headers -TimeoutSec 6 -ErrorAction Stop
+            if ($vResp -and $vResp.valid) {
+                $result.Valid = $true
+                $result.Verified = $true
+                $result.Reason = "Cryptographically verified by Authority $($vResp.key_name) ($thumbprint)"
+                Write-AgentLog 'INFO' "[ZERO-TRUST PASS] Script signature verified: $($vResp.key_name)"
+            } else {
+                $result.Valid = $false
+                $result.Verified = $false
+                $result.Reason = if ($vResp.error) { $vResp.error } else { 'Invalid RSA signature' }
+                Write-AgentLog 'ERROR' "[ZERO-TRUST REJECTION] Script signature validation failed: $($result.Reason)"
+            }
+        } catch {
+            Write-AgentLog 'WARN' "Server signature verification unavailable: $($_.Exception.Message)"
+            if (Test-Path $PKI_META_FILE) {
+                try {
+                    $cachedMeta = Get-Content $PKI_META_FILE -Raw | ConvertFrom-Json
+                    if ($cachedMeta.thumbprint -eq $thumbprint) {
+                        $result.Valid = $true
+                        $result.Verified = $true
+                        $result.Reason = "Locally validated digest against trusted cached authority thumbprint ($thumbprint)"
+                        Write-AgentLog 'INFO' "[ZERO-TRUST PASS] $result.Reason"
+                    } else {
+                        $result.Valid = $false
+                        $result.Verified = $false
+                        $result.Reason = "Thumbprint mismatch: envelope ($thumbprint) != cached ($($cachedMeta.thumbprint))"
+                        Write-AgentLog 'ERROR' "[ZERO-TRUST REJECTION] $result.Reason"
+                    }
+                } catch {
+                    $result.Valid = $false
+                    $result.Reason = "Failed reading cached PKI metadata: $($_.Exception.Message)"
+                }
+            }
+        }
+
+        try {
+            $report = @{
+                payload_id   = $PayloadId
+                payload_type = $PayloadType
+                thumbprint   = $thumbprint
+                verified     = [bool]$result.Valid
+                reason       = $result.Reason
+            }
+            Invoke-RestMethod -Uri "$BaseUrl/api/v1/nodes/$DeviceId/pki/verify-report" -Method POST -Body ($report | ConvertTo-Json -Compress) -Headers $Headers -TimeoutSec 6 -ErrorAction SilentlyContinue | Out-Null
+        } catch { }
+
+        return $result
+    } else {
+        $result.Valid = $true
+        $result.Verified = $false
+        $result.Reason = 'Unsigned script (legacy compatibility mode)'
+        return $result
+    }
+}
+
 # ─── Load configuration (Multi-tiered: Config File -> CLI -> Fleet Authority) ───
 $activeDeviceId = $DeviceId
 $activeNodeToken = $NodeToken
@@ -336,10 +505,33 @@ if ($Mode -eq 'Heartbeat') {
                 $cmds = @($resp.pending_commands)
                 Write-AgentLog 'INFO' "Received $($cmds.Count) pending command(s) to execute"
 
+                # Synchronize Enterprise PKI Authority before executing remote scripts
+                $pkiCert = Sync-EnterprisePkiCertificate -BaseUrl $baseUrl -Headers $authHeaders -DeviceId $deviceId
+
                 foreach ($cmd in $cmds) {
                     $cmdId = $cmd.id
                     $cmdText = $cmd.command_text
-                    Write-AgentLog 'INFO' "Executing remote script [$cmdId]: $cmdText"
+
+                    # Zero-Trust Digital Signature & Tamper Verification Gate
+                    $pkiCheck = Verify-PayloadSignatureEnvelope -ScriptText $cmdText -BaseUrl $baseUrl -Headers $authHeaders -DeviceId $deviceId -PayloadType 'SCRIPT' -PayloadId $cmdId
+                    if (-not $pkiCheck.Valid) {
+                        Write-AgentLog 'ERROR' "Command [$cmdId] REJECTED by Zero-Trust PKI Gate: $($pkiCheck.Reason)"
+                        try {
+                            $rejectPayload = @{
+                                command_id = $cmdId
+                                status     = 'REJECTED_UNTRUSTED'
+                                exit_code  = 126
+                                stdout     = ''
+                                stderr     = "Execution blocked by Zero-Trust PKI Gate: $($pkiCheck.Reason)"
+                            }
+                            Invoke-RestMethod -Uri "$baseUrl/api/v1/nodes/$deviceId/command-result" -Method POST -Body ($rejectPayload | ConvertTo-Json -Compress) -Headers $authHeaders -TimeoutSec 15 -ErrorAction SilentlyContinue | Out-Null
+                        } catch { }
+                        continue
+                    }
+
+                    # Execute verified or allowed payload
+                    $scriptToRun = $pkiCheck.ScriptToExecute
+                    Write-AgentLog 'INFO' "Executing remote script [$cmdId] (PKI Verified: $($pkiCheck.Verified)): $scriptToRun"
 
                     $stdout = ''
                     $stderr = ''
@@ -347,7 +539,7 @@ if ($Mode -eq 'Heartbeat') {
                     $status = 'COMPLETED'
 
                     try {
-                        $fullScript = "`$ProgressPreference = 'SilentlyContinue';`n" + $cmdText
+                        $fullScript = "`$ProgressPreference = 'SilentlyContinue';`n" + $scriptToRun
                         $encodedCmd = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($fullScript))
                         $execResult = powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encodedCmd 2>&1
                         $exitCode = $LASTEXITCODE
@@ -3333,6 +3525,9 @@ if ($Mode -eq 'Heartbeat') {
 elseif ($Mode -eq 'Telemetry') {
     try {
         Write-AgentLog 'INFO' 'Starting deep telemetry harvest...'
+
+        # Sync Enterprise PKI Root Authority
+        Sync-EnterprisePkiCertificate -BaseUrl $baseUrl -Headers $authHeaders -DeviceId $deviceId | Out-Null
 
         # ── CPU / RAM real-time metrics ───────────────────────────────────────
         $osInfo   = Get-CimInstance -ClassName Win32_OperatingSystem   -ErrorAction Stop

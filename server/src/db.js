@@ -9,6 +9,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 
 let dbInstance = null;
 
@@ -2079,6 +2080,39 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_cpc_inst_status ON cloud_pc_instances(provisioning_status);
     CREATE INDEX IF NOT EXISTS idx_cpc_rp_cpc ON cloud_pc_restore_points(cloud_pc_id);
     CREATE INDEX IF NOT EXISTS idx_cpc_rp_status ON cloud_pc_restore_points(status);
+
+    -- 98. ENTERPRISE_SIGNING_KEYS — Asymmetric PKI Certificate Authority & Code Signing Keys
+    CREATE TABLE IF NOT EXISTS enterprise_signing_keys (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      key_type TEXT NOT NULL DEFAULT 'RSA-4096' CHECK(key_type IN ('RSA-4096', 'RSA-2048', 'ECDSA-P384', 'ED25519')),
+      public_key_pem TEXT NOT NULL,
+      private_key_pem TEXT NOT NULL,
+      thumbprint TEXT NOT NULL UNIQUE,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      is_revoked INTEGER NOT NULL DEFAULT 0,
+      revocation_reason TEXT,
+      expires_at TEXT NOT NULL,
+      created_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    -- 99. SIGNED_PAYLOAD_MANIFESTS — Cryptographic Signatures for Remote Code Execution Payloads
+    CREATE TABLE IF NOT EXISTS signed_payload_manifests (
+      id TEXT PRIMARY KEY,
+      key_id TEXT NOT NULL,
+      payload_type TEXT NOT NULL CHECK(payload_type IN ('SCRIPT', 'REMEDIATION', 'PACKAGE', 'BASELINE', 'CONFIG_PROFILE')),
+      target_id TEXT,
+      sha256_hash TEXT NOT NULL,
+      signature_base64 TEXT NOT NULL,
+      signer_thumbprint TEXT NOT NULL,
+      signed_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(key_id) REFERENCES enterprise_signing_keys(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_pki_keys_thumbprint ON enterprise_signing_keys(thumbprint);
+    CREATE INDEX IF NOT EXISTS idx_pki_keys_active ON enterprise_signing_keys(is_active);
+    CREATE INDEX IF NOT EXISTS idx_pki_manifest_sha ON signed_payload_manifests(sha256_hash);
+    CREATE INDEX IF NOT EXISTS idx_pki_manifest_target ON signed_payload_manifests(target_id);
   `);
 
   // Schema migrations for existing databases
@@ -4768,6 +4802,51 @@ exit 0`,
       'PRE_PATCH_RESTORE',
       12884901888,
       'READY'
+    );
+  }
+
+  // 35. Seed Enterprise PKI Code Signing Authority
+  const signingKeysCount = db.prepare('SELECT COUNT(*) as c FROM enterprise_signing_keys').get().c;
+  if (signingKeysCount === 0) {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+    });
+
+    const thumbprint = crypto.createHash('sha256').update(publicKey).digest('hex').toUpperCase();
+
+    db.prepare(`
+      INSERT INTO enterprise_signing_keys (id, name, key_type, public_key_pem, private_key_pem, thumbprint, is_active, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, 1, DATETIME('now', '+5 years'))
+    `).run(
+      'pki-root-ca-01',
+      'LocalPilot Enterprise Fleet Root Code-Signing Authority',
+      'RSA-2048',
+      publicKey,
+      privateKey,
+      thumbprint
+    );
+
+    // Seed sample signed payload
+    const sampleScript = 'Write-Host "LocalPilot Zero-Trust Verified Script" -ForegroundColor Green';
+    const scriptHash = crypto.createHash('sha256').update(sampleScript, 'utf8').digest('hex');
+    const signer = crypto.createSign('SHA256');
+    signer.update(sampleScript, 'utf8');
+    signer.end();
+    const signature = signer.sign(privateKey, 'base64');
+
+    db.prepare(`
+      INSERT INTO signed_payload_manifests (id, key_id, payload_type, target_id, sha256_hash, signature_base64, signer_thumbprint)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'sig-manifest-01',
+      'pki-root-ca-01',
+      'SCRIPT',
+      'sample-verified-script',
+      scriptHash,
+      signature,
+      thumbprint
     );
   }
 }

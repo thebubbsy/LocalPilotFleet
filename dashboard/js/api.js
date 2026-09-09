@@ -2222,7 +2222,69 @@ async function getNodeBaselines(nodeId) {
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
+
+/* ── Enterprise PKI Code-Signing & Digital Payload Verification ── */
+async function getPkiStats() {
+  return apiFetch('/api/v1/fleet/pki/stats');
+}
+
+async function getSigningKeys() {
+  return apiFetch('/api/v1/fleet/pki/keys');
+}
+
+async function getSigningKey(id) {
+  return apiFetch(`/api/v1/fleet/pki/keys/${encodeURIComponent(id)}`);
+}
+
+async function generateSigningKey(data = {}) {
+  return apiFetch('/api/v1/fleet/pki/keys/generate', { method: 'POST', body: JSON.stringify(data) });
+}
+
+async function rotateSigningKey(data = {}) {
+  return apiFetch('/api/v1/fleet/pki/keys/rotate', { method: 'POST', body: JSON.stringify(data) });
+}
+
+async function revokeSigningKey(id, reason = '') {
+  return apiFetch(`/api/v1/fleet/pki/keys/${encodeURIComponent(id)}/revoke`, {
+    method: 'POST',
+    body: JSON.stringify({ reason })
+  });
+}
+
+async function signPayload(data) {
+  return apiFetch('/api/v1/fleet/pki/sign', { method: 'POST', body: JSON.stringify(data) });
+}
+
+async function verifyPayload(data) {
+  return apiFetch('/api/v1/fleet/pki/verify', { method: 'POST', body: JSON.stringify(data) });
+}
+
+async function getSigningManifests(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/pki/manifests${qStr ? '?' + qStr : ''}`);
+}
+
+async function getPublicPkiCert() {
+  return apiFetch('/api/v1/pki/cert');
+}
+
 window.FleetAPI = {
+  // Enterprise PKI Code-Signing
+  getPkiStats,
+  getSigningKeys,
+  getSigningKey,
+  generateSigningKey,
+  rotateSigningKey,
+  revokeSigningKey,
+  signPayload,
+  verifyPayload,
+  getSigningManifests,
+  getPublicPkiCert,
+
   getServerUrl,
   getFleetKey,
   saveCredentials,

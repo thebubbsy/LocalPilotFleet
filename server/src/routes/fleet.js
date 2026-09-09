@@ -40,6 +40,7 @@ import * as enterpriseAppEngine from '../services/enterpriseAppEngine.js';
 import * as vulnerabilityEngine from '../services/vulnerabilityEngine.js';
 import * as autopatchEngine from '../services/autopatchEngine.js';
 import * as cloudPcEngine from '../services/cloudPcEngine.js';
+import * as pkiSigningEngine from '../services/pkiSigningEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -5848,6 +5849,141 @@ try {
       sendJson(res, 200, { success: true, script });
     } catch (err) {
       sendJson(res, 500, { error: 'CLOUD_PC_SCRIPT_ERROR', message: err.message });
+    }
+  });
+
+  // 347. GET /api/v1/fleet/pki/stats
+  router.get('/api/v1/fleet/pki/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = pkiSigningEngine.getPkiStats(getDb());
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'PKI_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 348. GET /api/v1/fleet/pki/keys
+  router.get('/api/v1/fleet/pki/keys', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const keys = pkiSigningEngine.getSigningKeys(getDb(), true);
+      sendJson(res, 200, { keys, count: keys.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'PKI_KEYS_ERROR', message: err.message });
+    }
+  });
+
+  // 349. GET /api/v1/fleet/pki/keys/:id
+  router.get('/api/v1/fleet/pki/keys/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const key = pkiSigningEngine.getSigningKeyById(getDb(), req.params.id, false);
+      if (!key) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Signing key not found' });
+      sendJson(res, 200, key);
+    } catch (err) {
+      sendJson(res, 500, { error: 'PKI_KEY_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 350. POST /api/v1/fleet/pki/keys/generate
+  router.post('/api/v1/fleet/pki/keys/generate', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const body = req.body || {};
+      const key = pkiSigningEngine.generateSigningKey(getDb(), body);
+      sendJson(res, 201, { success: true, key });
+    } catch (err) {
+      sendJson(res, 400, { error: 'PKI_KEY_GENERATE_ERROR', message: err.message });
+    }
+  });
+
+  // 351. POST /api/v1/fleet/pki/keys/rotate
+  router.post('/api/v1/fleet/pki/keys/rotate', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const body = req.body || {};
+      const rotation = pkiSigningEngine.rotateSigningKey(getDb(), body);
+      sendJson(res, 200, { success: true, ...rotation });
+    } catch (err) {
+      sendJson(res, 500, { error: 'PKI_KEY_ROTATE_ERROR', message: err.message });
+    }
+  });
+
+  // 352. POST /api/v1/fleet/pki/keys/:id/revoke
+  router.post('/api/v1/fleet/pki/keys/:id/revoke', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const reason = req.body?.reason || 'Administrative revocation';
+      const revoked = pkiSigningEngine.revokeSigningKey(getDb(), req.params.id, reason);
+      if (!revoked) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Signing key not found' });
+      sendJson(res, 200, { success: true, key: revoked });
+    } catch (err) {
+      sendJson(res, 500, { error: 'PKI_KEY_REVOKE_ERROR', message: err.message });
+    }
+  });
+
+  // 353. POST /api/v1/fleet/pki/sign
+  router.post('/api/v1/fleet/pki/sign', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const { payload, payload_type, target_id, wrap_envelope } = req.body || {};
+      if (!payload) return sendJson(res, 400, { error: 'BAD_REQUEST', message: 'Payload is required' });
+
+      if (wrap_envelope) {
+        const result = pkiSigningEngine.wrapScriptWithSignature(getDb(), payload, {
+          payloadType: payload_type || 'SCRIPT',
+          targetId: target_id
+        });
+        sendJson(res, 200, { success: true, ...result });
+      } else {
+        const result = pkiSigningEngine.signPayload(getDb(), {
+          payload,
+          payloadType: payload_type || 'SCRIPT',
+          targetId: target_id
+        });
+        sendJson(res, 200, { success: true, ...result });
+      }
+    } catch (err) {
+      sendJson(res, 400, { error: 'PKI_SIGN_ERROR', message: err.message });
+    }
+  });
+
+  // 354. POST /api/v1/fleet/pki/verify
+  router.post('/api/v1/fleet/pki/verify', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const { payload, signature_base64, signer_thumbprint, envelope_text } = req.body || {};
+      if (envelope_text) {
+        const result = pkiSigningEngine.extractAndVerifyScriptEnvelope(getDb(), envelope_text);
+        sendJson(res, 200, result);
+      } else {
+        if (!payload || !signature_base64) {
+          return sendJson(res, 400, { error: 'BAD_REQUEST', message: 'Payload and signature_base64 required' });
+        }
+        const result = pkiSigningEngine.verifyPayload(getDb(), {
+          payload,
+          signatureBase64: signature_base64,
+          signerThumbprint: signer_thumbprint
+        });
+        sendJson(res, 200, result);
+      }
+    } catch (err) {
+      sendJson(res, 500, { error: 'PKI_VERIFY_ERROR', message: err.message });
+    }
+  });
+
+  // 355. GET /api/v1/fleet/pki/manifests
+  router.get('/api/v1/fleet/pki/manifests', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const manifests = pkiSigningEngine.getSigningManifests(getDb(), {
+        payloadType: req.query.payload_type,
+        limit: req.query.limit || 50
+      });
+      sendJson(res, 200, { manifests, count: manifests.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'PKI_MANIFESTS_ERROR', message: err.message });
     }
   });
 

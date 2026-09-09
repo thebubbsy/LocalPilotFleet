@@ -182,6 +182,9 @@ const App = {
       case 'cloud-pc':
         if (window.CloudPcTable) window.CloudPcTable.init(document.getElementById('view-cloud-pc') || document.getElementById('tab-cloud-pc'));
         break;
+      case 'pki':
+        if (window.PkiSigningTable) window.PkiSigningTable.render();
+        break;
       case 'settings':
         this.renderSettings();
         break;

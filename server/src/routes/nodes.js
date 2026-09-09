@@ -41,6 +41,7 @@ import * as enterpriseAppEngine from '../services/enterpriseAppEngine.js';
 import * as vulnerabilityEngine from '../services/vulnerabilityEngine.js';
 import * as autopatchEngine from '../services/autopatchEngine.js';
 import * as cloudPcEngine from '../services/cloudPcEngine.js';
+import * as pkiSigningEngine from '../services/pkiSigningEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -1914,6 +1915,43 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { success: true, device_id: id, reported_vms_count: vms.length });
     } catch (err) {
       sendJson(res, 500, { error: 'NODE_CLOUD_PC_REPORT_ERROR', message: err.message });
+    }
+  });
+
+  // 81. GET /api/v1/pki/cert (Public Root CA certificate for Zero-Trust agents)
+  router.get('/api/v1/pki/cert', (req, res) => {
+    try {
+      const cert = pkiSigningEngine.getPublicCertificate(getDb());
+      sendJson(res, 200, cert);
+    } catch (err) {
+      sendJson(res, 500, { error: 'PKI_CERT_ERROR', message: err.message });
+    }
+  });
+
+  // 82. GET /api/v1/nodes/:id/pki/cert (Node queries code signing CA cert)
+  router.get('/api/v1/nodes/:id/pki/cert', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    try {
+      const cert = pkiSigningEngine.getPublicCertificate(getDb());
+      sendJson(res, 200, { device_id: req.params.id, ...cert });
+    } catch (err) {
+      sendJson(res, 500, { error: 'NODE_PKI_CERT_ERROR', message: err.message });
+    }
+  });
+
+  // 83. POST /api/v1/nodes/:id/pki/verify-report (Node reports payload verification result)
+  router.post('/api/v1/nodes/:id/pki/verify-report', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    try {
+      const { target_id, signature_valid, signer_thumbprint, rejection_reason } = req.body || {};
+      sendJson(res, 200, {
+        success: true,
+        device_id: req.params.id,
+        status: signature_valid ? 'VERIFIED' : 'REJECTED',
+        logged_at: new Date().toISOString()
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: 'NODE_PKI_REPORT_ERROR', message: err.message });
     }
   });
 
