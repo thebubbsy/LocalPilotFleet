@@ -1783,6 +1783,140 @@ if ($Mode -eq 'Heartbeat') {
                     Write-AgentLog 'INFO' "Synchronized $($effRules.Count) effective firewall rules from fleet policy"
                 }
             }
+
+            # ── Attack Surface Reduction (ASR) & Exploit Guard Posture ─────────
+            if (-not (Get-Variable -Name 'LastAsrAudit' -Scope Script -ErrorAction SilentlyContinue)) {
+                $script:LastAsrAudit = $null
+            }
+            $now = Get-Date
+            $shouldAuditAsr = $false
+            if ($null -eq $script:LastAsrAudit) {
+                $shouldAuditAsr = $true
+            } elseif (($now - $script:LastAsrAudit).TotalSeconds -ge 120) { # 2-minute cadence
+                $shouldAuditAsr = $true
+            }
+
+            if ($shouldAuditAsr) {
+                $script:LastAsrAudit = $now
+                try {
+                    $asrPolicy = if ($resp.assigned_asr_policy) { $resp.assigned_asr_policy } else { $null }
+                    $policyId = if ($asrPolicy -and $asrPolicy.id) { $asrPolicy.id } else { $null }
+
+                    # 1. Harvest ASR rule states from registry
+                    $asrRegPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Windows Defender Exploit Guard\ASR\Rules'
+                    $asrRulesStatus = @{}
+                    if (Test-Path $asrRegPath) {
+                        $regRules = Get-ItemProperty -Path $asrRegPath -ErrorAction SilentlyContinue
+                        if ($regRules) {
+                            $regRules.PSObject.Properties | Where-Object { $_.Name -match '^[0-9a-fA-F-]{36}$' } | ForEach-Object {
+                                $ruleKey = $_.Name.ToLower()
+                                $asrRulesStatus[$ruleKey] = switch ([string]$_.Value) {
+                                    '0' { 'DISABLED' }
+                                    '1' { 'BLOCK' }
+                                    '2' { 'AUDIT' }
+                                    '6' { 'WARN' }
+                                    default { 'UNKNOWN' }
+                                }
+                            }
+                        }
+                    }
+
+                    # 2. Harvest Network Protection and Controlled Folder Access
+                    $npMode = 'UNKNOWN'
+                    $cfaMode = 'UNKNOWN'
+                    try {
+                        $hasMpPref = Get-Command -Name Get-MpPreference -ErrorAction SilentlyContinue
+                        if ($hasMpPref) {
+                            $mpPref = Get-MpPreference -ErrorAction SilentlyContinue
+                            if ($mpPref) {
+                                $npMode = switch ($mpPref.EnableNetworkProtection) {
+                                    0 { 'DISABLED' }
+                                    1 { 'BLOCK' }
+                                    2 { 'AUDIT' }
+                                    default { 'UNKNOWN' }
+                                }
+                                $cfaMode = switch ($mpPref.EnableControlledFolderAccess) {
+                                    0 { 'DISABLED' }
+                                    1 { 'BLOCK' }
+                                    2 { 'AUDIT' }
+                                    3 { 'BLOCK_DISK_MOD_ONLY' }
+                                    4 { 'AUDIT_DISK_MOD_ONLY' }
+                                    default { 'UNKNOWN' }
+                                }
+                            }
+                        }
+                    } catch {}
+
+                    # 3. Report ASR posture snapshot
+                    try {
+                        $asrStatusPayload = @{
+                            policy_id                  = $policyId
+                            asr_rules_status           = $asrRulesStatus
+                            network_protection_mode    = $npMode
+                            controlled_folder_access   = $cfaMode
+                            exploit_protection_applied = $false
+                        }
+                        Invoke-RestMethod `
+                            -Uri        "$baseUrl/api/v1/nodes/$deviceId/asr-status" `
+                            -Method     POST `
+                            -Body       ($asrStatusPayload | ConvertTo-Json -Compress) `
+                            -Headers    $authHeaders `
+                            -TimeoutSec 10 `
+                            -ErrorAction SilentlyContinue | Out-Null
+                        Write-AgentLog 'INFO' "Reported ASR posture (Rules: $($asrRulesStatus.Count), Network: $npMode, CFA: $cfaMode)"
+                    } catch {
+                        Write-AgentLog 'WARN' "Failed to report ASR posture: $($_.Exception.Message)"
+                    }
+
+                    # 4. Harvest ASR events from Defender Operational event log
+                    try {
+                        $evtFilter = @{
+                            LogName   = 'Microsoft-Windows-Windows Defender/Operational'
+                            Id        = @(1121, 1122, 1125, 1126)
+                            StartTime = (Get-Date).AddMinutes(-15)
+                        }
+                        $winEvents = Get-WinEvent -FilterHashtable $evtFilter -ErrorAction SilentlyContinue -MaxEvents 50
+                        if ($winEvents) {
+                            $harvestedEvents = @()
+                            foreach ($evt in $winEvents) {
+                                $action = switch ($evt.Id) {
+                                    1121 { 'BLOCKED' }
+                                    1122 { 'AUDITED' }
+                                    1125 { 'NETWORK_BLOCKED' }
+                                    1126 { 'NETWORK_AUDITED' }
+                                    default { 'AUDITED' }
+                                }
+                                $msg = [string]$evt.Message
+                                $ruleId = if ($msg -match 'ID:\s*([0-9a-fA-F-]{36})') { $matches[1].ToLower() } else { '' }
+                                $processName = if ($msg -match 'Process Name:\s*(.+)') { $matches[1].Trim() } else { '' }
+                                $targetPath = if ($msg -match 'Target Path:\s*(.+)') { $matches[1].Trim() } else { '' }
+
+                                $harvestedEvents += @{
+                                    event_id     = $evt.Id
+                                    action       = $action
+                                    rule_id      = $ruleId
+                                    process_name = $processName
+                                    target_path  = $targetPath
+                                    occurred_at  = $evt.TimeCreated.ToString('o')
+                                }
+                            }
+
+                            if ($harvestedEvents.Count -gt 0) {
+                                Invoke-RestMethod `
+                                    -Uri        "$baseUrl/api/v1/nodes/$deviceId/asr-events" `
+                                    -Method     POST `
+                                    -Body       (@{ events = $harvestedEvents } | ConvertTo-Json -Compress -Depth 5) `
+                                    -Headers    $authHeaders `
+                                    -TimeoutSec 10 `
+                                    -ErrorAction SilentlyContinue | Out-Null
+                                Write-AgentLog 'INFO' "Reported $($harvestedEvents.Count) ASR block/audit event(s)"
+                            }
+                        }
+                    } catch {}
+                } catch {
+                    Write-AgentLog 'WARN' "ASR evaluation encountered non-fatal error: $($_.Exception.Message)"
+                }
+            }
         } catch {
             Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
             if (-not $Continuous) { exit 1 }

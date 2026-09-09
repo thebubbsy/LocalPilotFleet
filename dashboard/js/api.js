@@ -1091,6 +1091,49 @@ async function runDeviceScript(deviceId, scriptId, data = {}) {
   });
 }
 
+/* ── Attack Surface Reduction (ASR) ────────────────────────────────── */
+async function getASRStats() {
+  return apiFetch('/api/v1/fleet/asr/stats');
+}
+
+async function getASRPolicies(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/asr/policies${qStr ? '?' + qStr : ''}`);
+}
+
+async function getASRPolicy(id) {
+  return apiFetch(`/api/v1/fleet/asr/policies/${encodeURIComponent(id)}`);
+}
+
+async function createASRPolicy(data) {
+  return apiFetch('/api/v1/fleet/asr/policies', { method: 'POST', body: JSON.stringify(data) });
+}
+
+async function updateASRPolicy(id, data) {
+  return apiFetch(`/api/v1/fleet/asr/policies/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(data) });
+}
+
+async function deleteASRPolicy(id) {
+  return apiFetch(`/api/v1/fleet/asr/policies/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+async function getASREvents(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/asr/events${qStr ? '?' + qStr : ''}`);
+}
+
+async function getDeviceASRStatus(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/asr`);
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -1122,6 +1165,15 @@ window.FleetAPI = {
   dispatchScriptRun,
   getDeviceScripts,
   runDeviceScript,
+  // Attack Surface Reduction (ASR)
+  getASRStats,
+  getASRPolicies,
+  getASRPolicy,
+  createASRPolicy,
+  updateASRPolicy,
+  deleteASRPolicy,
+  getASREvents,
+  getDeviceASRStatus,
   // Proactive Remediations
   getRemediations,
   getRemediationStats,

@@ -22,6 +22,7 @@ import * as autopilotEngine from '../services/autopilotEngine.js';
 import * as remoteActionEngine from '../services/remoteActionEngine.js';
 import * as firewallEngine from '../services/firewallEngine.js';
 import * as scriptsEngine from '../services/scriptsEngine.js';
+import * as asrEngine from '../services/asrEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -3345,6 +3346,113 @@ try {
       sendJson(res, 202, result);
     } catch (err) {
       sendJson(res, 400, { error: 'DEVICE_SCRIPT_RUN_ERROR', message: err.message });
+    }
+  });
+
+  // 163. GET /api/v1/fleet/asr/stats
+  router.get('/api/v1/fleet/asr/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      sendJson(res, 200, asrEngine.getASRPolicyStats(db));
+    } catch (err) {
+      sendJson(res, 500, { error: 'ASR_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 164. GET /api/v1/fleet/asr/policies
+  router.get('/api/v1/fleet/asr/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const policies = asrEngine.getASRPolicies(db, req.query || {});
+      sendJson(res, 200, { policies, count: policies.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'ASR_POLICIES_ERROR', message: err.message });
+    }
+  });
+
+  // 165. POST /api/v1/fleet/asr/policies
+  router.post('/api/v1/fleet/asr/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const policy = asrEngine.createASRPolicy(db, req.body || {});
+      sendJson(res, 201, policy);
+    } catch (err) {
+      sendJson(res, 400, { error: 'ASR_POLICY_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 166. GET /api/v1/fleet/asr/policies/:id
+  router.get('/api/v1/fleet/asr/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const policy = asrEngine.getASRPolicy(db, req.params.id);
+      if (!policy) {
+        sendJson(res, 404, { error: 'ASR_POLICY_NOT_FOUND', message: 'ASR policy not found' });
+        return;
+      }
+      sendJson(res, 200, policy);
+    } catch (err) {
+      sendJson(res, 500, { error: 'ASR_POLICY_GET_ERROR', message: err.message });
+    }
+  });
+
+  // 167. PATCH /api/v1/fleet/asr/policies/:id
+  router.patch('/api/v1/fleet/asr/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const policy = asrEngine.updateASRPolicy(db, req.params.id, req.body || {});
+      sendJson(res, 200, policy);
+    } catch (err) {
+      const status = err.message.includes('not found') ? 404 : 400;
+      sendJson(res, status, { error: 'ASR_POLICY_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 168. DELETE /api/v1/fleet/asr/policies/:id
+  router.delete('/api/v1/fleet/asr/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const result = asrEngine.deleteASRPolicy(db, req.params.id);
+      sendJson(res, 200, result);
+    } catch (err) {
+      const status = err.message.includes('not found') ? 404 : 400;
+      sendJson(res, status, { error: 'ASR_POLICY_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 169. GET /api/v1/fleet/asr/events
+  router.get('/api/v1/fleet/asr/events', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const result = asrEngine.getASREvents(db, req.query || {});
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 500, { error: 'ASR_EVENTS_ERROR', message: err.message });
+    }
+  });
+
+  // 170. GET /api/v1/fleet/devices/:id/asr
+  router.get('/api/v1/fleet/devices/:id/asr', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const device = db.prepare('SELECT id FROM devices WHERE id = ?').get(id);
+      if (!device) {
+        sendJson(res, 404, { error: 'DEVICE_NOT_FOUND', message: 'Device not found' });
+        return;
+      }
+      const status = asrEngine.getDeviceASRStatus(db, id);
+      sendJson(res, 200, status);
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_ASR_ERROR', message: err.message });
     }
   });
 }

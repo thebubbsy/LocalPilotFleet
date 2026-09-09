@@ -470,6 +470,17 @@
         </div>
       </div>
 
+      <!-- ── Attack Surface Reduction (ASR) & Exploit Guard ── -->
+      <div class="bc-section" id="bc-asr-section">
+        <div class="bc-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>🛡️ Attack Surface Reduction &amp; Exploit Guard</span>
+          <button class="intune-link-btn" id="btn-bc-view-asr-tab">View ASR Blade</button>
+        </div>
+        <div id="bc-asr-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading ASR &amp; Exploit Protection status…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -1368,6 +1379,58 @@
         });
       }).catch(err => {
         scriptsListEl.innerHTML = `<div style="color:#EF4444;font-size:12px;">Failed to load device scripts: ${esc(err.message)}</div>`;
+      });
+    }
+
+    // Fetch and populate Attack Surface Reduction (ASR) status
+    const asrListEl = body.querySelector('#bc-asr-list');
+    if (asrListEl && _currentDevice?.id) {
+      body.querySelector('#btn-bc-view-asr-tab')?.addEventListener('click', () => {
+        close();
+        if (window.App && typeof window.App.navigate === 'function') {
+          window.App.navigate('asr');
+        }
+      });
+
+      window.FleetAPI.getDeviceASRStatus(_currentDevice.id).then(res => {
+        const status = res.status || null;
+        const events = res.recent_events || [];
+        const eventsToday = res.events_today || 0;
+
+        if (!status) {
+          asrListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">No ASR posture reported yet for this node.</div>';
+          return;
+        }
+
+        const npMode = status.network_protection_mode || 'UNKNOWN';
+        const cfaMode = status.controlled_folder_access || 'UNKNOWN';
+        const epApplied = status.exploit_protection_applied ? 'APPLIED' : 'NOT_CONFIGURED';
+        const rulesCount = Object.keys(status.asr_rules_status || {}).length;
+
+        const npColor = npMode === 'BLOCK' ? '#10b981' : (npMode === 'AUDIT' ? '#f59e0b' : '#94a3b8');
+        const cfaColor = (cfaMode === 'BLOCK' || cfaMode === 'BLOCK_DISK_MOD_ONLY') ? '#10b981' : (cfaMode.startsWith('AUDIT') ? '#f59e0b' : '#94a3b8');
+
+        let html = `
+          <div style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <span style="font-weight:600;color:var(--text-primary);font-size:13px;">${esc(status.policy_name || 'Active Intune ASR Baseline')}</span>
+              <span class="badge" style="background:rgba(59,130,246,0.15);color:#60A5FA;">${rulesCount} Rules Evaluated</span>
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:11px;">
+              <div>Network Protection: <span class="status-pill" style="color:${npColor};border-color:${npColor};font-size:10px;padding:1px 6px;">${esc(npMode)}</span></div>
+              <div>Controlled Folder Access: <span class="status-pill" style="color:${cfaColor};border-color:${cfaColor};font-size:10px;padding:1px 6px;">${esc(cfaMode)}</span></div>
+              <div>Exploit Protection: <span class="status-pill" style="color:#94a3b8;border-color:#334155;font-size:10px;padding:1px 6px;">${esc(epApplied)}</span></div>
+            </div>
+            ${eventsToday > 0 ? `
+              <div style="font-size:11px;color:#ef4444;font-weight:600;padding-top:2px;">⚠️ ${eventsToday} ASR Block/Audit event(s) recorded in last 24h</div>
+            ` : `
+              <div style="font-size:11px;color:#10b981;padding-top:2px;">✓ Zero ASR threat blocks recorded in last 24h</div>
+            `}
+          </div>
+        `;
+        asrListEl.innerHTML = html;
+      }).catch(err => {
+        asrListEl.innerHTML = `<div style="color:var(--text-muted);font-size:12px;">Pending ASR synchronization.</div>`;
       });
     }
 

@@ -911,6 +911,56 @@ export function initDb(dbOrPath, options = {}) {
     );
   `);
 
+  // 47–49. Attack Surface Reduction (ASR) Tables
+  db.exec(`
+    -- 47. ASR_POLICIES — ASR/Exploit/Network Protection policy catalog
+    CREATE TABLE IF NOT EXISTS asr_policies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      target_group_id TEXT DEFAULT 'grp-all',
+      enabled INTEGER DEFAULT 1,
+      asr_rules_json TEXT DEFAULT '{}',
+      exploit_protection_json TEXT DEFAULT '{}',
+      network_protection_mode TEXT DEFAULT 'AUDIT' CHECK(network_protection_mode IN ('DISABLED','AUDIT','BLOCK')),
+      controlled_folder_access TEXT DEFAULT 'DISABLED' CHECK(controlled_folder_access IN ('DISABLED','AUDIT','BLOCK','BLOCK_DISK_MOD_ONLY','AUDIT_DISK_MOD_ONLY')),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    -- 48. DEVICE_ASR_STATUS — Per-device ASR posture snapshot
+    CREATE TABLE IF NOT EXISTS device_asr_status (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      policy_id TEXT,
+      asr_rules_status_json TEXT DEFAULT '{}',
+      network_protection_mode TEXT DEFAULT 'UNKNOWN',
+      controlled_folder_access TEXT DEFAULT 'UNKNOWN',
+      exploit_protection_applied INTEGER DEFAULT 0,
+      last_audited_at TEXT,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    -- 49. ASR_EVENTS — Live ASR block/audit events from Windows Event Log
+    CREATE TABLE IF NOT EXISTS asr_events (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      event_id INTEGER NOT NULL,
+      rule_id TEXT,
+      rule_name TEXT,
+      action TEXT NOT NULL CHECK(action IN ('BLOCKED','AUDITED','NETWORK_BLOCKED','NETWORK_AUDITED')),
+      process_name TEXT,
+      target_path TEXT,
+      initiating_process TEXT,
+      event_source TEXT DEFAULT 'Microsoft-Windows-Windows Defender',
+      occurred_at TEXT,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+  `);
+
   // Indexes
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_devices_status ON devices(status);
@@ -1031,6 +1081,11 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_dsr_script ON device_script_runs(script_id);
     CREATE INDEX IF NOT EXISTS idx_dsr_status ON device_script_runs(status);
     CREATE INDEX IF NOT EXISTS idx_dsr_executed ON device_script_runs(executed_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_asr_status_device ON device_asr_status(device_id);
+    CREATE INDEX IF NOT EXISTS idx_asr_events_device ON asr_events(device_id);
+    CREATE INDEX IF NOT EXISTS idx_asr_events_occurred ON asr_events(occurred_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_asr_events_rule ON asr_events(rule_id);
   `);
 
   // Schema migrations for existing databases
@@ -2504,5 +2559,99 @@ exit 0`,
         "", 420, '-1 hour', '-1 hour', '-1 hour'
       );
     }
+  }
+
+  // 18. ASR Policies (Attack Surface Reduction)
+  const asrPolicyCount = db.prepare('SELECT COUNT(*) as count FROM asr_policies').get().count;
+  if (asrPolicyCount === 0) {
+    const ASR_RULES_AUDIT = {
+      'be9ba2d9-53ea-4cdc-84e5-9b1eeee46550': 'AUDIT',
+      '3b576869-a4ec-4529-8536-b80a7769e899': 'AUDIT',
+      '75668c1f-73b5-4cf0-bb93-3ecf5cb7cc84': 'AUDIT',
+      'd4f940ab-401b-4efc-aadc-ad5f3c50688a': 'AUDIT',
+      '26190899-1602-49e8-8b27-eb1d0a1ce869': 'AUDIT',
+      'e6db77e5-3df2-4cf1-b95a-636979351e5b': 'AUDIT',
+      'd3e037e1-3eb8-44c8-a917-57927947596d': 'AUDIT',
+      '5beb7efe-fd9a-4556-801d-275e5ffc04cc': 'AUDIT',
+      '92e97fa1-2edf-4476-bdd6-9dd0b4dddc7b': 'AUDIT',
+      '01443614-cd74-433a-b99e-2ecdc07bfc25': 'AUDIT',
+      'c1db55ab-c21a-4637-bb3f-a12568109d35': 'AUDIT',
+      '9e6c4e1f-7d60-472f-ba1a-a39ef669e4b0': 'AUDIT',
+      'd1e49aac-8f56-4280-b9ba-993a6d77406c': 'AUDIT',
+      'b2b3f03d-6a65-4f7b-a9c7-1c7ef74a9ba4': 'AUDIT',
+      'c0033c00-d16d-4114-a5a0-dc9b3a7d2ceb': 'AUDIT',
+      '7674ba52-37eb-4a4f-a9a1-f0f9a1619a2c': 'AUDIT'
+    };
+
+    const ASR_RULES_BLOCK = {
+      'be9ba2d9-53ea-4cdc-84e5-9b1eeee46550': 'BLOCK',
+      '3b576869-a4ec-4529-8536-b80a7769e899': 'BLOCK',
+      '75668c1f-73b5-4cf0-bb93-3ecf5cb7cc84': 'BLOCK',
+      'd4f940ab-401b-4efc-aadc-ad5f3c50688a': 'BLOCK',
+      '26190899-1602-49e8-8b27-eb1d0a1ce869': 'BLOCK',
+      'e6db77e5-3df2-4cf1-b95a-636979351e5b': 'BLOCK',
+      'd3e037e1-3eb8-44c8-a917-57927947596d': 'BLOCK',
+      '5beb7efe-fd9a-4556-801d-275e5ffc04cc': 'BLOCK',
+      '92e97fa1-2edf-4476-bdd6-9dd0b4dddc7b': 'BLOCK',
+      '01443614-cd74-433a-b99e-2ecdc07bfc25': 'BLOCK',
+      'c1db55ab-c21a-4637-bb3f-a12568109d35': 'BLOCK',
+      '9e6c4e1f-7d60-472f-ba1a-a39ef669e4b0': 'BLOCK',
+      'd1e49aac-8f56-4280-b9ba-993a6d77406c': 'BLOCK',
+      'b2b3f03d-6a65-4f7b-a9c7-1c7ef74a9ba4': 'BLOCK',
+      'c0033c00-d16d-4114-a5a0-dc9b3a7d2ceb': 'BLOCK',
+      '7674ba52-37eb-4a4f-a9a1-f0f9a1619a2c': 'BLOCK'
+    };
+
+    // Gaming: only high-confidence rules BLOCK, others AUDIT or DISABLED
+    const ASR_RULES_GAMING = {
+      'be9ba2d9-53ea-4cdc-84e5-9b1eeee46550': 'BLOCK',  // email executable
+      '3b576869-a4ec-4529-8536-b80a7769e899': 'AUDIT',
+      '75668c1f-73b5-4cf0-bb93-3ecf5cb7cc84': 'AUDIT',
+      'd4f940ab-401b-4efc-aadc-ad5f3c50688a': 'AUDIT',
+      '26190899-1602-49e8-8b27-eb1d0a1ce869': 'AUDIT',
+      'e6db77e5-3df2-4cf1-b95a-636979351e5b': 'BLOCK',  // WMI persistence
+      'd3e037e1-3eb8-44c8-a917-57927947596d': 'AUDIT',
+      '5beb7efe-fd9a-4556-801d-275e5ffc04cc': 'AUDIT',
+      '92e97fa1-2edf-4476-bdd6-9dd0b4dddc7b': 'AUDIT',
+      '01443614-cd74-433a-b99e-2ecdc07bfc25': 'DISABLED',
+      'c1db55ab-c21a-4637-bb3f-a12568109d35': 'BLOCK',  // ransomware protection
+      '9e6c4e1f-7d60-472f-ba1a-a39ef669e4b0': 'BLOCK',  // LSASS credential steal
+      'd1e49aac-8f56-4280-b9ba-993a6d77406c': 'AUDIT',
+      'b2b3f03d-6a65-4f7b-a9c7-1c7ef74a9ba4': 'AUDIT',
+      'c0033c00-d16d-4114-a5a0-dc9b3a7d2ceb': 'AUDIT',
+      '7674ba52-37eb-4a4f-a9a1-f0f9a1619a2c': 'AUDIT'
+    };
+
+    const insertAsr = db.prepare(`
+      INSERT OR IGNORE INTO asr_policies (
+        id, name, description, target_group_id, enabled,
+        asr_rules_json, exploit_protection_json, network_protection_mode, controlled_folder_access,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?), DATETIME('now', ?))
+    `);
+
+    insertAsr.run(
+      'asr-pol-audit', 'Windows 11 ASR Audit Baseline',
+      'Enterprise audit-mode baseline — all 16 Microsoft ASR rules set to AUDIT for visibility without blocking.',
+      'grp-all', 1,
+      JSON.stringify(ASR_RULES_AUDIT), '{}', 'AUDIT', 'AUDIT',
+      '-1 day', '-1 day'
+    );
+
+    insertAsr.run(
+      'asr-pol-block', 'Zero-Trust ASR Block Policy',
+      'Maximum enterprise hardening — all 16 ASR rules BLOCK, Network Protection BLOCK, CFA BLOCK.',
+      'grp-win11-modern', 1,
+      JSON.stringify(ASR_RULES_BLOCK), '{}', 'BLOCK', 'BLOCK',
+      '-1 day', '-1 day'
+    );
+
+    insertAsr.run(
+      'asr-pol-gaming', 'Gaming Rig ASR Policy',
+      'Lightweight ASR for gaming rigs — high-confidence rules BLOCK, others AUDIT, CFA DISABLED to avoid game launcher conflicts.',
+      'grp-workstations', 1,
+      JSON.stringify(ASR_RULES_GAMING), '{}', 'AUDIT', 'DISABLED',
+      '-1 day', '-1 day'
+    );
   }
 }

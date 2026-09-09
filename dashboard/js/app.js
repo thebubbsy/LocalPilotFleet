@@ -95,6 +95,9 @@ const App = {
       case 'scripts':
         if (window.ScriptsTable) window.ScriptsTable.init();
         break;
+      case 'asr':
+        if (window.ASRTable) window.ASRTable.init();
+        break;
       case 'profiles':
         if (window.ConfigurationProfilesTable) window.ConfigurationProfilesTable.loadData();
         break;

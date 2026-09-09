@@ -23,6 +23,7 @@ import * as autopilotEngine from '../services/autopilotEngine.js';
 import * as remoteActionEngine from '../services/remoteActionEngine.js';
 import * as firewallEngine from '../services/firewallEngine.js';
 import * as scriptsEngine from '../services/scriptsEngine.js';
+import * as asrEngine from '../services/asrEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -346,7 +347,8 @@ export function registerNodeRoutes(router) {
         firewall_policy: {
           effective_rules: firewallEngine.getEffectiveRulesForDevice(db, deviceId)
         },
-        assigned_scripts: scriptsEngine.getAssignedScriptsForDevice(db, deviceId)
+        assigned_scripts: scriptsEngine.getAssignedScriptsForDevice(db, deviceId),
+        assigned_asr_policy: asrEngine.getAssignedASRPolicyForDevice(db, deviceId)
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -1234,6 +1236,44 @@ export function registerNodeRoutes(router) {
       sendJson(res, 201, runRecord);
     } catch (err) {
       sendJson(res, 400, { error: 'SCRIPT_RUN_RESULT_ERROR', message: err.message });
+    }
+  });
+
+  // 36. POST /api/v1/nodes/:id/asr-status (Agent reports ASR posture snapshot)
+  router.post('/api/v1/nodes/:id/asr-status', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    try {
+      const db = getDb();
+      const status = asrEngine.saveDeviceASRStatus(db, {
+        deviceId: id,
+        policyId: body.policy_id || null,
+        asrRulesStatus: body.asr_rules_status || {},
+        networkProtectionMode: body.network_protection_mode || 'UNKNOWN',
+        controlledFolderAccess: body.controlled_folder_access || 'UNKNOWN',
+        exploitProtectionApplied: body.exploit_protection_applied || false
+      });
+      broadcastEvent('node_asr_status_reported', { device_id: id });
+      sendJson(res, 200, status);
+    } catch (err) {
+      sendJson(res, 400, { error: 'ASR_STATUS_REPORT_ERROR', message: err.message });
+    }
+  });
+
+  // 37. POST /api/v1/nodes/:id/asr-events (Agent reports bulk ASR events)
+  router.post('/api/v1/nodes/:id/asr-events', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    const events = Array.isArray(body) ? body : (body.events || []);
+    try {
+      const db = getDb();
+      const saved = asrEngine.saveASREvents(db, id, events);
+      broadcastEvent('node_asr_events_reported', { device_id: id, count: saved.length });
+      sendJson(res, 200, { device_id: id, saved_count: saved.length });
+    } catch (err) {
+      sendJson(res, 400, { error: 'ASR_EVENTS_REPORT_ERROR', message: err.message });
     }
   });
 }
