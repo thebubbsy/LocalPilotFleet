@@ -27,6 +27,7 @@ import * as analyticsEngine from '../services/analyticsEngine.js';
 import * as messagesEngine from '../services/messagesEngine.js';
 import * as certificateEngine from '../services/certificateEngine.js';
 import * as networkEngine from '../services/networkEngine.js';
+import * as kioskEngine from '../services/kioskEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -3895,6 +3896,120 @@ try {
       });
     } catch (err) {
       sendJson(res, 500, { error: 'DEVICE_NETWORK_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  /* ── 22. Kiosk Mode & Multi-App Assigned Access Endpoints ─────── */
+
+  // 202. GET /api/v1/fleet/kiosks/stats
+  router.get('/api/v1/fleet/kiosks/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const stats = kioskEngine.getKioskStats(db);
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'KIOSK_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 203. GET /api/v1/fleet/kiosks/profiles
+  router.get('/api/v1/fleet/kiosks/profiles', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const profiles = kioskEngine.getAllProfiles(db);
+      sendJson(res, 200, { profiles });
+    } catch (err) {
+      sendJson(res, 500, { error: 'KIOSK_PROFILES_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 204. POST /api/v1/fleet/kiosks/profiles
+  router.post('/api/v1/fleet/kiosks/profiles', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const created = kioskEngine.createProfile(db, req.body || {});
+      sendJson(res, 201, created);
+    } catch (err) {
+      sendJson(res, 400, { error: 'KIOSK_PROFILE_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 205. GET /api/v1/fleet/kiosks/inventory
+  router.get('/api/v1/fleet/kiosks/inventory', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const inventory = kioskEngine.getFleetKioskInventory(db, req.query || {});
+      sendJson(res, 200, { inventory });
+    } catch (err) {
+      sendJson(res, 500, { error: 'KIOSK_INVENTORY_ERROR', message: err.message });
+    }
+  });
+
+  // 206. GET /api/v1/fleet/kiosks/profiles/:id
+  router.get('/api/v1/fleet/kiosks/profiles/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const profile = kioskEngine.getProfileById(db, id);
+      if (!profile) {
+        sendJson(res, 404, { error: 'PROFILE_NOT_FOUND', message: 'Kiosk profile not found' });
+        return;
+      }
+      sendJson(res, 200, profile);
+    } catch (err) {
+      sendJson(res, 500, { error: 'KIOSK_PROFILE_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 207. PATCH /api/v1/fleet/kiosks/profiles/:id
+  router.patch('/api/v1/fleet/kiosks/profiles/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const updated = kioskEngine.updateProfile(db, id, req.body || {});
+      if (!updated) {
+        sendJson(res, 404, { error: 'PROFILE_NOT_FOUND', message: 'Kiosk profile not found' });
+        return;
+      }
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 400, { error: 'KIOSK_PROFILE_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 208. DELETE /api/v1/fleet/kiosks/profiles/:id
+  router.delete('/api/v1/fleet/kiosks/profiles/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const deleted = kioskEngine.deleteProfile(db, id);
+      if (!deleted) {
+        sendJson(res, 404, { error: 'PROFILE_NOT_FOUND', message: 'Kiosk profile not found' });
+        return;
+      }
+      sendJson(res, 200, { success: true, id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'KIOSK_PROFILE_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 209. GET /api/v1/fleet/devices/:id/kiosk
+  router.get('/api/v1/fleet/devices/:id/kiosk', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const status = kioskEngine.getDeviceKioskStatus(db, id);
+      sendJson(res, 200, status);
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_KIOSK_FETCH_ERROR', message: err.message });
     }
   });
 }

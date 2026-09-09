@@ -2302,6 +2302,68 @@ if ($Mode -eq 'Heartbeat') {
                     Write-AgentLog 'WARN' "Network posture audit encountered non-fatal error: $($_.Exception.Message)"
                 }
             }
+
+            # ── Kiosk Mode & Multi-App Assigned Access Posture Audit ──────────
+            if (-not (Get-Variable -Name 'LastKioskAudit' -Scope Script -ErrorAction SilentlyContinue)) {
+                $script:LastKioskAudit = $null
+            }
+            $now = Get-Date
+            $shouldAuditKiosk = $false
+            if ($null -eq $script:LastKioskAudit) {
+                $shouldAuditKiosk = $true
+            } elseif (($now - $script:LastKioskAudit).TotalSeconds -ge 300) { # 5-minute interval
+                $shouldAuditKiosk = $true
+            }
+
+            if ($shouldAuditKiosk) {
+                $script:LastKioskAudit = $now
+                try {
+                    # 1. Detect current configured shell in Winlogon
+                    $currentShell = 'explorer.exe'
+                    try {
+                        $winlogonShell = Get-ItemPropertyValue -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name 'Shell' -ErrorAction SilentlyContinue
+                        if ($winlogonShell) { $currentShell = [string]$winlogonShell }
+                    } catch {}
+
+                    # 2. Check Assigned Access capability & status
+                    $assignedAccessSupported = $true
+                    $shellLauncherSupported = $true
+                    $kioskActive = $false
+                    $activeKioskUser = ''
+
+                    try {
+                        # Query Shell Launcher WMI class if present
+                        $weslSettings = Get-CimInstance -Namespace 'root\standardcimv2\embedded' -ClassName 'WESL_UserSetting' -ErrorAction SilentlyContinue
+                        if ($weslSettings) {
+                            $kioskActive = $true
+                            $activeKioskUser = $weslSettings[0].Sid
+                        }
+                    } catch {}
+
+                    if ($currentShell.ToLower() -ne 'explorer.exe') {
+                        $kioskActive = $true
+                    }
+
+                    $kioskPayload = @{
+                        assigned_access_supported = $assignedAccessSupported
+                        shell_launcher_supported  = $shellLauncherSupported
+                        current_shell             = $currentShell
+                        kiosk_active              = $kioskActive
+                        active_kiosk_user         = $activeKioskUser
+                    }
+
+                    Invoke-RestMethod `
+                        -Uri        "$baseUrl/api/v1/nodes/$deviceId/kiosk-status" `
+                        -Method     POST `
+                        -Body       ($kioskPayload | ConvertTo-Json -Compress) `
+                        -Headers    $authHeaders `
+                        -TimeoutSec 10 `
+                        -ErrorAction SilentlyContinue | Out-Null
+                    Write-AgentLog 'INFO' "Reported Kiosk & Assigned Access posture (Shell: '$currentShell', KioskActive: $kioskActive)"
+                } catch {
+                    Write-AgentLog 'WARN' "Kiosk posture audit encountered non-fatal error: $($_.Exception.Message)"
+                }
+            }
         } catch {
             Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
             if (-not $Continuous) { exit 1 }

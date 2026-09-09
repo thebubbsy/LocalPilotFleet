@@ -1127,6 +1127,49 @@ export function initDb(dbOrPath, options = {}) {
       updated_at TEXT DEFAULT (DATETIME('now')),
       FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
     );
+
+    -- 59. KIOSK_PROFILES — Kiosk Mode & Multi-App Assigned Access Profiles (Shell Launcher & Edge Kiosk)
+    CREATE TABLE IF NOT EXISTS kiosk_profiles (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      kiosk_mode TEXT NOT NULL DEFAULT 'SINGLE_APP' CHECK(kiosk_mode IN ('SINGLE_APP', 'MULTI_APP', 'SHELL_LAUNCHER', 'DIGITAL_SIGNAGE')),
+      target_group_id TEXT DEFAULT 'grp-all',
+      logon_type TEXT NOT NULL DEFAULT 'AUTO_LOGON' CHECK(logon_type IN ('AUTO_LOGON', 'LOCAL_USER', 'AZURE_AD_USER')),
+      user_account TEXT DEFAULT 'KioskUser0',
+      app_type TEXT NOT NULL DEFAULT 'EDGE_BROWSER' CHECK(app_type IN ('EDGE_BROWSER', 'UWP_AUMID', 'WIN32_EXE', 'MULTI_APP_XML')),
+      app_path_or_aumid TEXT DEFAULT '',
+      edge_kiosk_type TEXT DEFAULT 'DIGITAL_SIGNAGE' CHECK(edge_kiosk_type IN ('DIGITAL_SIGNAGE', 'PUBLIC_BROWSING', 'FULL_SCREEN_INTERACTIVE')),
+      edge_kiosk_url TEXT DEFAULT 'https://localpilot.internal',
+      edge_idle_timeout_min INTEGER DEFAULT 5,
+      allowed_apps_json TEXT DEFAULT '[]',
+      custom_layout_xml TEXT DEFAULT '',
+      disable_taskbar INTEGER DEFAULT 1 CHECK(disable_taskbar IN (0, 1)),
+      disable_cad_keys INTEGER DEFAULT 1 CHECK(disable_cad_keys IN (0, 1)),
+      restart_on_exit INTEGER DEFAULT 1 CHECK(restart_on_exit IN (0, 1)),
+      enabled INTEGER DEFAULT 1 CHECK(enabled IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET DEFAULT
+    );
+
+    -- 60. DEVICE_KIOSK_STATUS — Workstation Assigned Access & Shell Launcher runtime posture
+    CREATE TABLE IF NOT EXISTS device_kiosk_status (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL UNIQUE,
+      profile_id TEXT,
+      assigned_access_supported INTEGER DEFAULT 1 CHECK(assigned_access_supported IN (0, 1)),
+      shell_launcher_supported INTEGER DEFAULT 1 CHECK(shell_launcher_supported IN (0, 1)),
+      current_shell TEXT DEFAULT 'explorer.exe',
+      kiosk_active INTEGER DEFAULT 0 CHECK(kiosk_active IN (0, 1)),
+      active_kiosk_user TEXT DEFAULT '',
+      lockdown_status TEXT DEFAULT 'STANDARD_SHELL' CHECK(lockdown_status IN ('STANDARD_SHELL', 'KIOSK_ACTIVE', 'KIOSK_CONFIGURED', 'LOCKDOWN_DRIFT')),
+      last_scanned_at TEXT DEFAULT (DATETIME('now')),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(profile_id) REFERENCES kiosk_profiles(id) ON DELETE SET NULL
+    );
   `);
 
   // Indexes
@@ -1283,6 +1326,12 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_netprof_enabled ON network_profiles(enabled);
     CREATE INDEX IF NOT EXISTS idx_devnet_device ON device_network_posture(device_id);
     CREATE INDEX IF NOT EXISTS idx_devnet_ssid ON device_network_posture(connected_ssid);
+
+    CREATE INDEX IF NOT EXISTS idx_kioskprof_mode ON kiosk_profiles(kiosk_mode);
+    CREATE INDEX IF NOT EXISTS idx_kioskprof_target ON kiosk_profiles(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_kioskprof_enabled ON kiosk_profiles(enabled);
+    CREATE INDEX IF NOT EXISTS idx_devkiosk_device ON device_kiosk_status(device_id);
+    CREATE INDEX IF NOT EXISTS idx_devkiosk_status ON device_kiosk_status(lockdown_status);
   `);
 
   // Schema migrations for existing databases
@@ -2992,5 +3041,66 @@ exit 0`,
       '-3 days', '-3 days'
     );
   }
+
+  // 22. Kiosk Mode & Multi-App Assigned Access Profiles
+  const kioskProfCount = db.prepare('SELECT COUNT(*) as count FROM kiosk_profiles').get().count;
+  if (kioskProfCount === 0) {
+    const insertKioskProf = db.prepare(`
+      INSERT OR IGNORE INTO kiosk_profiles (
+        id, name, description, kiosk_mode, target_group_id,
+        logon_type, user_account, app_type, app_path_or_aumid,
+        edge_kiosk_type, edge_kiosk_url, edge_idle_timeout_min,
+        allowed_apps_json, custom_layout_xml, disable_taskbar,
+        disable_cad_keys, restart_on_exit, enabled, created_at, updated_at
+      ) VALUES (
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        ?, ?, ?,
+        ?, ?, ?,
+        ?, ?, 1, DATETIME('now', ?), DATETIME('now', ?)
+      )
+    `);
+
+    insertKioskProf.run(
+      'kiosk-edge-digital-signage',
+      '4K Corporate Digital Signage & Display Wall',
+      'Single-app full-screen Microsoft Edge digital signage display with auto-logon and keyboard lockdown for lobby displays.',
+      'DIGITAL_SIGNAGE', 'grp-all',
+      'AUTO_LOGON', 'KioskUser0', 'EDGE_BROWSER', 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+      'DIGITAL_SIGNAGE', 'https://signage.localpilot.internal/dashboard', 0,
+      '[]', '', 1,
+      1, 1,
+      '-3 days', '-3 days'
+    );
+
+    insertKioskProf.run(
+      'kiosk-frontdesk-interactive',
+      'Front-Desk Customer Self-Service Kiosk',
+      'Public browsing interactive kiosk running Edge InPrivate with a 5-minute inactivity session reset and restricted navigation.',
+      'SINGLE_APP', 'grp-all',
+      'AUTO_LOGON', 'KioskVisitor', 'EDGE_BROWSER', 'Microsoft.MicrosoftEdge_8wekyb3d8bbwe!MicrosoftEdge',
+      'PUBLIC_BROWSING', 'https://visitor.localpilot.internal', 5,
+      '[]', '', 1,
+      1, 1,
+      '-3 days', '-3 days'
+    );
+
+    insertKioskProf.run(
+      'kiosk-line-of-business-pos',
+      'Retail POS & Multi-App Terminal',
+      'Multi-app assigned access lockdown environment providing access to Edge POS WebApp, Windows Calculator, and Barcode scanner.',
+      'MULTI_APP', 'grp-all',
+      'LOCAL_USER', 'PosOperator', 'MULTI_APP_XML', '',
+      'FULL_SCREEN_INTERACTIVE', 'https://pos.localpilot.internal', 15,
+      JSON.stringify([
+        { name: 'POS Web Application', aumid: 'Microsoft.MicrosoftEdge.Stable_8wekyb3d8bbwe!App', path: 'msedge.exe', tile_size: 'Medium' },
+        { name: 'Calculator', aumid: 'Microsoft.WindowsCalculator_8wekyb3d8bbwe!App', path: 'calc.exe', tile_size: 'Small' }
+      ]),
+      '<AssignedAccessConfiguration xmlns="http://schemas.microsoft.com/AssignedAccess/2017/config"></AssignedAccessConfiguration>',
+      0, 1, 1,
+      '-3 days', '-3 days'
+    );
+  }
 }
+
 

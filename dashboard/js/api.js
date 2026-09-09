@@ -1300,6 +1300,49 @@ async function getDeviceNetwork(deviceId) {
   return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/network`);
 }
 
+/* ── Kiosk Mode & Multi-App Assigned Access ────────── */
+async function getKioskStats() {
+  return apiFetch('/api/v1/fleet/kiosks/stats');
+}
+
+async function getKioskProfiles(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/kiosks/profiles${qStr ? '?' + qStr : ''}`);
+}
+
+async function getKioskProfile(id) {
+  return apiFetch(`/api/v1/fleet/kiosks/profiles/${encodeURIComponent(id)}`);
+}
+
+async function createKioskProfile(data) {
+  return apiFetch('/api/v1/fleet/kiosks/profiles', { method: 'POST', body: JSON.stringify(data) });
+}
+
+async function updateKioskProfile(id, data) {
+  return apiFetch(`/api/v1/fleet/kiosks/profiles/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(data) });
+}
+
+async function deleteKioskProfile(id) {
+  return apiFetch(`/api/v1/fleet/kiosks/profiles/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+async function getKioskInventory(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/kiosks/inventory${qStr ? '?' + qStr : ''}`);
+}
+
+async function getDeviceKiosk(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/kiosk`);
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -1375,6 +1418,15 @@ window.FleetAPI = {
   deleteNetworkProfile,
   getNetworkInventory,
   getDeviceNetwork,
+  // Kiosk Mode & Multi-App Assigned Access
+  getKioskStats,
+  getKioskProfiles,
+  getKioskProfile,
+  createKioskProfile,
+  updateKioskProfile,
+  deleteKioskProfile,
+  getKioskInventory,
+  getDeviceKiosk,
   // Proactive Remediations
   getRemediations,
   getRemediationStats,

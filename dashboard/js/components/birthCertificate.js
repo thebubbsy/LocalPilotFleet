@@ -514,6 +514,17 @@
         </div>
       </div>
 
+      <!-- ── Kiosk & Assigned Access Posture ── -->
+      <div class="bc-section" id="bc-kiosk-section">
+        <div class="bc-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>🖥️ Kiosk &amp; Assigned Access Posture</span>
+          <button class="intune-link-btn" id="btn-bc-view-kiosk-tab">View Kiosk Blade</button>
+        </div>
+        <div id="bc-kiosk-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading Kiosk posture…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -1618,6 +1629,59 @@
         netListEl.innerHTML = html;
       }).catch(() => {
         netListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Network posture telemetry pending heartbeat sync.</div>';
+      });
+    }
+
+    // Fetch and populate Kiosk & Assigned Access Posture
+    const kioskListEl = body.querySelector('#bc-kiosk-list');
+    if (kioskListEl && _currentDevice?.id) {
+      body.querySelector('#btn-bc-view-kiosk-tab')?.addEventListener('click', () => {
+        close();
+        if (window.App && typeof window.App.navigate === 'function') {
+          window.App.navigate('kiosk');
+        }
+      });
+
+      window.FleetAPI.getDeviceKiosk(_currentDevice.id).then(status => {
+        if (!status) {
+          kioskListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">No kiosk posture found.</div>';
+          return;
+        }
+
+        const isKiosk = status.kiosk_active;
+        const shell = status.current_shell || 'explorer.exe';
+        const profile = status.effective_profile;
+        const user = status.active_kiosk_user || '—';
+
+        let html = `
+          <div style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:12px;display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span style="font-size:13px;font-weight:600;color:var(--text-primary);">
+                  ${isKiosk ? '🔒 Kiosk Mode Active' : '💻 Standard Desktop Shell'}
+                </span>
+                <span class="badge" style="background:${isKiosk ? 'rgba(16,185,129,0.15)' : 'rgba(100,116,139,0.15)'};color:${isKiosk ? '#10B981' : '#94A3B8'};font-size:10px;">
+                  ${esc(status.lockdown_status || 'STANDARD_SHELL')}
+                </span>
+              </div>
+              <span class="mono" style="font-size:11px;color:var(--text-muted);">
+                Shell: ${esc(shell)}
+              </span>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px;color:var(--text-muted);">
+              <div>Assigned Profile: <strong style="color:var(--text-primary);">${esc(profile ? profile.name : 'None')}</strong></div>
+              <div>Active User: <span class="mono" style="color:var(--text-primary);">${esc(user)}</span></div>
+            </div>
+
+            <div style="border-top:1px solid #334155;padding-top:6px;font-size:11px;color:var(--text-muted);">
+              Capabilities: AssignedAccess ${status.assigned_access_supported ? '✓' : '✗'} | ShellLauncher ${status.shell_launcher_supported ? '✓' : '✗'}
+            </div>
+          </div>
+        `;
+        kioskListEl.innerHTML = html;
+      }).catch(() => {
+        kioskListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Kiosk telemetry pending audit.</div>';
       });
     }
 

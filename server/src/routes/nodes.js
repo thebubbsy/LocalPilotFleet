@@ -28,6 +28,7 @@ import * as analyticsEngine from '../services/analyticsEngine.js';
 import * as messagesEngine from '../services/messagesEngine.js';
 import * as certificateEngine from '../services/certificateEngine.js';
 import * as networkEngine from '../services/networkEngine.js';
+import * as kioskEngine from '../services/kioskEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -355,7 +356,8 @@ export function registerNodeRoutes(router) {
         assigned_asr_policy: asrEngine.getAssignedASRPolicyForDevice(db, deviceId),
         pending_messages: messagesEngine.getPendingMessagesForDevice(db, deviceId),
         certificate_profiles: certificateEngine.getEffectiveProfilesForDevice(db, deviceId),
-        network_profiles: networkEngine.getEffectiveProfilesForDevice(db, deviceId)
+        network_profiles: networkEngine.getEffectiveProfilesForDevice(db, deviceId),
+        kiosk_profile: kioskEngine.getEffectiveKioskProfileForDevice(db, deviceId)
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -1393,6 +1395,32 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { device_id: id, profiles });
     } catch (err) {
       sendJson(res, 500, { error: 'NETWORK_PROFILES_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 45. POST /api/v1/nodes/:id/kiosk-status (Agent reports active kiosk & shell posture)
+  router.post('/api/v1/nodes/:id/kiosk-status', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const result = kioskEngine.saveDeviceKioskStatus(db, id, req.body || {});
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'KIOSK_STATUS_REPORT_ERROR', message: err.message });
+    }
+  });
+
+  // 46. GET /api/v1/nodes/:id/kiosk-profile (Agent fetches assigned kiosk profile)
+  router.get('/api/v1/nodes/:id/kiosk-profile', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const profile = kioskEngine.getEffectiveKioskProfileForDevice(db, id);
+      sendJson(res, 200, { device_id: id, profile });
+    } catch (err) {
+      sendJson(res, 500, { error: 'KIOSK_PROFILE_FETCH_ERROR', message: err.message });
     }
   });
 }

@@ -143,6 +143,9 @@ const App = {
       case 'network':
         if (window.NetworkTable) window.NetworkTable.init();
         break;
+      case 'kiosk':
+        if (window.KioskTable) window.KioskTable.init();
+        break;
       case 'settings':
         this.renderSettings();
         break;
