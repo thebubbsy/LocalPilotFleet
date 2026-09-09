@@ -547,6 +547,17 @@
         </div>
       </div>
 
+      <!-- ── Device Firmware & Hardware Root-of-Trust (DFCI) ── -->
+      <div class="bc-section" id="bc-dfci-section">
+        <div class="bc-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>🛡️ Device Firmware &amp; Hardware Root-of-Trust (DFCI)</span>
+          <button class="intune-link-btn" id="btn-bc-view-dfci-tab">View DFCI Blade</button>
+        </div>
+        <div id="bc-dfci-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading Firmware &amp; UEFI posture…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -1824,6 +1835,61 @@
         doListEl.innerHTML = html;
       }).catch(() => {
         doListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Delivery Optimization telemetry pending audit.</div>';
+      });
+    }
+
+    // Fetch and populate DFCI Posture
+    const dfciListEl = body.querySelector('#bc-dfci-list');
+    if (dfciListEl && _currentDevice?.id) {
+      body.querySelector('#btn-bc-view-dfci-tab')?.addEventListener('click', () => {
+        close();
+        if (window.App && typeof window.App.navigate === 'function') {
+          window.App.navigate('dfci');
+        }
+      });
+
+      window.FleetAPI.getDeviceDfci(_currentDevice.id).then(res => {
+        if (!res || !res.status) {
+          dfciListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">No firmware audit received yet.</div>';
+          return;
+        }
+
+        const status = res.status;
+        const policy = res.effective_policy;
+        const score = Number(status?.hardware_readiness_score) || 0;
+        const scoreColor = score >= 85 ? '#10b981' : (score >= 60 ? '#f59e0b' : '#ef4444');
+        const isCompliant = status?.compliance_status === 'COMPLIANT';
+        const compColor = isCompliant ? '#10b981' : '#ef4444';
+
+        let html = `
+          <div style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:12px;display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span style="font-size:13px;font-weight:600;color:var(--text-primary);">
+                  🛡️ UEFI BIOS: ${esc(status?.bios_vendor || 'OEM')} ${esc(status?.bios_version || '')}
+                </span>
+                <span class="badge" style="background:${scoreColor}22;color:${scoreColor};font-size:10px;font-weight:700;">
+                  ${score}/100 Readiness
+                </span>
+              </div>
+              <span class="badge" style="background:${compColor}22;color:${compColor};font-size:10px;font-weight:700;">
+                ${esc(status?.compliance_status || 'UNKNOWN')}
+              </span>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px;color:var(--text-muted);">
+              <div>Assigned Policy: <strong style="color:var(--text-primary);">${esc(policy ? policy.name : 'Zero-Trust Baseline')}</strong></div>
+              <div>Secure Boot: <strong style="color:${status?.secure_boot_enabled ? '#10b981' : '#ef4444'};">${status?.secure_boot_enabled ? '✅ Enabled' : '❌ Disabled'}</strong></div>
+              <div>TPM 2.0: <strong style="color:${status?.tpm_ready ? '#10b981' : '#ef4444'};">${status?.tpm_present ? (status?.tpm_ready ? '✅ Ready (v' + esc(status?.tpm_version || '2.0') + ')' : '⚠️ Degraded') : '❌ Absent'}</strong></div>
+              <div>Hardware DMA: <strong style="color:${status?.kernel_dma_protection ? '#10b981' : '#f59e0b'};">${status?.kernel_dma_protection ? '✅ Protected' : '⚠️ None'}</strong></div>
+              <div>Peripherals: <strong style="color:var(--text-primary);">Cam: ${status?.cameras_state || 'ALLOW'} | Mic: ${status?.microphones_state || 'ALLOW'}</strong></div>
+              <div>Boot Media: <strong style="color:var(--text-primary);">USB: ${status?.external_boot_state || 'ALLOW'} | PXE: ${status?.network_boot_state || 'BLOCK'}</strong></div>
+            </div>
+          </div>
+        `;
+        dfciListEl.innerHTML = html;
+      }).catch(() => {
+        dfciListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Firmware telemetry pending audit.</div>';
       });
     }
 

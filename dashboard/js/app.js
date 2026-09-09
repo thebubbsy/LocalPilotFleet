@@ -152,6 +152,9 @@ const App = {
       case 'delivery-optimization':
         if (window.DeliveryOptimizationTable) window.DeliveryOptimizationTable.init();
         break;
+      case 'dfci':
+        if (window.DfciTable) window.DfciTable.init();
+        break;
       case 'settings':
         this.renderSettings();
         break;

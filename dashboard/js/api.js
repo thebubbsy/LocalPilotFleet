@@ -1447,6 +1447,58 @@ async function getDeviceDO(deviceId) {
   return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/delivery-optimization`);
 }
 
+/* ── Device Firmware Configuration Interface (DFCI) & UEFI Security ── */
+async function getDfciStats() {
+  return apiFetch('/api/v1/fleet/dfci/stats');
+}
+
+async function getDfciPolicies(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/dfci/policies${qStr ? '?' + qStr : ''}`);
+}
+
+async function getDfciPolicy(id) {
+  return apiFetch(`/api/v1/fleet/dfci/policies/${encodeURIComponent(id)}`);
+}
+
+async function createDfciPolicy(data) {
+  return apiFetch('/api/v1/fleet/dfci/policies', { method: 'POST', body: JSON.stringify(data) });
+}
+
+async function updateDfciPolicy(id, data) {
+  return apiFetch(`/api/v1/fleet/dfci/policies/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(data) });
+}
+
+async function deleteDfciPolicy(id) {
+  return apiFetch(`/api/v1/fleet/dfci/policies/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+async function getDfciInventory(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/dfci/inventory${qStr ? '?' + qStr : ''}`);
+}
+
+async function getDfciAuditLog(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/dfci/audit-log${qStr ? '?' + qStr : ''}`);
+}
+
+async function getDeviceDfci(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/dfci`);
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -1551,6 +1603,16 @@ window.FleetAPI = {
   getDOInventory,
   getDOContentLog,
   getDeviceDO,
+  // Device Firmware Configuration Interface (DFCI) & UEFI Security
+  getDfciStats,
+  getDfciPolicies,
+  getDfciPolicy,
+  createDfciPolicy,
+  updateDfciPolicy,
+  deleteDfciPolicy,
+  getDfciInventory,
+  getDfciAuditLog,
+  getDeviceDfci,
   // Proactive Remediations
   getRemediations,
   getRemediationStats,

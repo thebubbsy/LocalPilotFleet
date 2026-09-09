@@ -30,6 +30,7 @@ import * as networkEngine from '../services/networkEngine.js';
 import * as kioskEngine from '../services/kioskEngine.js';
 import * as storageAccessEngine from '../services/storageAccessEngine.js';
 import * as deliveryOptimizationEngine from '../services/deliveryOptimizationEngine.js';
+import * as dfciEngine from '../services/dfciEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -4270,6 +4271,136 @@ try {
       sendJson(res, 200, status);
     } catch (err) {
       sendJson(res, 500, { error: 'DEVICE_DO_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 228. GET /api/v1/fleet/dfci/stats
+  router.get('/api/v1/fleet/dfci/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const stats = dfciEngine.getDfciStats(db);
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'DFCI_STATS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 229. GET /api/v1/fleet/dfci/policies
+  router.get('/api/v1/fleet/dfci/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const policies = dfciEngine.getAllPolicies(db);
+      sendJson(res, 200, { policies });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DFCI_POLICIES_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 230. POST /api/v1/fleet/dfci/policies
+  router.post('/api/v1/fleet/dfci/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const policy = dfciEngine.createPolicy(db, req.body || {});
+      sendJson(res, 201, policy);
+    } catch (err) {
+      sendJson(res, 400, { error: 'DFCI_POLICY_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 231. GET /api/v1/fleet/dfci/inventory
+  router.get('/api/v1/fleet/dfci/inventory', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const url = new URL(req.url, 'http://localhost');
+    const compliance_status = url.searchParams.get('compliance_status') || undefined;
+    const search = url.searchParams.get('search') || undefined;
+    try {
+      const db = getDb();
+      const inventory = dfciEngine.getDfciInventory(db, { compliance_status, search });
+      sendJson(res, 200, { inventory });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DFCI_INVENTORY_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 232. GET /api/v1/fleet/dfci/audit-log
+  router.get('/api/v1/fleet/dfci/audit-log', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const url = new URL(req.url, 'http://localhost');
+    const device_id = url.searchParams.get('device_id') || undefined;
+    const event_type = url.searchParams.get('event_type') || undefined;
+    try {
+      const db = getDb();
+      const logs = dfciEngine.getDfciAuditLog(db, { device_id, event_type });
+      sendJson(res, 200, { logs });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DFCI_AUDIT_LOG_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 233. GET /api/v1/fleet/dfci/policies/:id
+  router.get('/api/v1/fleet/dfci/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const policy = dfciEngine.getPolicyById(db, id);
+      if (!policy) {
+        sendJson(res, 404, { error: 'POLICY_NOT_FOUND', message: 'DFCI policy not found' });
+        return;
+      }
+      sendJson(res, 200, { policy, powershell_script: policy.powershell_script });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DFCI_POLICY_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 234. PATCH /api/v1/fleet/dfci/policies/:id
+  router.patch('/api/v1/fleet/dfci/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const updated = dfciEngine.updatePolicy(db, id, req.body || {});
+      if (!updated) {
+        sendJson(res, 404, { error: 'POLICY_NOT_FOUND', message: 'DFCI policy not found' });
+        return;
+      }
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 400, { error: 'DFCI_POLICY_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 235. DELETE /api/v1/fleet/dfci/policies/:id
+  router.delete('/api/v1/fleet/dfci/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const deleted = dfciEngine.deletePolicy(db, id);
+      if (!deleted) {
+        sendJson(res, 404, { error: 'POLICY_NOT_FOUND', message: 'DFCI policy not found' });
+        return;
+      }
+      sendJson(res, 200, { success: true, id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DFCI_POLICY_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 236. GET /api/v1/fleet/devices/:id/dfci
+  router.get('/api/v1/fleet/devices/:id/dfci', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const status = dfciEngine.getDeviceDfciStatus(db, id);
+      sendJson(res, 200, status);
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_DFCI_FETCH_ERROR', message: err.message });
     }
   });
 }

@@ -2573,6 +2573,139 @@ if ($Mode -eq 'Heartbeat') {
                     Write-AgentLog 'WARN' "Delivery Optimization posture audit encountered non-fatal error: $($_.Exception.Message)"
                 }
             }
+
+            # ── Device Firmware Configuration Interface (DFCI) & UEFI Security Audit ──
+            if (-not (Get-Variable -Name 'LastDFCIAudit' -Scope Script -ErrorAction SilentlyContinue)) {
+                $script:LastDFCIAudit = $null
+            }
+            $shouldAuditDFCI = $false
+            if ($null -eq $script:LastDFCIAudit) {
+                $shouldAuditDFCI = $true
+            } elseif (($now - $script:LastDFCIAudit).TotalSeconds -ge 180) { # 3-minute interval
+                $shouldAuditDFCI = $true
+            }
+
+            if ($shouldAuditDFCI) {
+                $script:LastDFCIAudit = $now
+                try {
+                    $biosVendor = "Unknown"
+                    $biosVer = "1.0"
+                    $biosDate = ""
+                    $sbEnabled = 0
+                    $tpmPresent = 0
+                    $tpmVer = "2.0"
+                    $tpmReady = 0
+                    $tpmMfr = ""
+                    $dmaProt = 0
+                    $vbsStat = "NOT_CONFIGURED"
+                    $hvciStat = "DISABLED"
+                    $camState = "ALLOW"
+                    $micState = "ALLOW"
+                    $radState = "ALLOW"
+                    $extBoot = "ALLOW"
+                    $netBoot = "BLOCK"
+
+                    # 1. Query Win32_BIOS
+                    try {
+                        $bios = Get-CimInstance -ClassName Win32_BIOS -ErrorAction SilentlyContinue
+                        if ($bios) {
+                            if ($bios.Manufacturer) { $biosVendor = $bios.Manufacturer }
+                            if ($bios.SMBIOSBIOSVersion) { $biosVer = $bios.SMBIOSBIOSVersion }
+                            if ($bios.ReleaseDate) { $biosDate = [string]$bios.ReleaseDate }
+                        }
+                    } catch {}
+
+                    # 2. Check Secure Boot State
+                    try {
+                        $sbVal = Get-ItemPropertyValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\State' -Name 'UEFISecureBootEnabled' -ErrorAction SilentlyContinue
+                        if ($sbVal -eq 1) {
+                            $sbEnabled = 1
+                        } elseif (Get-Command Confirm-SecureBootUEFI -ErrorAction SilentlyContinue) {
+                            if (Confirm-SecureBootUEFI -ErrorAction SilentlyContinue) {
+                                $sbEnabled = 1
+                            }
+                        }
+                    } catch {}
+
+                    # 3. Query TPM State
+                    try {
+                        if (Get-Command Get-Tpm -ErrorAction SilentlyContinue) {
+                            $tpm = Get-Tpm -ErrorAction SilentlyContinue
+                            if ($tpm -and $tpm.TpmPresent) {
+                                $tpmPresent = 1
+                                if ($tpm.TpmReady -or ($tpm.TpmEnabled -and $tpm.TpmActivated)) {
+                                    $tpmReady = 1
+                                }
+                                if ($tpm.ManufacturerIdTxt) { $tpmMfr = $tpm.ManufacturerIdTxt }
+                            }
+                        }
+                    } catch {}
+
+                    # 4. Query Virtualization-Based Security (VBS) and DMA Protection
+                    try {
+                        $dg = Get-CimInstance -Namespace root\Microsoft\Windows\DeviceGuard -ClassName Win32_DeviceGuard -ErrorAction SilentlyContinue
+                        if ($dg) {
+                            if ($dg.VirtualizationBasedSecurityStatus -eq 2) {
+                                $vbsStat = "RUNNING"
+                            } elseif ($dg.VirtualizationBasedSecurityStatus -eq 1) {
+                                $vbsStat = "CONFIGURED"
+                            }
+                            if ($dg.SecurityServicesRunning -contains 2) {
+                                $hvciStat = "ENABLED"
+                            }
+                            if ($dg.AvailableSecurityProperties -contains 3 -or $dg.RequiredSecurityProperties -contains 3) {
+                                $dmaProt = 1
+                            }
+                        }
+                    } catch {}
+
+                    # 5. Check Registry for DFCI / Hardware policies
+                    try {
+                        $camReg = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\DFCI\Peripherals' -Name 'Cameras' -ErrorAction SilentlyContinue
+                        if ($camReg -and [int]$camReg.Cameras -eq 0) { $camState = "BLOCK" }
+
+                        $micReg = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\DFCI\Peripherals' -Name 'Microphones' -ErrorAction SilentlyContinue
+                        if ($micReg -and [int]$micReg.Microphones -eq 0) { $micState = "BLOCK" }
+
+                        $radReg = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\DFCI\Peripherals' -Name 'Radios' -ErrorAction SilentlyContinue
+                        if ($radReg -and [int]$radReg.Radios -eq 0) { $radState = "BLOCK" }
+
+                        $extReg = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\DFCI\Boot' -Name 'ExternalMedia' -ErrorAction SilentlyContinue
+                        if ($extReg -and [int]$extReg.ExternalMedia -eq 0) { $extBoot = "BLOCK" }
+                    } catch {}
+
+                    $dfciPayload = @{
+                        bios_vendor           = $biosVendor
+                        bios_version          = $biosVer
+                        bios_release_date     = $biosDate
+                        uefi_version          = "2.7+"
+                        secure_boot_enabled   = $sbEnabled
+                        tpm_present           = $tpmPresent
+                        tpm_version           = $tpmVer
+                        tpm_ready             = $tpmReady
+                        tpm_manufacturer      = $tpmMfr
+                        kernel_dma_protection = $dmaProt
+                        vbs_status            = $vbsStat
+                        hvci_status           = $hvciStat
+                        cameras_state         = $camState
+                        microphones_state     = $micState
+                        radios_state          = $radState
+                        external_boot_state   = $extBoot
+                        network_boot_state    = $netBoot
+                    }
+
+                    Invoke-RestMethod `
+                        -Uri        "$baseUrl/api/v1/nodes/$deviceId/dfci-status" `
+                        -Method     POST `
+                        -Body       ($dfciPayload | ConvertTo-Json -Depth 5 -Compress) `
+                        -Headers    $authHeaders `
+                        -TimeoutSec 10 `
+                        -ErrorAction SilentlyContinue | Out-Null
+                    Write-AgentLog 'INFO' "Reported DFCI & UEFI Security posture (BIOS: $biosVendor $biosVer, SecureBoot: $sbEnabled, TPM: $tpmPresent, VBS: $vbsStat)"
+                } catch {
+                    Write-AgentLog 'WARN' "DFCI posture audit encountered non-fatal error: $($_.Exception.Message)"
+                }
+            }
         } catch {
             Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
             if (-not $Continuous) { exit 1 }

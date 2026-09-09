@@ -1276,6 +1276,73 @@ export function initDb(dbOrPath, options = {}) {
       timestamp TEXT DEFAULT (DATETIME('now')),
       FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
     );
+
+    -- 67. DFCI_POLICIES — Intune Device Firmware Configuration Interface & UEFI Policies
+    CREATE TABLE IF NOT EXISTS dfci_policies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      target_group_id TEXT DEFAULT 'grp-all',
+      cameras_enabled INTEGER DEFAULT 1 CHECK(cameras_enabled IN (0, 1)),
+      microphones_enabled INTEGER DEFAULT 1 CHECK(microphones_enabled IN (0, 1)),
+      radios_enabled INTEGER DEFAULT 1 CHECK(radios_enabled IN (0, 1)),
+      external_media_boot_enabled INTEGER DEFAULT 1 CHECK(external_media_boot_enabled IN (0, 1)),
+      network_adapter_boot_enabled INTEGER DEFAULT 1 CHECK(network_adapter_boot_enabled IN (0, 1)),
+      prevent_user_bios_changes INTEGER DEFAULT 0 CHECK(prevent_user_bios_changes IN (0, 1)),
+      require_secure_boot INTEGER DEFAULT 1 CHECK(require_secure_boot IN (0, 1)),
+      require_tpm2 INTEGER DEFAULT 1 CHECK(require_tpm2 IN (0, 1)),
+      require_kernel_dma INTEGER DEFAULT 0 CHECK(require_kernel_dma IN (0, 1)),
+      require_vbs INTEGER DEFAULT 0 CHECK(require_vbs IN (0, 1)),
+      uefi_password_protection TEXT DEFAULT 'NONE' CHECK(uefi_password_protection IN ('NONE', 'ADMIN_PASSWORD', 'SYSTEM_PASSWORD')),
+      enabled INTEGER DEFAULT 1 CHECK(enabled IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET DEFAULT
+    );
+
+    -- 68. DEVICE_DFCI_STATUS — Workstation UEFI Firmware, TPM, Secure Boot & Hardware Root-of-Trust Posture
+    CREATE TABLE IF NOT EXISTS device_dfci_status (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL UNIQUE,
+      policy_id TEXT,
+      bios_vendor TEXT DEFAULT '',
+      bios_version TEXT DEFAULT '',
+      bios_release_date TEXT DEFAULT '',
+      uefi_version TEXT DEFAULT '',
+      secure_boot_enabled INTEGER DEFAULT 0 CHECK(secure_boot_enabled IN (0, 1)),
+      tpm_present INTEGER DEFAULT 0 CHECK(tpm_present IN (0, 1)),
+      tpm_version TEXT DEFAULT '',
+      tpm_ready INTEGER DEFAULT 0 CHECK(tpm_ready IN (0, 1)),
+      tpm_manufacturer TEXT DEFAULT '',
+      kernel_dma_protection INTEGER DEFAULT 0 CHECK(kernel_dma_protection IN (0, 1)),
+      vbs_status TEXT DEFAULT 'NOT_CONFIGURED',
+      hvci_status TEXT DEFAULT 'NOT_CONFIGURED',
+      hardware_readiness_score INTEGER DEFAULT 0,
+      cameras_state TEXT DEFAULT 'ENABLED',
+      microphones_state TEXT DEFAULT 'ENABLED',
+      radios_state TEXT DEFAULT 'ENABLED',
+      external_boot_state TEXT DEFAULT 'ENABLED',
+      network_boot_state TEXT DEFAULT 'ENABLED',
+      compliance_status TEXT NOT NULL DEFAULT 'COMPLIANT' CHECK(compliance_status IN ('COMPLIANT', 'NON_COMPLIANT', 'SECUREBOOT_DISABLED', 'TPM_MISSING', 'UNAUDITED')),
+      last_audit_at TEXT DEFAULT (DATETIME('now')),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(policy_id) REFERENCES dfci_policies(id) ON DELETE SET NULL
+    );
+
+    -- 69. DFCI_AUDIT_LOG — Firmware Configuration, Hardware Root-of-Trust Changes & Tamper Audit
+    CREATE TABLE IF NOT EXISTS dfci_audit_log (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      event_type TEXT NOT NULL CHECK(event_type IN ('FIRMWARE_AUDIT', 'POLICY_APPLIED', 'SECUREBOOT_VIOLATION', 'TPM_STATUS_CHANGE', 'HARDWARE_TAMPER_ALERT', 'BOOT_MEDIA_BLOCKED')),
+      setting_name TEXT NOT NULL,
+      old_value TEXT DEFAULT '',
+      new_value TEXT DEFAULT '',
+      details TEXT DEFAULT '',
+      timestamp TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
   `);
 
   // Indexes
@@ -1452,6 +1519,14 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_devdo_p2p ON device_delivery_optimization_status(p2p_efficiency_pct);
     CREATE INDEX IF NOT EXISTS idx_docontent_device ON delivery_optimization_content_log(device_id);
     CREATE INDEX IF NOT EXISTS idx_docontent_time ON delivery_optimization_content_log(timestamp DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_dfcipol_target ON dfci_policies(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_dfcipol_enabled ON dfci_policies(enabled);
+    CREATE INDEX IF NOT EXISTS idx_devdfci_device ON device_dfci_status(device_id);
+    CREATE INDEX IF NOT EXISTS idx_devdfci_comp ON device_dfci_status(compliance_status);
+    CREATE INDEX IF NOT EXISTS idx_devdfci_score ON device_dfci_status(hardware_readiness_score);
+    CREATE INDEX IF NOT EXISTS idx_dfciaudit_device ON dfci_audit_log(device_id);
+    CREATE INDEX IF NOT EXISTS idx_dfciaudit_time ON dfci_audit_log(timestamp DESC);
   `);
 
   // Schema migrations for existing databases
@@ -3327,6 +3402,64 @@ exit 0`,
       0, 0,
       0, 0,
       3,
+      '-3 days', '-3 days'
+    );
+  }
+
+  // 25. Device Firmware Configuration Interface (DFCI) & UEFI BIOS Governance
+  const dfciPolCount = db.prepare('SELECT COUNT(*) as count FROM dfci_policies').get().count;
+  if (dfciPolCount === 0) {
+    const insertDfciPol = db.prepare(`
+      INSERT OR IGNORE INTO dfci_policies (
+        id, name, description, target_group_id,
+        cameras_enabled, microphones_enabled, radios_enabled,
+        external_media_boot_enabled, network_adapter_boot_enabled,
+        prevent_user_bios_changes, require_secure_boot, require_tpm2,
+        require_kernel_dma, require_vbs, uefi_password_protection,
+        enabled, created_at, updated_at
+      ) VALUES (
+        ?, ?, ?, ?,
+        ?, ?, ?,
+        ?, ?,
+        ?, ?, ?,
+        ?, ?, ?,
+        1, DATETIME('now', ?), DATETIME('now', ?)
+      )
+    `);
+
+    insertDfciPol.run(
+      'dfci-zero-trust-hardened',
+      'Zero-Trust High Security Firmware Baseline',
+      'Enforces UEFI Secure Boot, TPM 2.0, Kernel DMA Protection, and blocks external USB and PXE network booting to prevent pre-boot rootkits.',
+      'grp-all',
+      1, 1, 1,
+      0, 0,
+      1, 1, 1,
+      1, 1, 'ADMIN_PASSWORD',
+      '-3 days', '-3 days'
+    );
+
+    insertDfciPol.run(
+      'dfci-kiosk-lockdown',
+      'Public Kiosk & Exam Hardware Lockdown',
+      'Firmware-level hardware isolation: disables built-in cameras, microphones, radios (Bluetooth/Wi-Fi), and USB boot at the motherboard layer.',
+      'grp-all',
+      0, 0, 0,
+      0, 0,
+      1, 1, 1,
+      0, 0, 'ADMIN_PASSWORD',
+      '-3 days', '-3 days'
+    );
+
+    insertDfciPol.run(
+      'dfci-developer-flexible',
+      'Developer & Engineering Firmware Baseline',
+      'Enables external media boot and virtualization extensions while auditing Secure Boot, TPM 2.0, and hardware root-of-trust.',
+      'grp-workstations',
+      1, 1, 1,
+      1, 1,
+      0, 1, 1,
+      0, 0, 'NONE',
       '-3 days', '-3 days'
     );
   }

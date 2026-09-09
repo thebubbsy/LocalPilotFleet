@@ -31,6 +31,7 @@ import * as networkEngine from '../services/networkEngine.js';
 import * as kioskEngine from '../services/kioskEngine.js';
 import * as storageAccessEngine from '../services/storageAccessEngine.js';
 import * as deliveryOptimizationEngine from '../services/deliveryOptimizationEngine.js';
+import * as dfciEngine from '../services/dfciEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -361,7 +362,8 @@ export function registerNodeRoutes(router) {
         network_profiles: networkEngine.getEffectiveProfilesForDevice(db, deviceId),
         kiosk_profile: kioskEngine.getEffectiveKioskProfileForDevice(db, deviceId),
         storage_access_policy: storageAccessEngine.getEffectivePolicyForDevice(db, deviceId),
-        delivery_optimization_policy: deliveryOptimizationEngine.getEffectivePolicyForDevice(db, deviceId)
+        delivery_optimization_policy: deliveryOptimizationEngine.getEffectivePolicyForDevice(db, deviceId),
+        dfci_policy: dfciEngine.getEffectivePolicyForDevice(db, deviceId)
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -1503,6 +1505,45 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { device_id: id, policy });
     } catch (err) {
       sendJson(res, 500, { error: 'DO_POLICY_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 53. POST /api/v1/nodes/:id/dfci-status (Agent reports UEFI firmware, TPM, Secure Boot & root-of-trust posture)
+  router.post('/api/v1/nodes/:id/dfci-status', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const result = dfciEngine.saveDeviceDfciStatus(db, id, req.body || {});
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'DFCI_STATUS_REPORT_ERROR', message: err.message });
+    }
+  });
+
+  // 54. POST /api/v1/nodes/:id/dfci-event (Agent reports firmware change or hardware tamper alert)
+  router.post('/api/v1/nodes/:id/dfci-event', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const result = dfciEngine.recordDfciEvent(db, id, req.body || {});
+      sendJson(res, 201, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'DFCI_EVENT_LOG_ERROR', message: err.message });
+    }
+  });
+
+  // 55. GET /api/v1/nodes/:id/dfci-policy (Agent fetches assigned DFCI firmware policy)
+  router.get('/api/v1/nodes/:id/dfci-policy', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const policy = dfciEngine.getEffectivePolicyForDevice(db, id);
+      sendJson(res, 200, { device_id: id, policy });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DFCI_POLICY_FETCH_ERROR', message: err.message });
     }
   });
 }
