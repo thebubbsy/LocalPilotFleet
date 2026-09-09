@@ -1077,6 +1077,56 @@ export function initDb(dbOrPath, options = {}) {
       FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
       FOREIGN KEY(profile_id) REFERENCES certificate_profiles(id) ON DELETE SET NULL
     );
+
+    -- 57. NETWORK_PROFILES — Wi-Fi & VPN Configuration Profiles (802.1X, WPA3, WireGuard, IKEv2)
+    CREATE TABLE IF NOT EXISTS network_profiles (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      network_type TEXT NOT NULL CHECK(network_type IN ('WIFI', 'VPN')),
+      target_group_id TEXT DEFAULT 'grp-all',
+      connection_name TEXT NOT NULL,
+      ssid TEXT DEFAULT '',
+      hidden_network INTEGER DEFAULT 0 CHECK(hidden_network IN (0, 1)),
+      security_type TEXT DEFAULT 'WPA2_ENTERPRISE' CHECK(security_type IN ('WPA2_PERSONAL', 'WPA3_PERSONAL', 'WPA2_ENTERPRISE', 'WPA3_ENTERPRISE', 'OPEN', 'IKEv2', 'L2TP', 'WIREGUARD', 'OPENVPN')),
+      eap_type TEXT DEFAULT 'EAP_TLS' CHECK(eap_type IN ('EAP_TLS', 'PEAP', 'MSCHAPv2', 'PSK', 'CERTIFICATE', 'NONE')),
+      server_address TEXT DEFAULT '',
+      split_tunneling INTEGER DEFAULT 1 CHECK(split_tunneling IN (0, 1)),
+      always_on INTEGER DEFAULT 0 CHECK(always_on IN (0, 1)),
+      auto_connect INTEGER DEFAULT 1 CHECK(auto_connect IN (0, 1)),
+      proxy_type TEXT DEFAULT 'NONE' CHECK(proxy_type IN ('NONE', 'MANUAL', 'AUTOMATIC')),
+      proxy_server TEXT DEFAULT '',
+      proxy_port INTEGER DEFAULT 8080,
+      root_cert_thumbprint TEXT DEFAULT '',
+      client_cert_thumbprint TEXT DEFAULT '',
+      raw_profile_xml TEXT DEFAULT '',
+      enabled INTEGER DEFAULT 1 CHECK(enabled IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET DEFAULT
+    );
+
+    -- 58. DEVICE_NETWORK_POSTURE — Workstation Wi-Fi & VPN adapter inventory and signal telemetry
+    CREATE TABLE IF NOT EXISTS device_network_posture (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL UNIQUE,
+      connected_ssid TEXT DEFAULT '',
+      bssid TEXT DEFAULT '',
+      signal_quality_pct INTEGER DEFAULT 0,
+      radio_type TEXT DEFAULT '',
+      channel INTEGER DEFAULT 0,
+      active_adapters_json TEXT DEFAULT '[]',
+      configured_profiles_json TEXT DEFAULT '[]',
+      active_vpns_json TEXT DEFAULT '[]',
+      ipv4_address TEXT DEFAULT '',
+      ipv4_gateway TEXT DEFAULT '',
+      dns_servers_json TEXT DEFAULT '[]',
+      compliance_status TEXT DEFAULT 'COMPLIANT' CHECK(compliance_status IN ('COMPLIANT', 'NON_COMPLIANT', 'WARNING')),
+      last_scanned_at TEXT DEFAULT (DATETIME('now')),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
   `);
 
   // Indexes
@@ -1227,6 +1277,12 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_devcert_thumb ON device_certificates(thumbprint);
     CREATE INDEX IF NOT EXISTS idx_devcert_status ON device_certificates(status);
     CREATE INDEX IF NOT EXISTS idx_devcert_expiry ON device_certificates(days_to_expiry ASC);
+
+    CREATE INDEX IF NOT EXISTS idx_netprof_type ON network_profiles(network_type);
+    CREATE INDEX IF NOT EXISTS idx_netprof_target ON network_profiles(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_netprof_enabled ON network_profiles(enabled);
+    CREATE INDEX IF NOT EXISTS idx_devnet_device ON device_network_posture(device_id);
+    CREATE INDEX IF NOT EXISTS idx_devnet_ssid ON device_network_posture(connected_ssid);
   `);
 
   // Schema migrations for existing databases
@@ -2880,4 +2936,61 @@ exit 0`,
       '-3 days', '-3 days'
     );
   }
+
+  // 21. Wi-Fi & VPN Configuration Profiles
+  const netProfCount = db.prepare('SELECT COUNT(*) as count FROM network_profiles').get().count;
+  if (netProfCount === 0) {
+    const insertNetProf = db.prepare(`
+      INSERT OR IGNORE INTO network_profiles (
+        id, name, description, network_type, target_group_id,
+        connection_name, ssid, hidden_network, security_type, eap_type,
+        server_address, split_tunneling, always_on, auto_connect,
+        proxy_type, proxy_server, proxy_port, root_cert_thumbprint,
+        client_cert_thumbprint, raw_profile_xml, enabled, created_at, updated_at
+      ) VALUES (
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        ?, ?, 1, DATETIME('now', ?), DATETIME('now', ?)
+      )
+    `);
+
+    insertNetProf.run(
+      'net-corp-wifi-8021x',
+      'Corporate Zero-Trust 802.1X Wi-Fi',
+      'High-assurance WPA3 Enterprise Wi-Fi with 802.1X EAP-TLS client certificate authentication and auto-connect.',
+      'WIFI', 'grp-all',
+      'CorpNet-Secure', 'CorpNet-Secure', 0, 'WPA3_ENTERPRISE', 'EAP_TLS',
+      '', 1, 0, 1,
+      'NONE', '', 8080, 'A1B2C3D4E5F60718293A4B5C6D7E8F9012345678',
+      '', '',
+      '-3 days', '-3 days'
+    );
+
+    insertNetProf.run(
+      'net-zerotrust-wireguard-vpn',
+      'Always-On Zero-Trust Mesh VPN',
+      'Ultra low-latency WireGuard mesh tunnel for seamless homelab and corporate resource access with split tunneling.',
+      'VPN', 'grp-all',
+      'LocalPilot-Mesh', '', 0, 'WIREGUARD', 'CERTIFICATE',
+      'vpn.corp.localpilot.io:51820', 1, 1, 1,
+      'NONE', '', 8080, '',
+      '', '',
+      '-3 days', '-3 days'
+    );
+
+    insertNetProf.run(
+      'net-enterprise-ikev2-vpn',
+      'Enterprise IKEv2 / IPsec Remote Access',
+      'Standard Microsoft Windows native IKEv2 VPN tunnel for remote branch connectivity and domain controller access.',
+      'VPN', 'grp-all',
+      'Corp-IKEv2-Remote', '', 0, 'IKEv2', 'EAP_TLS',
+      'gateway.corp.localpilot.io', 1, 0, 0,
+      'NONE', '', 8080, 'A1B2C3D4E5F60718293A4B5C6D7E8F9012345678',
+      '', '',
+      '-3 days', '-3 days'
+    );
+  }
 }
+

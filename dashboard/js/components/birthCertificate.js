@@ -503,6 +503,17 @@
         </div>
       </div>
 
+      <!-- ── Wi-Fi & VPN Network Posture ── -->
+      <div class="bc-section" id="bc-network-section">
+        <div class="bc-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>🌐 Wi-Fi &amp; VPN Network Posture</span>
+          <button class="intune-link-btn" id="btn-bc-view-network-tab">View Network Blade</button>
+        </div>
+        <div id="bc-network-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading Wi-Fi &amp; VPN posture…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -1541,6 +1552,72 @@
         certsListEl.innerHTML = html;
       }).catch(() => {
         certsListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Certificate store telemetry pending.</div>';
+      });
+    }
+
+    // Fetch and populate Wi-Fi & VPN Posture
+    const netListEl = body.querySelector('#bc-network-list');
+    if (netListEl && _currentDevice?.id) {
+      body.querySelector('#btn-bc-view-network-tab')?.addEventListener('click', () => {
+        close();
+        if (window.App && typeof window.App.navigate === 'function') {
+          window.App.navigate('network');
+        }
+      });
+
+      window.FleetAPI.getDeviceNetwork(_currentDevice.id).then(res => {
+        const posture = res.posture;
+        const profiles = res.assigned_profiles || [];
+        if (!posture && profiles.length === 0) {
+          netListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">No network posture or assigned profiles found.</div>';
+          return;
+        }
+
+        const ssid = posture?.connected_ssid;
+        const signal = posture?.signal_quality_pct || 0;
+        const radio = posture?.radio_type || '';
+        const ip = posture?.ipv4_address || _currentDevice.ip_address || '—';
+        const gw = posture?.ipv4_gateway || '—';
+        const vpns = posture?.active_vpns || [];
+
+        let html = `
+          <div style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:12px;display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span style="font-size:13px;font-weight:600;color:var(--text-primary);">
+                  ${ssid ? `📶 ${esc(ssid)}` : '🔌 Ethernet / Wired'}
+                </span>
+                ${radio ? `<span class="badge" style="background:rgba(255,255,255,0.08);font-size:10px;">${esc(radio)}</span>` : ''}
+              </div>
+              <div>
+                ${ssid ? `
+                  <span class="badge" style="background:rgba(16,185,129,0.15);color:#10B981;font-size:11px;">
+                    Signal: ${signal}%
+                  </span>
+                ` : ''}
+              </div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px;color:var(--text-muted);">
+              <div>IPv4: <span class="mono" style="color:var(--text-primary);">${esc(ip)}</span></div>
+              <div>Gateway: <span class="mono" style="color:var(--text-primary);">${esc(gw)}</span></div>
+            </div>
+
+            ${vpns.length > 0 ? `
+              <div style="border-top:1px solid #334155;padding-top:6px;font-size:11px;">
+                <span style="color:var(--text-muted);">Active Tunnels:</span>
+                ${vpns.map(v => `<span class="badge" style="background:rgba(168,85,247,0.15);color:#C084FC;margin-left:4px;">🔐 ${esc(v)}</span>`).join('')}
+              </div>
+            ` : ''}
+
+            <div style="border-top:1px solid #334155;padding-top:6px;font-size:11px;color:var(--text-muted);">
+              Assigned Profiles: <strong style="color:var(--text-primary);">${profiles.length}</strong> profile(s) enforced
+            </div>
+          </div>
+        `;
+        netListEl.innerHTML = html;
+      }).catch(() => {
+        netListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Network posture telemetry pending heartbeat sync.</div>';
       });
     }
 

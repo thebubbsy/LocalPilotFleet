@@ -1257,6 +1257,49 @@ async function getDeviceCertificates(deviceId, params = {}) {
   return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/certificates${qStr ? '?' + qStr : ''}`);
 }
 
+/* ── Wi-Fi & VPN Configuration Profiles & Network Posture ────────── */
+async function getNetworkStats() {
+  return apiFetch('/api/v1/fleet/networks/stats');
+}
+
+async function getNetworkProfiles(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/networks/profiles${qStr ? '?' + qStr : ''}`);
+}
+
+async function getNetworkProfile(id) {
+  return apiFetch(`/api/v1/fleet/networks/profiles/${encodeURIComponent(id)}`);
+}
+
+async function createNetworkProfile(data) {
+  return apiFetch('/api/v1/fleet/networks/profiles', { method: 'POST', body: JSON.stringify(data) });
+}
+
+async function updateNetworkProfile(id, data) {
+  return apiFetch(`/api/v1/fleet/networks/profiles/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(data) });
+}
+
+async function deleteNetworkProfile(id) {
+  return apiFetch(`/api/v1/fleet/networks/profiles/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+async function getNetworkInventory(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/networks/inventory${qStr ? '?' + qStr : ''}`);
+}
+
+async function getDeviceNetwork(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/network`);
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -1323,6 +1366,15 @@ window.FleetAPI = {
   deleteCertificateProfile,
   getCertificateInventory,
   getDeviceCertificates,
+  // Wi-Fi & VPN Configuration Profiles
+  getNetworkStats,
+  getNetworkProfiles,
+  getNetworkProfile,
+  createNetworkProfile,
+  updateNetworkProfile,
+  deleteNetworkProfile,
+  getNetworkInventory,
+  getDeviceNetwork,
   // Proactive Remediations
   getRemediations,
   getRemediationStats,

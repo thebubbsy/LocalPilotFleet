@@ -27,6 +27,7 @@ import * as asrEngine from '../services/asrEngine.js';
 import * as analyticsEngine from '../services/analyticsEngine.js';
 import * as messagesEngine from '../services/messagesEngine.js';
 import * as certificateEngine from '../services/certificateEngine.js';
+import * as networkEngine from '../services/networkEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -353,7 +354,8 @@ export function registerNodeRoutes(router) {
         assigned_scripts: scriptsEngine.getAssignedScriptsForDevice(db, deviceId),
         assigned_asr_policy: asrEngine.getAssignedASRPolicyForDevice(db, deviceId),
         pending_messages: messagesEngine.getPendingMessagesForDevice(db, deviceId),
-        certificate_profiles: certificateEngine.getEffectiveProfilesForDevice(db, deviceId)
+        certificate_profiles: certificateEngine.getEffectiveProfilesForDevice(db, deviceId),
+        network_profiles: networkEngine.getEffectiveProfilesForDevice(db, deviceId)
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -1365,6 +1367,32 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { device_id: id, profiles });
     } catch (err) {
       sendJson(res, 500, { error: 'CERTIFICATE_PROFILES_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 43. POST /api/v1/nodes/:id/network-posture (Agent reports active Wi-Fi and VPN posture)
+  router.post('/api/v1/nodes/:id/network-posture', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const result = networkEngine.saveDeviceNetworkPosture(db, id, req.body || {});
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'NETWORK_POSTURE_REPORT_ERROR', message: err.message });
+    }
+  });
+
+  // 44. GET /api/v1/nodes/:id/network-profiles (Agent fetches assigned Wi-Fi / VPN profiles)
+  router.get('/api/v1/nodes/:id/network-profiles', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const profiles = networkEngine.getEffectiveProfilesForDevice(db, id);
+      sendJson(res, 200, { device_id: id, profiles });
+    } catch (err) {
+      sendJson(res, 500, { error: 'NETWORK_PROFILES_FETCH_ERROR', message: err.message });
     }
   });
 }

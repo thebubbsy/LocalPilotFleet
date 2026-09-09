@@ -26,6 +26,7 @@ import * as asrEngine from '../services/asrEngine.js';
 import * as analyticsEngine from '../services/analyticsEngine.js';
 import * as messagesEngine from '../services/messagesEngine.js';
 import * as certificateEngine from '../services/certificateEngine.js';
+import * as networkEngine from '../services/networkEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -3773,6 +3774,127 @@ try {
       sendJson(res, 200, { device_id: id, certificates: certs });
     } catch (err) {
       sendJson(res, 500, { error: 'DEVICE_CERTIFICATES_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // ══════════════════════════════════════════════════════════════════
+  // WI-FI & VPN CONFIGURATION PROFILES & NETWORK POSTURE (194–201)
+  // ══════════════════════════════════════════════════════════════════
+
+  // 194. GET /api/v1/fleet/networks/stats
+  router.get('/api/v1/fleet/networks/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const stats = networkEngine.getNetworkStats(db);
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'NETWORK_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 195. GET /api/v1/fleet/networks/profiles
+  router.get('/api/v1/fleet/networks/profiles', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const profiles = networkEngine.getAllProfiles(db);
+      sendJson(res, 200, { profiles });
+    } catch (err) {
+      sendJson(res, 500, { error: 'NETWORK_PROFILES_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 196. POST /api/v1/fleet/networks/profiles
+  router.post('/api/v1/fleet/networks/profiles', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const created = networkEngine.createProfile(db, req.body || {});
+      sendJson(res, 201, created);
+    } catch (err) {
+      sendJson(res, 400, { error: 'NETWORK_PROFILE_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 197. GET /api/v1/fleet/networks/inventory
+  router.get('/api/v1/fleet/networks/inventory', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const inventory = networkEngine.getFleetNetworkInventory(db, req.query || {});
+      sendJson(res, 200, { inventory });
+    } catch (err) {
+      sendJson(res, 500, { error: 'NETWORK_INVENTORY_ERROR', message: err.message });
+    }
+  });
+
+  // 198. GET /api/v1/fleet/networks/profiles/:id
+  router.get('/api/v1/fleet/networks/profiles/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const profile = networkEngine.getProfileById(db, id);
+      if (!profile) {
+        sendJson(res, 404, { error: 'PROFILE_NOT_FOUND', message: 'Network profile not found' });
+        return;
+      }
+      sendJson(res, 200, profile);
+    } catch (err) {
+      sendJson(res, 500, { error: 'NETWORK_PROFILE_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 199. PATCH /api/v1/fleet/networks/profiles/:id
+  router.patch('/api/v1/fleet/networks/profiles/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const updated = networkEngine.updateProfile(db, id, req.body || {});
+      if (!updated) {
+        sendJson(res, 404, { error: 'PROFILE_NOT_FOUND', message: 'Network profile not found' });
+        return;
+      }
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 400, { error: 'NETWORK_PROFILE_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 200. DELETE /api/v1/fleet/networks/profiles/:id
+  router.delete('/api/v1/fleet/networks/profiles/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const deleted = networkEngine.deleteProfile(db, id);
+      if (!deleted) {
+        sendJson(res, 404, { error: 'PROFILE_NOT_FOUND', message: 'Network profile not found' });
+        return;
+      }
+      sendJson(res, 200, { success: true, id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'NETWORK_PROFILE_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 201. GET /api/v1/fleet/devices/:id/network
+  router.get('/api/v1/fleet/devices/:id/network', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const posture = networkEngine.getDeviceNetworkPosture(db, id);
+      const effectiveProfiles = networkEngine.getEffectiveProfilesForDevice(db, id);
+      sendJson(res, 200, {
+        device_id: id,
+        posture: posture || null,
+        assigned_profiles: effectiveProfiles
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_NETWORK_FETCH_ERROR', message: err.message });
     }
   });
 }

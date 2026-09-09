@@ -140,6 +140,9 @@ const App = {
       case 'certificates':
         if (window.CertificateTable) window.CertificateTable.init();
         break;
+      case 'network':
+        if (window.NetworkTable) window.NetworkTable.init();
+        break;
       case 'settings':
         this.renderSettings();
         break;

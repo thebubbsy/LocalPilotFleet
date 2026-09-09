@@ -2167,6 +2167,141 @@ if ($Mode -eq 'Heartbeat') {
                     Write-AgentLog 'WARN' "Certificate store audit encountered non-fatal error: $($_.Exception.Message)"
                 }
             }
+
+            # ── Intune Wi-Fi & VPN Network Posture Audit ──────────────────────
+            if (-not (Get-Variable -Name 'LastNetworkPostureAudit' -Scope Script -ErrorAction SilentlyContinue)) {
+                $script:LastNetworkPostureAudit = $null
+            }
+            $now = Get-Date
+            $shouldAuditNetwork = $false
+            if ($null -eq $script:LastNetworkPostureAudit -or ($now - $script:LastNetworkPostureAudit).TotalSeconds -ge 180) {
+                $shouldAuditNetwork = $true
+            }
+
+            if ($shouldAuditNetwork) {
+                $script:LastNetworkPostureAudit = $now
+                try {
+                    $connectedSsid = ''
+                    $bssid = ''
+                    $signalPct = 0
+                    $radioType = ''
+                    $channel = 0
+                    $authType = ''
+                    $isOpen = $false
+
+                    # 1. Parse active Wi-Fi interface if present
+                    try {
+                        $wlanRaw = netsh wlan show interfaces 2>&1
+                        if ($wlanRaw) {
+                            $wlanText = $wlanRaw -join "`n"
+                            if ($wlanText -match 'State\s*:\s*connected') {
+                                if ($wlanText -match 'SSID\s*:\s*([^\r\n]+)') { $connectedSsid = $matches[1].Trim() }
+                                if ($wlanText -match 'BSSID\s*:\s*([0-9a-fA-F:]{17})') { $bssid = $matches[1].Trim() }
+                                if ($wlanText -match 'Signal\s*:\s*(\d+)%') { $signalPct = [int]$matches[1] }
+                                if ($wlanText -match 'Radio type\s*:\s*([^\r\n]+)') { $radioType = $matches[1].Trim() }
+                                if ($wlanText -match 'Channel\s*:\s*(\d+)') { $channel = [int]$matches[1] }
+                                if ($wlanText -match 'Authentication\s*:\s*([^\r\n]+)') {
+                                    $authType = $matches[1].Trim()
+                                    if ($authType -like '*Open*' -or $authType -eq 'None') { $isOpen = $true }
+                                }
+                            }
+                        }
+                    } catch {}
+
+                    # 2. Configured Wi-Fi profiles
+                    $cfgProfiles = @()
+                    try {
+                        $profRaw = netsh wlan show profiles 2>&1
+                        if ($profRaw) {
+                            foreach ($line in $profRaw) {
+                                if ($line -match 'All User Profile\s*:\s*(.+)$') {
+                                    $cfgProfiles += $matches[1].Trim()
+                                }
+                            }
+                        }
+                    } catch {}
+
+                    # 3. Active network adapters
+                    $adapters = @()
+                    try {
+                        $hasNetAdapter = Get-Command -Name Get-NetAdapter -ErrorAction SilentlyContinue
+                        if ($hasNetAdapter) {
+                            $rawAdapters = Get-NetAdapter -ErrorAction SilentlyContinue
+                            foreach ($ad in $rawAdapters) {
+                                $adapters += @{
+                                    name        = $ad.Name
+                                    description = $ad.InterfaceDescription
+                                    mac         = $ad.MacAddress
+                                    status      = [string]$ad.Status
+                                    speed       = [string]$ad.LinkSpeed
+                                }
+                            }
+                        }
+                    } catch {}
+
+                    # 4. Active VPN tunnels
+                    $activeVpns = @()
+                    try {
+                        $hasVpn = Get-Command -Name Get-VpnConnection -ErrorAction SilentlyContinue
+                        if ($hasVpn) {
+                            $vpns = Get-VpnConnection -AllUserConnection -ErrorAction SilentlyContinue
+                            foreach ($v in $vpns) {
+                                if ($v.ConnectionStatus -eq 'Connected') {
+                                    $activeVpns += $v.Name
+                                }
+                            }
+                        }
+                    } catch {}
+
+                    # Check WireGuard / OpenVPN adapter states
+                    foreach ($ad in $adapters) {
+                        if (($ad.name -like '*WireGuard*' -or $ad.name -like '*OpenVPN*' -or $ad.description -like '*WireGuard*' -or $ad.description -like '*OpenVPN*') -and $ad.status -eq 'Up') {
+                            if (-not ($activeVpns -contains $ad.name)) {
+                                $activeVpns += $ad.name
+                            }
+                        }
+                    }
+
+                    # 5. IP and Gateway
+                    $ipAddr = $ipAddress
+                    $gateway = ''
+                    $dnsList = @()
+                    try {
+                        $ipConfig = Get-NetIPConfiguration -ErrorAction SilentlyContinue | Where-Object { $_.IPv4DefaultGateway } | Select-Object -First 1
+                        if ($ipConfig) {
+                            if ($ipConfig.IPv4DefaultGateway) { $gateway = $ipConfig.IPv4DefaultGateway.NextHop }
+                            if ($ipConfig.DNSServer) { $dnsList = @($ipConfig.DNSServer.ServerAddresses) }
+                        }
+                    } catch {}
+
+                    $posturePayload = @{
+                        connected_ssid       = $connectedSsid
+                        bssid                = $bssid
+                        signal_quality_pct   = $signalPct
+                        radio_type           = $radioType
+                        channel              = $channel
+                        security_type        = if ($isOpen) { 'OPEN' } else { 'SECURE' }
+                        is_open_network      = $isOpen
+                        active_adapters      = $adapters
+                        configured_profiles  = $cfgProfiles
+                        active_vpns          = $activeVpns
+                        ipv4_address         = $ipAddr
+                        ipv4_gateway         = $gateway
+                        dns_servers          = $dnsList
+                    }
+
+                    Invoke-RestMethod `
+                        -Uri        "$baseUrl/api/v1/nodes/$deviceId/network-posture" `
+                        -Method     POST `
+                        -Body       ($posturePayload | ConvertTo-Json -Compress -Depth 5) `
+                        -Headers    $authHeaders `
+                        -TimeoutSec 10 `
+                        -ErrorAction SilentlyContinue | Out-Null
+                    Write-AgentLog 'INFO' "Reported network posture (SSID: '$connectedSsid', Adapters: $($adapters.Count), Wi-Fi Profiles: $($cfgProfiles.Count), VPNs: $($activeVpns.Count))"
+                } catch {
+                    Write-AgentLog 'WARN' "Network posture audit encountered non-fatal error: $($_.Exception.Message)"
+                }
+            }
         } catch {
             Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
             if (-not $Continuous) { exit 1 }
