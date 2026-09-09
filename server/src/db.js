@@ -1504,6 +1504,53 @@ export function initDb(dbOrPath, options = {}) {
       FOREIGN KEY(driver_id) REFERENCES fleet_driver_catalog(id) ON DELETE CASCADE,
       UNIQUE(device_id, driver_id)
     );
+
+    -- 79. REMOTE_HELP_SESSIONS — Microsoft Intune Remote Help & Unattended Assistance Sessions
+    CREATE TABLE IF NOT EXISTS remote_help_sessions (
+      id TEXT PRIMARY KEY,
+      session_code TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      sharer_user TEXT DEFAULT '',
+      helper_user TEXT NOT NULL,
+      session_type TEXT NOT NULL CHECK(session_type IN ('FULL_CONTROL', 'VIEW_ONLY', 'ELEVATION')),
+      status TEXT NOT NULL CHECK(status IN ('PENDING', 'ACTIVE', 'COMPLETED', 'EXPIRED', 'CANCELLED')),
+      unattended_enabled INTEGER DEFAULT 0 CHECK(unattended_enabled IN (0, 1)),
+      session_key_hash TEXT DEFAULT '',
+      started_at TEXT,
+      ended_at TEXT,
+      expires_at TEXT NOT NULL,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    -- 80. REMOTE_HELP_ROLES — Role-Based Access Control for Remote Assistance Operators
+    CREATE TABLE IF NOT EXISTS remote_help_roles (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      can_request_full_control INTEGER DEFAULT 1 CHECK(can_request_full_control IN (0, 1)),
+      can_request_elevation INTEGER DEFAULT 0 CHECK(can_request_elevation IN (0, 1)),
+      can_unattended INTEGER DEFAULT 0 CHECK(can_unattended IN (0, 1)),
+      target_group_id TEXT DEFAULT NULL,
+      enabled INTEGER DEFAULT 1 CHECK(enabled IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET NULL
+    );
+
+    -- 81. REMOTE_HELP_AUDIT_LOG — Security & Session Audit Ledger for Remote Operations
+    CREATE TABLE IF NOT EXISTS remote_help_audit_log (
+      id TEXT PRIMARY KEY,
+      session_id TEXT DEFAULT NULL,
+      device_id TEXT NOT NULL,
+      actor_user TEXT NOT NULL,
+      action TEXT NOT NULL CHECK(action IN ('SESSION_REQUESTED', 'SESSION_STARTED', 'CONTROL_GRANTED', 'ELEVATION_TRIGGERED', 'SESSION_TERMINATED', 'UNATTENDED_CONNECTED')),
+      details TEXT DEFAULT '',
+      timestamp TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(session_id) REFERENCES remote_help_sessions(id) ON DELETE SET NULL
+    );
   `);
 
   // Indexes
@@ -1712,6 +1759,15 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_devdrv_dev ON device_driver_status(device_id);
     CREATE INDEX IF NOT EXISTS idx_devdrv_drv ON device_driver_status(driver_id);
     CREATE INDEX IF NOT EXISTS idx_devdrv_status ON device_driver_status(install_status);
+
+    CREATE INDEX IF NOT EXISTS idx_rh_sess_code ON remote_help_sessions(session_code);
+    CREATE INDEX IF NOT EXISTS idx_rh_sess_device ON remote_help_sessions(device_id);
+    CREATE INDEX IF NOT EXISTS idx_rh_sess_status ON remote_help_sessions(status);
+    CREATE INDEX IF NOT EXISTS idx_rh_roles_target ON remote_help_roles(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_rh_roles_enabled ON remote_help_roles(enabled);
+    CREATE INDEX IF NOT EXISTS idx_rh_audit_sess ON remote_help_audit_log(session_id);
+    CREATE INDEX IF NOT EXISTS idx_rh_audit_dev ON remote_help_audit_log(device_id);
+    CREATE INDEX IF NOT EXISTS idx_rh_audit_time ON remote_help_audit_log(timestamp DESC);
   `);
 
   // Schema migrations for existing databases
@@ -3876,6 +3932,68 @@ exit 0`,
       1, 0,
       '-3 days', '-3 days'
     );
+  }
+
+  // 35. Remote Help Roles & Seed Session
+  const rhRoleCount = db.prepare('SELECT COUNT(*) as count FROM remote_help_roles').get().count;
+  if (rhRoleCount === 0) {
+    const insertRole = db.prepare(`
+      INSERT INTO remote_help_roles (id, name, description, can_request_full_control, can_request_elevation, can_unattended, target_group_id, enabled, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?), DATETIME('now', ?))
+    `);
+
+    insertRole.run(
+      'rh-role-tier1',
+      'Tier 1 Helpdesk Attended Operator',
+      'Screen viewing and interactive mouse/keyboard control with user consent. No UAC elevation or unattended access.',
+      1, 0, 0, null, 1, '-7 days', '-7 days'
+    );
+
+    insertRole.run(
+      'rh-role-tier2-admin',
+      'Tier 2 Desktop Systems Engineering',
+      'Full interactive control with elevation privileges to enter local admin credentials across UAC secure desktops.',
+      1, 1, 0, null, 1, '-7 days', '-7 days'
+    );
+
+    insertRole.run(
+      'rh-role-unattended-ops',
+      'Server & Kiosk Unattended Operations',
+      'Unattended maintenance and remediation access for headless workstations, digital signage, and server nodes.',
+      1, 1, 1, null, 1, '-7 days', '-7 days'
+    );
+  }
+
+  const rhSessCount = db.prepare('SELECT COUNT(*) as count FROM remote_help_sessions').get().count;
+  if (rhSessCount === 0) {
+    const sampleDevice = db.prepare("SELECT id FROM devices WHERE hostname = 'DESKTOP-R0H12DJ' LIMIT 1").get()
+      || db.prepare("SELECT id FROM devices LIMIT 1").get();
+    
+    if (sampleDevice) {
+      const insertSess = db.prepare(`
+        INSERT INTO remote_help_sessions (id, session_code, device_id, sharer_user, helper_user, session_type, status, unattended_enabled, started_at, ended_at, expires_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', '-2 hours'), DATETIME('now', '-1 hours'), DATETIME('now', '+15 minutes'), DATETIME('now', '-2 hours'), DATETIME('now', '-1 hours'))
+      `);
+      insertSess.run(
+        'sess-sample-completed',
+        '482910',
+        sampleDevice.id,
+        'Tony',
+        'Helpdesk Tier 1 Admin',
+        'FULL_CONTROL',
+        'COMPLETED',
+        0
+      );
+
+      const insertAudit = db.prepare(`
+        INSERT INTO remote_help_audit_log (id, session_id, device_id, actor_user, action, details, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, DATETIME('now', ?))
+      `);
+      insertAudit.run('rh-audit-1', 'sess-sample-completed', sampleDevice.id, 'Helpdesk Tier 1 Admin', 'SESSION_REQUESTED', '6-digit PIN 482910 generated for attended support', '-2 hours');
+      insertAudit.run('rh-audit-2', 'sess-sample-completed', sampleDevice.id, 'Tony', 'SESSION_STARTED', 'User Tony accepted remote assistance session', '-2 hours');
+      insertAudit.run('rh-audit-3', 'sess-sample-completed', sampleDevice.id, 'Helpdesk Tier 1 Admin', 'CONTROL_GRANTED', 'Interactive mouse and keyboard control granted by user', '-110 minutes');
+      insertAudit.run('rh-audit-4', 'sess-sample-completed', sampleDevice.id, 'Helpdesk Tier 1 Admin', 'SESSION_TERMINATED', 'Assistance session concluded successfully', '-1 hours');
+    }
   }
 }
 

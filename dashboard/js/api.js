@@ -1663,6 +1663,100 @@ async function getDeviceDrivers(deviceId) {
   return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/drivers`);
 }
 
+/* ── Intune Remote Help & Unattended Assistance Governance ───────────── */
+async function getRemoteHelpStats() {
+  return apiFetch('/api/v1/fleet/remote-help/stats');
+}
+
+async function getRemoteHelpSessions(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/remote-help/sessions${qStr ? '?' + qStr : ''}`);
+}
+
+async function createRemoteHelpSession(data) {
+  return apiFetch('/api/v1/fleet/remote-help/sessions', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function getRemoteHelpSession(id) {
+  return apiFetch(`/api/v1/fleet/remote-help/sessions/${encodeURIComponent(id)}`);
+}
+
+async function connectRemoteHelpSession(id, data = {}) {
+  return apiFetch(`/api/v1/fleet/remote-help/sessions/${encodeURIComponent(id)}/connect`, {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function terminateRemoteHelpSession(id, data = {}) {
+  return apiFetch(`/api/v1/fleet/remote-help/sessions/${encodeURIComponent(id)}/terminate`, {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function grantRemoteHelpControl(id, data = {}) {
+  return apiFetch(`/api/v1/fleet/remote-help/sessions/${encodeURIComponent(id)}/control`, {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function triggerRemoteHelpElevation(id, data = {}) {
+  return apiFetch(`/api/v1/fleet/remote-help/sessions/${encodeURIComponent(id)}/elevation`, {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function getRemoteHelpRoles() {
+  return apiFetch('/api/v1/fleet/remote-help/roles');
+}
+
+async function getRemoteHelpRole(id) {
+  return apiFetch(`/api/v1/fleet/remote-help/roles/${encodeURIComponent(id)}`);
+}
+
+async function createRemoteHelpRole(data) {
+  return apiFetch('/api/v1/fleet/remote-help/roles', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateRemoteHelpRole(id, data) {
+  return apiFetch(`/api/v1/fleet/remote-help/roles/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteRemoteHelpRole(id) {
+  return apiFetch(`/api/v1/fleet/remote-help/roles/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getRemoteHelpAuditLog(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/remote-help/audit-log${qStr ? '?' + qStr : ''}`);
+}
+
+async function getDeviceRemoteHelp(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/remote-help`);
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -1808,6 +1902,22 @@ window.FleetAPI = {
   setDriverApprovalStatus,
   getDriverInventory,
   getDeviceDrivers,
+  // Intune Remote Help & Unattended Assistance
+  getRemoteHelpStats,
+  getRemoteHelpSessions,
+  createRemoteHelpSession,
+  getRemoteHelpSession,
+  connectRemoteHelpSession,
+  terminateRemoteHelpSession,
+  grantRemoteHelpControl,
+  triggerRemoteHelpElevation,
+  getRemoteHelpRoles,
+  getRemoteHelpRole,
+  createRemoteHelpRole,
+  updateRemoteHelpRole,
+  deleteRemoteHelpRole,
+  getRemoteHelpAuditLog,
+  getDeviceRemoteHelp,
   // Proactive Remediations
   getRemediations,
   getRemediationStats,

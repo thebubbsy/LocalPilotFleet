@@ -34,6 +34,7 @@ import * as dfciEngine from '../services/dfciEngine.js';
 import * as wipEngine from '../services/wipEngine.js';
 import * as whfbEngine from '../services/whfbEngine.js';
 import * as driverUpdateEngine from '../services/driverUpdateEngine.js';
+import * as remoteHelpEngine from '../services/remoteHelpEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -4791,6 +4792,193 @@ try {
       sendJson(res, 200, data);
     } catch (err) {
       sendJson(res, 500, { error: 'DEVICE_DRIVERS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // ── Remote Help & Unattended Assistance Fleet Routes (265–278) ──
+  // 265. GET /api/v1/fleet/remote-help/stats
+  router.get('/api/v1/fleet/remote-help/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = remoteHelpEngine.getRemoteHelpStats();
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'REMOTE_HELP_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 266. GET /api/v1/fleet/remote-help/sessions
+  router.get('/api/v1/fleet/remote-help/sessions', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const sessions = remoteHelpEngine.getSessions(req.query);
+      sendJson(res, 200, { sessions });
+    } catch (err) {
+      sendJson(res, 500, { error: 'REMOTE_HELP_SESSIONS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 267. POST /api/v1/fleet/remote-help/sessions
+  router.post('/api/v1/fleet/remote-help/sessions', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const session = remoteHelpEngine.createSession(req.body || {});
+      broadcastEvent('remote_help_session_created', { session_id: session.id, device_id: session.device_id, code: session.session_code });
+      sendJson(res, 201, session);
+    } catch (err) {
+      sendJson(res, 400, { error: 'REMOTE_HELP_SESSION_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 268. GET /api/v1/fleet/remote-help/sessions/:id
+  router.get('/api/v1/fleet/remote-help/sessions/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const session = remoteHelpEngine.getSession(id);
+      if (!session) {
+        return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Session not found' });
+      }
+      sendJson(res, 200, session);
+    } catch (err) {
+      sendJson(res, 500, { error: 'REMOTE_HELP_SESSION_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 269. POST /api/v1/fleet/remote-help/sessions/:id/connect
+  router.post('/api/v1/fleet/remote-help/sessions/:id/connect', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const session = remoteHelpEngine.connectSession(id, req.body || {});
+      broadcastEvent('remote_help_connected', { session_id: id, status: 'ACTIVE' });
+      sendJson(res, 200, session);
+    } catch (err) {
+      sendJson(res, 400, { error: 'REMOTE_HELP_CONNECT_ERROR', message: err.message });
+    }
+  });
+
+  // 270. POST /api/v1/fleet/remote-help/sessions/:id/terminate
+  router.post('/api/v1/fleet/remote-help/sessions/:id/terminate', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const { actor_user, reason } = req.body || {};
+    try {
+      const session = remoteHelpEngine.terminateSession(id, actor_user, reason);
+      broadcastEvent('remote_help_terminated', { session_id: id, status: 'COMPLETED' });
+      sendJson(res, 200, session);
+    } catch (err) {
+      sendJson(res, 400, { error: 'REMOTE_HELP_TERMINATE_ERROR', message: err.message });
+    }
+  });
+
+  // 271. POST /api/v1/fleet/remote-help/sessions/:id/control
+  router.post('/api/v1/fleet/remote-help/sessions/:id/control', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const { actor_user } = req.body || {};
+    try {
+      const session = remoteHelpEngine.grantControl(id, actor_user);
+      broadcastEvent('remote_help_control_granted', { session_id: id, type: 'FULL_CONTROL' });
+      sendJson(res, 200, session);
+    } catch (err) {
+      sendJson(res, 400, { error: 'REMOTE_HELP_CONTROL_ERROR', message: err.message });
+    }
+  });
+
+  // 272. POST /api/v1/fleet/remote-help/sessions/:id/elevation
+  router.post('/api/v1/fleet/remote-help/sessions/:id/elevation', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const { actor_user, details } = req.body || {};
+    try {
+      const session = remoteHelpEngine.triggerElevation(id, actor_user, details);
+      broadcastEvent('remote_help_elevation_triggered', { session_id: id, device_id: session.device_id });
+      sendJson(res, 200, session);
+    } catch (err) {
+      sendJson(res, 400, { error: 'REMOTE_HELP_ELEVATION_ERROR', message: err.message });
+    }
+  });
+
+  // 273. GET /api/v1/fleet/remote-help/roles
+  router.get('/api/v1/fleet/remote-help/roles', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const roles = remoteHelpEngine.getRoles();
+      sendJson(res, 200, { roles });
+    } catch (err) {
+      sendJson(res, 500, { error: 'ROLES_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 274. POST /api/v1/fleet/remote-help/roles
+  router.post('/api/v1/fleet/remote-help/roles', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const role = remoteHelpEngine.createRole(req.body || {});
+      sendJson(res, 201, role);
+    } catch (err) {
+      sendJson(res, 400, { error: 'ROLE_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 275. GET /api/v1/fleet/remote-help/roles/:id
+  router.get('/api/v1/fleet/remote-help/roles/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const role = remoteHelpEngine.getRole(id);
+      if (!role) return sendJson(res, 404, { error: 'ROLE_NOT_FOUND', message: 'Role not found' });
+      sendJson(res, 200, role);
+    } catch (err) {
+      sendJson(res, 500, { error: 'ROLE_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 276. PATCH /api/v1/fleet/remote-help/roles/:id
+  router.patch('/api/v1/fleet/remote-help/roles/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const role = remoteHelpEngine.updateRole(id, req.body || {});
+      sendJson(res, 200, role);
+    } catch (err) {
+      sendJson(res, 400, { error: 'ROLE_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 277. DELETE /api/v1/fleet/remote-help/roles/:id
+  router.delete('/api/v1/fleet/remote-help/roles/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const result = remoteHelpEngine.deleteRole(id);
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'ROLE_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 278. GET /api/v1/fleet/remote-help/audit-log
+  router.get('/api/v1/fleet/remote-help/audit-log', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const logs = remoteHelpEngine.getAuditLog(req.query);
+      sendJson(res, 200, { audit_log: logs });
+    } catch (err) {
+      sendJson(res, 500, { error: 'AUDIT_LOG_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 279. GET /api/v1/fleet/devices/:id/remote-help
+  router.get('/api/v1/fleet/devices/:id/remote-help', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const data = remoteHelpEngine.getDeviceRemoteHelp(id);
+      sendJson(res, 200, data);
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_REMOTE_HELP_FETCH_ERROR', message: err.message });
     }
   });
 }

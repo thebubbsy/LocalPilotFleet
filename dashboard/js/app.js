@@ -164,6 +164,9 @@ const App = {
       case 'drivers':
         if (window.DriverUpdatesTable) window.DriverUpdatesTable.init();
         break;
+      case 'remotehelp':
+        if (window.RemoteHelpTable) window.RemoteHelpTable.init();
+        break;
       case 'settings':
         this.renderSettings();
         break;

@@ -35,6 +35,7 @@ import * as dfciEngine from '../services/dfciEngine.js';
 import * as wipEngine from '../services/wipEngine.js';
 import * as whfbEngine from '../services/whfbEngine.js';
 import * as driverUpdateEngine from '../services/driverUpdateEngine.js';
+import * as remoteHelpEngine from '../services/remoteHelpEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -369,7 +370,8 @@ export function registerNodeRoutes(router) {
         dfci_policy: dfciEngine.getEffectivePolicyForDevice(db, deviceId),
         wip_policy: wipEngine.getEffectiveWipPolicyForDevice(db, deviceId),
         whfb_policy: whfbEngine.getEffectiveWhfbPolicyForDevice(db, deviceId),
-        driver_policy: driverUpdateEngine.getEffectiveDriverPolicyForDevice(db, deviceId)
+        driver_policy: driverUpdateEngine.getEffectiveDriverPolicyForDevice(db, deviceId),
+        pending_remote_help_sessions: remoteHelpEngine.getPendingSessionsForDevice(deviceId)
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -1671,6 +1673,50 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, data);
     } catch (err) {
       sendJson(res, 500, { error: 'DEVICE_DRIVERS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // ── Remote Help & Unattended Assistance Node Routes (65–67) ──
+  // 65. POST /api/v1/nodes/:id/remote-help/connect (Node connects or activates session via PIN)
+  router.post('/api/v1/nodes/:id/remote-help/connect', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { session_code, session_id, sharer_user } = req.body || {};
+    try {
+      const session = remoteHelpEngine.connectSession(session_code || session_id, { sharer_user });
+      sendJson(res, 200, session);
+    } catch (err) {
+      sendJson(res, 400, { error: 'REMOTE_HELP_CONNECT_ERROR', message: err.message });
+    }
+  });
+
+  // 66. POST /api/v1/nodes/:id/remote-help/disconnect (Node reports session end/disconnect)
+  router.post('/api/v1/nodes/:id/remote-help/disconnect', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { session_id, actor_user, reason } = req.body || {};
+    try {
+      const session = remoteHelpEngine.terminateSession(session_id, actor_user || 'Workstation Node', reason || 'Workstation disconnected');
+      sendJson(res, 200, session);
+    } catch (err) {
+      sendJson(res, 400, { error: 'REMOTE_HELP_DISCONNECT_ERROR', message: err.message });
+    }
+  });
+
+  // 67. POST /api/v1/nodes/:id/remote-help/event (Node logs remote help activity or elevation)
+  router.post('/api/v1/nodes/:id/remote-help/event', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    const { session_id, actor_user, action, details } = req.body || {};
+    try {
+      const log = remoteHelpEngine.recordAuditEvent({
+        session_id,
+        device_id: id,
+        actor_user: actor_user || 'Workstation Node',
+        action: action || 'SESSION_STARTED',
+        details: details || ''
+      });
+      sendJson(res, 201, log);
+    } catch (err) {
+      sendJson(res, 400, { error: 'REMOTE_HELP_EVENT_ERROR', message: err.message });
     }
   });
 }

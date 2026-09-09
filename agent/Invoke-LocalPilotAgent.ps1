@@ -2986,6 +2986,40 @@ if ($Mode -eq 'Heartbeat') {
                     Write-AgentLog 'WARN' "Driver & firmware audit encountered non-fatal error: $($_.Exception.Message)"
                 }
             }
+
+            # ── Intune Remote Help & Unattended Assistance Listener ───────────
+            if ($resp.pending_remote_help_sessions -and @($resp.pending_remote_help_sessions).Count -gt 0) {
+                foreach ($rhSess in @($resp.pending_remote_help_sessions)) {
+                    $rhId = $rhSess.id
+                    $rhCode = $rhSess.session_code
+                    $rhType = $rhSess.session_type
+                    $isUnattended = $rhSess.unattended_enabled -eq 1
+
+                    if ($rhSess.status -eq 'PENDING') {
+                        if ($isUnattended) {
+                            Write-AgentLog 'INFO' "Received UNATTENDED Remote Help connection request (Session: $rhId, PIN: $rhCode). Auto-connecting helper..."
+                            try {
+                                $connectPayload = @{
+                                    session_id  = $rhId
+                                    sharer_user = "SYSTEM\LocalPilotDaemon ($env:USERNAME)"
+                                }
+                                Invoke-RestMethod `
+                                    -Uri        "$baseUrl/api/v1/nodes/$deviceId/remote-help/connect" `
+                                    -Method     POST `
+                                    -Body       ($connectPayload | ConvertTo-Json -Compress) `
+                                    -Headers    $authHeaders `
+                                    -TimeoutSec 10 `
+                                    -ErrorAction SilentlyContinue | Out-Null
+                                Write-AgentLog 'INFO' "Unattended Remote Help connected successfully for session $rhId"
+                            } catch {
+                                Write-AgentLog 'WARN' "Failed to auto-connect unattended remote help: $($_.Exception.Message)"
+                            }
+                        } else {
+                            Write-AgentLog 'INFO' "Pending Attended Remote Help session active. Session PIN: $rhCode | Operator: $($rhSess.helper_user)"
+                        }
+                    }
+                }
+            }
         } catch {
             Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
             if (-not $Continuous) { exit 1 }

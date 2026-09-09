@@ -591,6 +591,17 @@
         </div>
       </div>
 
+      <!-- ── Remote Assistance (Intune Remote Help) Posture ── -->
+      <div class="bc-section" id="bc-remotehelp-section">
+        <div class="bc-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>🎧 Remote Assistance (Intune Remote Help)</span>
+          <button class="intune-link-btn" id="btn-bc-view-remotehelp-tab">View Remote Help Blade</button>
+        </div>
+        <div id="bc-remotehelp-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading Remote Help status…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -2081,6 +2092,63 @@
       });
     }
 
+    // Fetch and populate Remote Assistance (Remote Help)
+    const rhListEl = body.querySelector('#bc-remotehelp-list');
+    if (rhListEl && _currentDevice?.id) {
+      body.querySelector('#btn-bc-view-remotehelp-tab')?.addEventListener('click', () => {
+        close();
+        if (window.App && typeof window.App.navigate === 'function') {
+          window.App.navigate('remotehelp');
+        }
+      });
+
+      window.FleetAPI.getDeviceRemoteHelp(_currentDevice.id).then(res => {
+        const active = res.active_session;
+        const past = res.past_sessions || [];
+
+        if (active) {
+          const pinFmt = active.session_code ? (active.session_code.slice(0, 3) + ' ' + active.session_code.slice(3)) : '—';
+          rhListEl.innerHTML = `
+            <div style="background:var(--bg-secondary);padding:10px 12px;border-radius:6px;border:1px solid #10b98155;margin-top:4px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <span style="font-weight:600;color:var(--text-primary);">
+                  Session PIN: <span style="font-family:monospace;font-size:1.1rem;color:#10B981;letter-spacing:2px;font-weight:700;">${esc(pinFmt)}</span>
+                </span>
+                <span class="badge" style="background:rgba(16,185,129,0.15);color:#10b981;font-weight:700;">
+                  🟢 ${esc(active.status)}
+                </span>
+              </div>
+              <div style="font-size:11px;color:var(--text-muted);display:grid;grid-template-columns:1fr 1fr;gap:4px;">
+                <div>Helper: <strong style="color:var(--text-primary);">${esc(active.helper_user)}</strong></div>
+                <div>Mode: <strong style="color:var(--text-primary);">${esc(active.session_type)}</strong></div>
+              </div>
+            </div>
+          `;
+        } else {
+          rhListEl.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;background:var(--bg-secondary);padding:8px 12px;border-radius:6px;border:1px solid var(--border-color);margin-top:4px;">
+              <div style="font-size:11px;color:var(--text-muted);">
+                <span>No active session.</span>
+                ${past.length > 0 ? ` <span style="color:var(--text-muted);">(${past.length} past sessions recorded)</span>` : ''}
+              </div>
+              <button class="intune-btn small primary" id="btn-bc-start-remotehelp" style="font-size:11px;padding:3px 8px;">
+                <span>➕</span> Start Session
+              </button>
+            </div>
+          `;
+
+          rhListEl.querySelector('#btn-bc-start-remotehelp')?.addEventListener('click', () => {
+            close();
+            if (window.App && typeof window.App.navigate === 'function') {
+              window.App.navigate('remotehelp');
+            }
+          });
+        }
+      }).catch(() => {
+        rhListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Remote assistance status ready.</div>';
+      });
+    }
+
     // Fetch and populate Remote Actions & Diagnostics
     const raListEl = body.querySelector('#bc-remote-actions-list');
     if (raListEl && _currentDevice?.id) {
@@ -2183,6 +2251,15 @@
     btnRunScript?.addEventListener('click', () => {
       if (_currentDevice && window.RemoteTerminal) {
         window.RemoteTerminal.open(_currentDevice.id);
+      }
+    });
+
+    const btnRemoteHelp = document.getElementById('btn-blade-remotehelp');
+    btnRemoteHelp?.addEventListener('click', () => {
+      if (!_currentDevice) return;
+      close();
+      if (window.App && typeof window.App.navigate === 'function') {
+        window.App.navigate('remotehelp');
       }
     });
 
