@@ -1343,6 +1343,58 @@ export function initDb(dbOrPath, options = {}) {
       timestamp TEXT DEFAULT (DATETIME('now')),
       FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
     );
+
+    -- 70. WIP_POLICIES — Windows Information Protection (WIP) & Endpoint Data Loss Prevention (DLP)
+    CREATE TABLE IF NOT EXISTS wip_policies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      target_group_id TEXT DEFAULT 'grp-all',
+      enforcement_level TEXT NOT NULL DEFAULT 'SILENT' CHECK(enforcement_level IN ('BLOCK', 'OVERRIDE', 'SILENT', 'OFF')),
+      enterprise_domain TEXT NOT NULL DEFAULT 'localpilot.internal',
+      protected_apps_json TEXT NOT NULL DEFAULT '[]',
+      network_boundaries_json TEXT NOT NULL DEFAULT '[]',
+      allow_user_decryption INTEGER DEFAULT 0 CHECK(allow_user_decryption IN (0, 1)),
+      show_wip_overlays INTEGER DEFAULT 1 CHECK(show_wip_overlays IN (0, 1)),
+      revoke_on_unenroll INTEGER DEFAULT 1 CHECK(revoke_on_unenroll IN (0, 1)),
+      enabled INTEGER DEFAULT 1 CHECK(enabled IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET DEFAULT
+    );
+
+    -- 71. DEVICE_WIP_STATUS — Workstation Corporate Data Protection & Exfiltration Posture
+    CREATE TABLE IF NOT EXISTS device_wip_status (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL UNIQUE,
+      policy_id TEXT,
+      enforcement_active TEXT NOT NULL DEFAULT 'SILENT' CHECK(enforcement_active IN ('BLOCK', 'OVERRIDE', 'SILENT', 'OFF')),
+      protected_files_count INTEGER DEFAULT 0,
+      encrypted_bytes INTEGER DEFAULT 0,
+      managed_apps_count INTEGER DEFAULT 0,
+      clipboard_violations_24h INTEGER DEFAULT 0,
+      cloud_exfiltration_attempts_24h INTEGER DEFAULT 0,
+      compliance_status TEXT NOT NULL DEFAULT 'COMPLIANT' CHECK(compliance_status IN ('COMPLIANT', 'NON_COMPLIANT', 'POLICY_DRIFT', 'UNAUDITED')),
+      last_audit_at TEXT DEFAULT (DATETIME('now')),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(policy_id) REFERENCES wip_policies(id) ON DELETE SET NULL
+    );
+
+    -- 72. WIP_AUDIT_LOG — Data Loss Prevention, Clipboard Exfiltration & Corporate Access Ledger
+    CREATE TABLE IF NOT EXISTS wip_audit_log (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      event_type TEXT NOT NULL CHECK(event_type IN ('DATA_BLOCKED', 'USER_OVERRIDE', 'EXFILTRATION_ATTEMPT', 'ENTERPRISE_FILE_ACCESSED', 'POLICY_APPLIED', 'CLIPBOARD_PASTE_BLOCKED')),
+      app_name TEXT NOT NULL,
+      target_location TEXT DEFAULT '',
+      file_name TEXT DEFAULT '',
+      user_justification TEXT DEFAULT '',
+      details TEXT DEFAULT '',
+      timestamp TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
   `);
 
   // Indexes
@@ -1527,6 +1579,14 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_devdfci_score ON device_dfci_status(hardware_readiness_score);
     CREATE INDEX IF NOT EXISTS idx_dfciaudit_device ON dfci_audit_log(device_id);
     CREATE INDEX IF NOT EXISTS idx_dfciaudit_time ON dfci_audit_log(timestamp DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_wippol_target ON wip_policies(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_wippol_enabled ON wip_policies(enabled);
+    CREATE INDEX IF NOT EXISTS idx_devwip_device ON device_wip_status(device_id);
+    CREATE INDEX IF NOT EXISTS idx_devwip_comp ON device_wip_status(compliance_status);
+    CREATE INDEX IF NOT EXISTS idx_devwip_enforce ON device_wip_status(enforcement_active);
+    CREATE INDEX IF NOT EXISTS idx_wipaudit_device ON wip_audit_log(device_id);
+    CREATE INDEX IF NOT EXISTS idx_wipaudit_time ON wip_audit_log(timestamp DESC);
   `);
 
   // Schema migrations for existing databases
@@ -3460,6 +3520,71 @@ exit 0`,
       1, 1,
       0, 1, 1,
       0, 0, 'NONE',
+      '-3 days', '-3 days'
+    );
+  }
+
+  // 47. Seed WIP Policies
+  const wipCount = db.prepare("SELECT COUNT(*) as c FROM wip_policies").get().c;
+  if (wipCount === 0) {
+    const insertWipPol = db.prepare(`
+      INSERT INTO wip_policies (
+        id, name, description, target_group_id, enforcement_level, enterprise_domain,
+        protected_apps_json, network_boundaries_json, allow_user_decryption,
+        show_wip_overlays, revoke_on_unenroll, enabled, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, DATETIME('now', ?), DATETIME('now', ?))
+    `);
+
+    const defaultApps = JSON.stringify([
+      { name: 'Microsoft Edge', binary: 'msedge.exe', allowed: true },
+      { name: 'Microsoft Outlook', binary: 'outlook.exe', allowed: true },
+      { name: 'Microsoft Teams', binary: 'ms-teams.exe', allowed: true },
+      { name: 'Visual Studio Code', binary: 'code.exe', allowed: true },
+      { name: 'OneDrive for Business', binary: 'onedrive.exe', allowed: true }
+    ]);
+
+    const defaultBoundaries = JSON.stringify([
+      { name: 'Corporate Intranet', domain: 'localpilot.internal', type: 'CLOUD_RESOURCE' },
+      { name: 'Local Subnet', domain: '10.0.0.0/8', type: 'IPV4_RANGE' },
+      { name: 'Office 365 Enterprise', domain: '*.sharepoint.com', type: 'ENTERPRISE_BOUNDARY' }
+    ]);
+
+    insertWipPol.run(
+      'wip-corp-block-hardened',
+      'Enterprise Corporate Strict Data Isolation',
+      'Enforces strict data separation: blocks copying corporate text to unmanaged apps, personal cloud storage, and unencrypted drives.',
+      'grp-all',
+      'BLOCK',
+      'localpilot.internal',
+      defaultApps,
+      defaultBoundaries,
+      0, 1, 1,
+      '-3 days', '-3 days'
+    );
+
+    insertWipPol.run(
+      'wip-corp-override-audited',
+      'Business Workstation Managed Audited Override',
+      'Prompts user with warning and mandatory justification when transferring corporate content to personal applications.',
+      'grp-workstations',
+      'OVERRIDE',
+      'localpilot.internal',
+      defaultApps,
+      defaultBoundaries,
+      1, 1, 1,
+      '-3 days', '-3 days'
+    );
+
+    insertWipPol.run(
+      'wip-byod-silent-discovery',
+      'BYOD Silent Discovery & Boundary Audit',
+      'Passively monitors and logs corporate data boundary transitions without blocking user actions.',
+      'grp-all',
+      'SILENT',
+      'localpilot.internal',
+      defaultApps,
+      defaultBoundaries,
+      1, 0, 0,
       '-3 days', '-3 days'
     );
   }

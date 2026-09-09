@@ -155,6 +155,9 @@ const App = {
       case 'dfci':
         if (window.DfciTable) window.DfciTable.init();
         break;
+      case 'wip':
+        if (window.WipTable) window.WipTable.init();
+        break;
       case 'settings':
         this.renderSettings();
         break;

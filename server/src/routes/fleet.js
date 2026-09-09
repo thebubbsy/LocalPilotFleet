@@ -31,6 +31,7 @@ import * as kioskEngine from '../services/kioskEngine.js';
 import * as storageAccessEngine from '../services/storageAccessEngine.js';
 import * as deliveryOptimizationEngine from '../services/deliveryOptimizationEngine.js';
 import * as dfciEngine from '../services/dfciEngine.js';
+import * as wipEngine from '../services/wipEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -4401,6 +4402,130 @@ try {
       sendJson(res, 200, status);
     } catch (err) {
       sendJson(res, 500, { error: 'DEVICE_DFCI_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 237. GET /api/v1/fleet/wip/stats
+  router.get('/api/v1/fleet/wip/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const stats = wipEngine.getWipStats(db);
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'WIP_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 238. GET /api/v1/fleet/wip/policies
+  router.get('/api/v1/fleet/wip/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const policies = wipEngine.getWipPolicies(db, req.query);
+      sendJson(res, 200, { policies });
+    } catch (err) {
+      sendJson(res, 500, { error: 'WIP_POLICIES_ERROR', message: err.message });
+    }
+  });
+
+  // 239. POST /api/v1/fleet/wip/policies
+  router.post('/api/v1/fleet/wip/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const created = wipEngine.createWipPolicy(db, req.body);
+      sendJson(res, 201, created);
+    } catch (err) {
+      sendJson(res, 400, { error: 'WIP_POLICY_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 240. GET /api/v1/fleet/wip/inventory
+  router.get('/api/v1/fleet/wip/inventory', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const inventory = wipEngine.getWipInventory(db, req.query);
+      sendJson(res, 200, { inventory });
+    } catch (err) {
+      sendJson(res, 500, { error: 'WIP_INVENTORY_ERROR', message: err.message });
+    }
+  });
+
+  // 241. GET /api/v1/fleet/wip/audit-log
+  router.get('/api/v1/fleet/wip/audit-log', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const logs = wipEngine.getWipAuditLog(db, req.query);
+      sendJson(res, 200, { logs });
+    } catch (err) {
+      sendJson(res, 500, { error: 'WIP_AUDIT_LOG_ERROR', message: err.message });
+    }
+  });
+
+  // 242. GET /api/v1/fleet/wip/policies/:id
+  router.get('/api/v1/fleet/wip/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const policy = wipEngine.getWipPolicy(db, id);
+      if (!policy) {
+        sendJson(res, 404, { error: 'POLICY_NOT_FOUND', message: 'WIP policy not found' });
+        return;
+      }
+      sendJson(res, 200, policy);
+    } catch (err) {
+      sendJson(res, 500, { error: 'WIP_POLICY_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 243. PATCH /api/v1/fleet/wip/policies/:id
+  router.patch('/api/v1/fleet/wip/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const updated = wipEngine.updateWipPolicy(db, id, req.body);
+      if (!updated) {
+        sendJson(res, 404, { error: 'POLICY_NOT_FOUND', message: 'WIP policy not found' });
+        return;
+      }
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 400, { error: 'WIP_POLICY_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 244. DELETE /api/v1/fleet/wip/policies/:id
+  router.delete('/api/v1/fleet/wip/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const deleted = wipEngine.deleteWipPolicy(db, id);
+      if (!deleted) {
+        sendJson(res, 404, { error: 'POLICY_NOT_FOUND', message: 'WIP policy not found' });
+        return;
+      }
+      sendJson(res, 200, { success: true, id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'WIP_POLICY_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 245. GET /api/v1/fleet/devices/:id/wip
+  router.get('/api/v1/fleet/devices/:id/wip', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const status = wipEngine.getDeviceWipStatus(db, id);
+      sendJson(res, 200, status);
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_WIP_FETCH_ERROR', message: err.message });
     }
   });
 }

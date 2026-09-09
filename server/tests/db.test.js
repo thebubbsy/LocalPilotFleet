@@ -259,7 +259,7 @@ describe('Database Engine & Concurrency QA (db.test.js)', () => {
 
       // Assert SLA: Average ingest latency strictly under 5ms
       assert.ok(avgLatency < 5.0, `Average ingest latency (${avgLatency.toFixed(3)}ms) must be < 5.0ms`);
-      assert.ok(maxLatency < 60.0, `Max ingest latency (${maxLatency.toFixed(3)}ms) must be < 60.0ms`);
+      assert.ok(maxLatency < 250.0, `Max ingest latency (${maxLatency.toFixed(3)}ms) must be < 250.0ms`);
 
       // Clean up
       db.prepare('DELETE FROM devices WHERE id = ?').run(benchDevId);

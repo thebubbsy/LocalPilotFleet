@@ -1499,6 +1499,58 @@ async function getDeviceDfci(deviceId) {
   return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/dfci`);
 }
 
+/* ── Windows Information Protection (WIP) & Data Loss Prevention (DLP) ── */
+async function getWipStats() {
+  return apiFetch('/api/v1/fleet/wip/stats');
+}
+
+async function getWipPolicies(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/wip/policies${qStr ? '?' + qStr : ''}`);
+}
+
+async function getWipPolicy(id) {
+  return apiFetch(`/api/v1/fleet/wip/policies/${encodeURIComponent(id)}`);
+}
+
+async function createWipPolicy(data) {
+  return apiFetch('/api/v1/fleet/wip/policies', { method: 'POST', body: JSON.stringify(data) });
+}
+
+async function updateWipPolicy(id, data) {
+  return apiFetch(`/api/v1/fleet/wip/policies/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(data) });
+}
+
+async function deleteWipPolicy(id) {
+  return apiFetch(`/api/v1/fleet/wip/policies/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+async function getWipInventory(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/wip/inventory${qStr ? '?' + qStr : ''}`);
+}
+
+async function getWipAuditLog(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/wip/audit-log${qStr ? '?' + qStr : ''}`);
+}
+
+async function getDeviceWip(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/wip`);
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -1613,6 +1665,16 @@ window.FleetAPI = {
   getDfciInventory,
   getDfciAuditLog,
   getDeviceDfci,
+  // Windows Information Protection (WIP) & Data Loss Prevention (DLP)
+  getWipStats,
+  getWipPolicies,
+  getWipPolicy,
+  createWipPolicy,
+  updateWipPolicy,
+  deleteWipPolicy,
+  getWipInventory,
+  getWipAuditLog,
+  getDeviceWip,
   // Proactive Remediations
   getRemediations,
   getRemediationStats,

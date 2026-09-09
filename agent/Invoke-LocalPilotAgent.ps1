@@ -2706,6 +2706,102 @@ if ($Mode -eq 'Heartbeat') {
                     Write-AgentLog 'WARN' "DFCI posture audit encountered non-fatal error: $($_.Exception.Message)"
                 }
             }
+
+            # ── Windows Information Protection (WIP) & Data Loss Prevention (DLP) Audit ──
+            if (-not (Get-Variable -Name 'LastWIPAudit' -Scope Script -ErrorAction SilentlyContinue)) {
+                $script:LastWIPAudit = $null
+            }
+            $shouldAuditWIP = $false
+            if ($null -eq $script:LastWIPAudit) {
+                $shouldAuditWIP = $true
+            } elseif (($now - $script:LastWIPAudit).TotalSeconds -ge 180) { # 3-minute interval
+                $shouldAuditWIP = $true
+            }
+
+            if ($shouldAuditWIP) {
+                $script:LastWIPAudit = $now
+                try {
+                    # 1. Inspect Windows Information Protection / EDP Policy in registry
+                    $edpReg = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\DataProtection' -ErrorAction SilentlyContinue
+                    $wipActive = 0
+                    if ($null -ne $edpReg -and $edpReg.Status -eq 1) {
+                        $wipActive = 1
+                    }
+
+                    # 2. Count Corporate Enterprise Protected Files (sample user document folders or encrypted items)
+                    $protectedFilesCount = 0
+                    $encryptedBytes = 0
+                    try {
+                        $docsPath = [Environment]::GetFolderPath('MyDocuments')
+                        if (Test-Path $docsPath) {
+                            $sampleFiles = Get-ChildItem -Path $docsPath -Recurse -File -Depth 2 -ErrorAction SilentlyContinue | Select-Object -First 50
+                            if ($sampleFiles) {
+                                foreach ($f in $sampleFiles) {
+                                    if ($f.Attributes -band [System.IO.FileAttributes]::Encrypted) {
+                                        $protectedFilesCount++
+                                        $encryptedBytes += $f.Length
+                                    }
+                                }
+                            }
+                        }
+                    } catch {
+                        # non-fatal
+                    }
+
+                    # 3. Detect Managed Corporate Apps (Edge, Outlook, Teams, Word, Excel, VS Code, etc.)
+                    $managedApps = @('msedge', 'outlook', 'teams', 'excel', 'winword', 'powerpnt', 'code')
+                    $runningManagedApps = 0
+                    try {
+                        $procNames = Get-Process -ErrorAction SilentlyContinue | Select-Object -ExpandProperty ProcessName -Unique
+                        foreach ($app in $managedApps) {
+                            if ($procNames -contains $app) {
+                                $runningManagedApps++
+                            }
+                        }
+                    } catch {
+                        # non-fatal
+                    }
+
+                    # 4. Check Event Log for BitLocker/EFS/WIP Security Audits
+                    $clipViolations = 0
+                    $exfilAttempts = 0
+                    try {
+                        $edpEvents = Get-WinEvent -LogName "Microsoft-Windows-EDP-Audit-TCB/Admin" -MaxEvents 20 -ErrorAction SilentlyContinue
+                        if ($edpEvents) {
+                            $clipViolations = ($edpEvents | Where-Object { $_.Id -eq 201 -or $_.Id -eq 202 }).Count
+                            $exfilAttempts = ($edpEvents | Where-Object { $_.Id -eq 203 -or $_.Id -eq 204 }).Count
+                        }
+                    } catch {
+                        # non-fatal
+                    }
+
+                    $complianceStatus = 'COMPLIANT'
+                    if ($clipViolations -gt 5 -or $exfilAttempts -gt 0) {
+                        $complianceStatus = 'INVESTIGATE'
+                    }
+
+                    $wipPayload = @{
+                        enforcement_active               = $wipActive
+                        protected_files_count            = $protectedFilesCount
+                        encrypted_bytes                  = $encryptedBytes
+                        managed_apps_count               = [Math]::Max(1, $runningManagedApps)
+                        clipboard_violations_24h         = $clipViolations
+                        cloud_exfiltration_attempts_24h  = $exfilAttempts
+                        compliance_status                = $complianceStatus
+                    }
+
+                    Invoke-RestMethod `
+                        -Uri        "$baseUrl/api/v1/nodes/$deviceId/wip-status" `
+                        -Method     POST `
+                        -Body       ($wipPayload | ConvertTo-Json -Depth 5 -Compress) `
+                        -Headers    $authHeaders `
+                        -TimeoutSec 10 `
+                        -ErrorAction SilentlyContinue | Out-Null
+                    Write-AgentLog 'INFO' "Reported WIP & Endpoint DLP posture (Active: $wipActive, ManagedApps: $runningManagedApps, Files: $protectedFilesCount, Compliance: $complianceStatus)"
+                } catch {
+                    Write-AgentLog 'WARN' "WIP posture audit encountered non-fatal error: $($_.Exception.Message)"
+                }
+            }
         } catch {
             Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
             if (-not $Continuous) { exit 1 }

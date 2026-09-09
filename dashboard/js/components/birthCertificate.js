@@ -558,6 +558,17 @@
         </div>
       </div>
 
+      <!-- ── Windows Information Protection & DLP Posture ── -->
+      <div class="bc-section" id="bc-wip-section">
+        <div class="bc-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>🔒 Windows Information Protection (WIP) &amp; DLP</span>
+          <button class="intune-link-btn" id="btn-bc-view-wip-tab">View WIP Blade</button>
+        </div>
+        <div id="bc-wip-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading Data Protection posture…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -1890,6 +1901,61 @@
         dfciListEl.innerHTML = html;
       }).catch(() => {
         dfciListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Firmware telemetry pending audit.</div>';
+      });
+    }
+
+    // Fetch and populate WIP Posture
+    const wipListEl = body.querySelector('#bc-wip-list');
+    if (wipListEl && _currentDevice?.id) {
+      body.querySelector('#btn-bc-view-wip-tab')?.addEventListener('click', () => {
+        close();
+        if (window.App && typeof window.App.navigate === 'function') {
+          window.App.navigate('wip');
+        }
+      });
+
+      window.FleetAPI.getDeviceWip(_currentDevice.id).then(res => {
+        if (!res || !res.status) {
+          wipListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">No WIP data protection telemetry reported yet.</div>';
+          return;
+        }
+
+        const status = res.status;
+        const policy = res.effective_policy;
+        const enforcement = status?.enforcement_active || 'SILENT';
+        const isCompliant = status?.compliance_status === 'COMPLIANT';
+        const compColor = isCompliant ? '#10b981' : '#ef4444';
+        const enforceColor = enforcement === 'BLOCK' ? '#ef4444' : (enforcement === 'OVERRIDE' ? '#f59e0b' : '#60a5fa');
+
+        let html = `
+          <div style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:12px;display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span style="font-size:13px;font-weight:600;color:var(--text-primary);">
+                  🔒 Policy: ${esc(policy ? policy.name : 'Enterprise Strict Isolation')}
+                </span>
+                <span class="badge" style="background:${enforceColor}22;color:${enforceColor};font-size:10px;font-weight:700;">
+                  ${esc(enforcement)}
+                </span>
+              </div>
+              <span class="badge" style="background:${compColor}22;color:${compColor};font-size:10px;font-weight:700;">
+                ${esc(status?.compliance_status || 'COMPLIANT')}
+              </span>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px;color:var(--text-muted);">
+              <div>Enterprise Domain: <strong style="color:var(--text-primary);">${esc(policy ? policy.enterprise_domain : 'localpilot.internal')}</strong></div>
+              <div>Protected Files: <strong style="color:#60a5fa;">${status?.protected_files_count || 0} (${fmtBytes(status?.encrypted_bytes)})</strong></div>
+              <div>Managed Apps: <strong style="color:var(--text-primary);">${status?.managed_apps_count || 0} active</strong></div>
+              <div>Cloud Exfiltration (24h): <strong style="color:${status?.cloud_exfiltration_attempts_24h > 0 ? '#ef4444' : '#10b981'};">${status?.cloud_exfiltration_attempts_24h || 0} attempts</strong></div>
+              <div>Clipboard Violations (24h): <strong style="color:${status?.clipboard_violations_24h > 0 ? '#f59e0b' : 'var(--text-muted)'};">${status?.clipboard_violations_24h || 0}</strong></div>
+              <div>Briefcase Overlays: <strong style="color:var(--text-primary);">${policy?.show_wip_overlays ? '✅ Enabled' : 'Off'}</strong></div>
+            </div>
+          </div>
+        `;
+        wipListEl.innerHTML = html;
+      }).catch(() => {
+        wipListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">WIP telemetry pending audit.</div>';
       });
     }
 

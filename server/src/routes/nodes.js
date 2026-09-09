@@ -32,6 +32,7 @@ import * as kioskEngine from '../services/kioskEngine.js';
 import * as storageAccessEngine from '../services/storageAccessEngine.js';
 import * as deliveryOptimizationEngine from '../services/deliveryOptimizationEngine.js';
 import * as dfciEngine from '../services/dfciEngine.js';
+import * as wipEngine from '../services/wipEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -363,7 +364,8 @@ export function registerNodeRoutes(router) {
         kiosk_profile: kioskEngine.getEffectiveKioskProfileForDevice(db, deviceId),
         storage_access_policy: storageAccessEngine.getEffectivePolicyForDevice(db, deviceId),
         delivery_optimization_policy: deliveryOptimizationEngine.getEffectivePolicyForDevice(db, deviceId),
-        dfci_policy: dfciEngine.getEffectivePolicyForDevice(db, deviceId)
+        dfci_policy: dfciEngine.getEffectivePolicyForDevice(db, deviceId),
+        wip_policy: wipEngine.getEffectiveWipPolicyForDevice(db, deviceId)
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -1544,6 +1546,45 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { device_id: id, policy });
     } catch (err) {
       sendJson(res, 500, { error: 'DFCI_POLICY_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 56. POST /api/v1/nodes/:id/wip-status (Agent reports WIP data protection and exfiltration metrics)
+  router.post('/api/v1/nodes/:id/wip-status', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const result = wipEngine.saveDeviceWipStatus(db, id, req.body || {});
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'WIP_STATUS_REPORT_ERROR', message: err.message });
+    }
+  });
+
+  // 57. POST /api/v1/nodes/:id/wip-event (Agent reports corporate data violation or exfiltration attempt)
+  router.post('/api/v1/nodes/:id/wip-event', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const result = wipEngine.recordWipEvent(db, id, req.body || {});
+      sendJson(res, 201, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'WIP_EVENT_LOG_ERROR', message: err.message });
+    }
+  });
+
+  // 58. GET /api/v1/nodes/:id/wip-policy (Agent fetches effective assigned WIP policy)
+  router.get('/api/v1/nodes/:id/wip-policy', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const policy = wipEngine.getEffectiveWipPolicyForDevice(db, id);
+      sendJson(res, 200, { device_id: id, policy });
+    } catch (err) {
+      sendJson(res, 500, { error: 'WIP_POLICY_FETCH_ERROR', message: err.message });
     }
   });
 }
