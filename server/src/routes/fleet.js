@@ -29,6 +29,7 @@ import * as certificateEngine from '../services/certificateEngine.js';
 import * as networkEngine from '../services/networkEngine.js';
 import * as kioskEngine from '../services/kioskEngine.js';
 import * as storageAccessEngine from '../services/storageAccessEngine.js';
+import * as deliveryOptimizationEngine from '../services/deliveryOptimizationEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -4137,6 +4138,138 @@ try {
       sendJson(res, 200, status);
     } catch (err) {
       sendJson(res, 500, { error: 'DEVICE_STORAGE_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 219. GET /api/v1/fleet/delivery-optimization/stats
+  router.get('/api/v1/fleet/delivery-optimization/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const stats = deliveryOptimizationEngine.getDOStats(db);
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'DO_STATS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 220. GET /api/v1/fleet/delivery-optimization/policies
+  router.get('/api/v1/fleet/delivery-optimization/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const policies = deliveryOptimizationEngine.getAllPolicies(db);
+      sendJson(res, 200, { policies });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DO_POLICIES_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 221. POST /api/v1/fleet/delivery-optimization/policies
+  router.post('/api/v1/fleet/delivery-optimization/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const created = deliveryOptimizationEngine.createPolicy(db, req.body || {});
+      sendJson(res, 201, created);
+    } catch (err) {
+      sendJson(res, 400, { error: 'DO_POLICY_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 222. GET /api/v1/fleet/delivery-optimization/inventory
+  router.get('/api/v1/fleet/delivery-optimization/inventory', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const url = new URL(req.url, 'http://localhost');
+    const download_mode = url.searchParams.get('download_mode') || undefined;
+    const q = url.searchParams.get('q') || undefined;
+    const limit = url.searchParams.get('limit') || undefined;
+    try {
+      const db = getDb();
+      const inventory = deliveryOptimizationEngine.getDOInventory(db, { download_mode, q, limit });
+      sendJson(res, 200, { inventory });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DO_INVENTORY_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 223. GET /api/v1/fleet/delivery-optimization/content-log
+  router.get('/api/v1/fleet/delivery-optimization/content-log', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const url = new URL(req.url, 'http://localhost');
+    const device_id = url.searchParams.get('device_id') || undefined;
+    const content_type = url.searchParams.get('content_type') || undefined;
+    const limit = url.searchParams.get('limit') || undefined;
+    try {
+      const db = getDb();
+      const content_log = deliveryOptimizationEngine.getContentLog(db, { device_id, content_type, limit });
+      sendJson(res, 200, { content_log });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DO_CONTENT_LOG_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 224. GET /api/v1/fleet/delivery-optimization/policies/:id
+  router.get('/api/v1/fleet/delivery-optimization/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const policy = deliveryOptimizationEngine.getPolicyById(db, id);
+      if (!policy) {
+        sendJson(res, 404, { error: 'POLICY_NOT_FOUND', message: 'Delivery Optimization policy not found' });
+        return;
+      }
+      sendJson(res, 200, { policy, powershell_script: policy.powershell_script });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DO_POLICY_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 225. PATCH /api/v1/fleet/delivery-optimization/policies/:id
+  router.patch('/api/v1/fleet/delivery-optimization/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const updated = deliveryOptimizationEngine.updatePolicy(db, id, req.body || {});
+      if (!updated) {
+        sendJson(res, 404, { error: 'POLICY_NOT_FOUND', message: 'Delivery Optimization policy not found' });
+        return;
+      }
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 400, { error: 'DO_POLICY_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 226. DELETE /api/v1/fleet/delivery-optimization/policies/:id
+  router.delete('/api/v1/fleet/delivery-optimization/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const deleted = deliveryOptimizationEngine.deletePolicy(db, id);
+      if (!deleted) {
+        sendJson(res, 404, { error: 'POLICY_NOT_FOUND', message: 'Delivery Optimization policy not found' });
+        return;
+      }
+      sendJson(res, 200, { success: true, id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DO_POLICY_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 227. GET /api/v1/fleet/devices/:id/delivery-optimization
+  router.get('/api/v1/fleet/devices/:id/delivery-optimization', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const status = deliveryOptimizationEngine.getDeviceDOStatus(db, id);
+      sendJson(res, 200, status);
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_DO_FETCH_ERROR', message: err.message });
     }
   });
 }

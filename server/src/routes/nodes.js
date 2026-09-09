@@ -30,6 +30,7 @@ import * as certificateEngine from '../services/certificateEngine.js';
 import * as networkEngine from '../services/networkEngine.js';
 import * as kioskEngine from '../services/kioskEngine.js';
 import * as storageAccessEngine from '../services/storageAccessEngine.js';
+import * as deliveryOptimizationEngine from '../services/deliveryOptimizationEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -359,7 +360,8 @@ export function registerNodeRoutes(router) {
         certificate_profiles: certificateEngine.getEffectiveProfilesForDevice(db, deviceId),
         network_profiles: networkEngine.getEffectiveProfilesForDevice(db, deviceId),
         kiosk_profile: kioskEngine.getEffectiveKioskProfileForDevice(db, deviceId),
-        storage_access_policy: storageAccessEngine.getEffectivePolicyForDevice(db, deviceId)
+        storage_access_policy: storageAccessEngine.getEffectivePolicyForDevice(db, deviceId),
+        delivery_optimization_policy: deliveryOptimizationEngine.getEffectivePolicyForDevice(db, deviceId)
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -1462,6 +1464,45 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { device_id: id, policy });
     } catch (err) {
       sendJson(res, 500, { error: 'STORAGE_POLICY_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 50. POST /api/v1/nodes/:id/delivery-optimization-status (Agent reports P2P cache, downloads, and peer stats)
+  router.post('/api/v1/nodes/:id/delivery-optimization-status', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const result = deliveryOptimizationEngine.saveDeviceDOStatus(db, id, req.body || {});
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'DO_STATUS_REPORT_ERROR', message: err.message });
+    }
+  });
+
+  // 51. POST /api/v1/nodes/:id/delivery-optimization-log (Agent logs package download from peer or CDN)
+  router.post('/api/v1/nodes/:id/delivery-optimization-log', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const result = deliveryOptimizationEngine.recordContentTransfer(db, id, req.body || {});
+      sendJson(res, 201, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'DO_CONTENT_LOG_ERROR', message: err.message });
+    }
+  });
+
+  // 52. GET /api/v1/nodes/:id/delivery-optimization-policy (Agent fetches assigned Delivery Optimization policy)
+  router.get('/api/v1/nodes/:id/delivery-optimization-policy', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const policy = deliveryOptimizationEngine.getEffectivePolicyForDevice(db, id);
+      sendJson(res, 200, { device_id: id, policy });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DO_POLICY_FETCH_ERROR', message: err.message });
     }
   });
 }

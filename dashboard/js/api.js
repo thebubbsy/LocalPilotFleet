@@ -1395,6 +1395,58 @@ async function getDeviceStorage(deviceId) {
   return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/storage-access`);
 }
 
+/* ── Delivery Optimization & Peer-to-Peer Cache Governance ──────────── */
+async function getDOStats() {
+  return apiFetch('/api/v1/fleet/delivery-optimization/stats');
+}
+
+async function getDOPolicies(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/delivery-optimization/policies${qStr ? '?' + qStr : ''}`);
+}
+
+async function getDOPolicy(id) {
+  return apiFetch(`/api/v1/fleet/delivery-optimization/policies/${encodeURIComponent(id)}`);
+}
+
+async function createDOPolicy(data) {
+  return apiFetch('/api/v1/fleet/delivery-optimization/policies', { method: 'POST', body: JSON.stringify(data) });
+}
+
+async function updateDOPolicy(id, data) {
+  return apiFetch(`/api/v1/fleet/delivery-optimization/policies/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(data) });
+}
+
+async function deleteDOPolicy(id) {
+  return apiFetch(`/api/v1/fleet/delivery-optimization/policies/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+async function getDOInventory(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/delivery-optimization/inventory${qStr ? '?' + qStr : ''}`);
+}
+
+async function getDOContentLog(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/delivery-optimization/content-log${qStr ? '?' + qStr : ''}`);
+}
+
+async function getDeviceDO(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/delivery-optimization`);
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -1489,6 +1541,16 @@ window.FleetAPI = {
   getStorageInventory,
   getStorageEvents,
   getDeviceStorage,
+  // Delivery Optimization & Peer-to-Peer Cache Governance
+  getDOStats,
+  getDOPolicies,
+  getDOPolicy,
+  createDOPolicy,
+  updateDOPolicy,
+  deleteDOPolicy,
+  getDOInventory,
+  getDOContentLog,
+  getDeviceDO,
   // Proactive Remediations
   getRemediations,
   getRemediationStats,

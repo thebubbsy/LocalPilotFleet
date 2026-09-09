@@ -2470,6 +2470,109 @@ if ($Mode -eq 'Heartbeat') {
                     Write-AgentLog 'WARN' "Storage access posture audit encountered non-fatal error: $($_.Exception.Message)"
                 }
             }
+
+            # ── Delivery Optimization & Peer-to-Peer Cache Governance Audit ──
+            if (-not (Get-Variable -Name 'LastDOAudit' -Scope Script -ErrorAction SilentlyContinue)) {
+                $script:LastDOAudit = $null
+            }
+            $shouldAuditDO = $false
+            if ($null -eq $script:LastDOAudit) {
+                $shouldAuditDO = $true
+            } elseif (($now - $script:LastDOAudit).TotalSeconds -ge 180) { # 3-minute interval
+                $shouldAuditDO = $true
+            }
+
+            if ($shouldAuditDO) {
+                $script:LastDOAudit = $now
+                try {
+                    $downloadMode = "LAN_PEER"
+                    $httpBytes = 0
+                    $p2pBytes = 0
+                    $uploadedBytes = 0
+                    $activePeers = 0
+                    $cacheSize = 0
+                    $cacheFiles = 0
+
+                    # 1. Query Delivery Optimization Status cmdlet if available
+                    try {
+                        if (Get-Command Get-DeliveryOptimizationStatus -ErrorAction SilentlyContinue) {
+                            $doStatus = Get-DeliveryOptimizationStatus -ErrorAction SilentlyContinue
+                            if ($doStatus) {
+                                foreach ($s in $doStatus) {
+                                    if ($s.BytesFromHttp) { $httpBytes += [int64]$s.BytesFromHttp }
+                                    if ($s.BytesFromPeers) { $p2pBytes += [int64]$s.BytesFromPeers }
+                                    if ($s.BytesUploaded) { $uploadedBytes += [int64]$s.BytesUploaded }
+                                    if ($s.PeerCount -gt $activePeers) { $activePeers = [int]$s.PeerCount }
+                                }
+                            }
+                        }
+                    } catch {}
+
+                    # 2. Query Delivery Optimization Perf Snap cmdlet if available
+                    try {
+                        if (Get-Command Get-DeliveryOptimizationPerfSnap -ErrorAction SilentlyContinue) {
+                            $perfSnap = Get-DeliveryOptimizationPerfSnap -ErrorAction SilentlyContinue
+                            if ($perfSnap) {
+                                if ($perfSnap.TotalBytesFromHttp -and $httpBytes -eq 0) { $httpBytes = [int64]$perfSnap.TotalBytesFromHttp }
+                                if ($perfSnap.TotalBytesFromPeers -and $p2pBytes -eq 0) { $p2pBytes = [int64]$perfSnap.TotalBytesFromPeers }
+                                if ($perfSnap.TotalBytesUploaded -and $uploadedBytes -eq 0) { $uploadedBytes = [int64]$perfSnap.TotalBytesUploaded }
+                            }
+                        }
+                    } catch {}
+
+                    # 3. Read Registry Configuration for Download Mode
+                    try {
+                        $doReg = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization' -ErrorAction SilentlyContinue
+                        if ($doReg -and $null -ne $doReg.DODownloadMode) {
+                            $modeMap = @{
+                                0   = 'HTTP_ONLY'
+                                1   = 'LAN_PEER'
+                                2   = 'GROUP_PEER'
+                                3   = 'INTERNET_PEER'
+                                99  = 'SIMPLE'
+                                100 = 'BYPASS'
+                            }
+                            $val = [int]$doReg.DODownloadMode
+                            if ($modeMap.ContainsKey($val)) {
+                                $downloadMode = $modeMap[$val]
+                            }
+                        }
+                    } catch {}
+
+                    # 4. Measure Delivery Optimization Cache Folder size
+                    try {
+                        $doCachePath = "$env:SystemRoot\ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization\Cache"
+                        if (Test-Path $doCachePath) {
+                            $cacheFilesObj = Get-ChildItem -Path $doCachePath -Recurse -File -ErrorAction SilentlyContinue
+                            if ($cacheFilesObj) {
+                                $cacheFiles = $cacheFilesObj.Count
+                                $cacheSize = ($cacheFilesObj | Measure-Object -Property Length -Sum).Sum
+                            }
+                        }
+                    } catch {}
+
+                    $doPayload = @{
+                        download_mode_active  = $downloadMode
+                        bytes_downloaded_http = $httpBytes
+                        bytes_downloaded_p2p  = $p2pBytes
+                        bytes_uploaded_p2p    = $uploadedBytes
+                        active_peers_count    = $activePeers
+                        cache_size_bytes      = $cacheSize
+                        cache_file_count      = $cacheFiles
+                    }
+
+                    Invoke-RestMethod `
+                        -Uri        "$baseUrl/api/v1/nodes/$deviceId/delivery-optimization-status" `
+                        -Method     POST `
+                        -Body       ($doPayload | ConvertTo-Json -Depth 5 -Compress) `
+                        -Headers    $authHeaders `
+                        -TimeoutSec 10 `
+                        -ErrorAction SilentlyContinue | Out-Null
+                    Write-AgentLog 'INFO' "Reported Delivery Optimization posture (Mode: $downloadMode, Peers: $activePeers, P2P: $p2pBytes bytes, HTTP: $httpBytes bytes, Cache: $cacheSize bytes)"
+                } catch {
+                    Write-AgentLog 'WARN' "Delivery Optimization posture audit encountered non-fatal error: $($_.Exception.Message)"
+                }
+            }
         } catch {
             Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
             if (-not $Continuous) { exit 1 }

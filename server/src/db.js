@@ -1218,6 +1218,64 @@ export function initDb(dbOrPath, options = {}) {
       timestamp TEXT DEFAULT (DATETIME('now')),
       FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
     );
+
+    -- 64. DELIVERY_OPTIMIZATION_POLICIES — Intune Delivery Optimization & P2P Peering Configuration
+    CREATE TABLE IF NOT EXISTS delivery_optimization_policies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      target_group_id TEXT DEFAULT 'grp-all',
+      download_mode TEXT NOT NULL DEFAULT 'LAN_PEER' CHECK(download_mode IN ('HTTP_ONLY', 'LAN_PEER', 'GROUP_PEER', 'INTERNET_PEER', 'SIMPLE', 'BYPASS')),
+      group_id_guid TEXT DEFAULT '',
+      max_cache_size_pct INTEGER DEFAULT 20,
+      min_disk_size_gb INTEGER DEFAULT 32,
+      min_ram_capacity_gb INTEGER DEFAULT 4,
+      min_file_size_mb INTEGER DEFAULT 10,
+      max_background_download_pct INTEGER DEFAULT 0,
+      max_foreground_download_pct INTEGER DEFAULT 0,
+      max_upload_bandwidth_kbps INTEGER DEFAULT 0,
+      monthly_upload_cap_gb INTEGER DEFAULT 50,
+      cache_retention_days INTEGER DEFAULT 7,
+      enabled INTEGER DEFAULT 1 CHECK(enabled IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET DEFAULT
+    );
+
+    -- 65. DEVICE_DELIVERY_OPTIMIZATION_STATUS — Workstation P2P Cache, Bandwidth Savings & Peering Posture
+    CREATE TABLE IF NOT EXISTS device_delivery_optimization_status (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL UNIQUE,
+      policy_id TEXT,
+      download_mode_active TEXT NOT NULL DEFAULT 'LAN_PEER',
+      bytes_downloaded_http INTEGER DEFAULT 0,
+      bytes_downloaded_p2p INTEGER DEFAULT 0,
+      bytes_uploaded_p2p INTEGER DEFAULT 0,
+      p2p_efficiency_pct REAL DEFAULT 0.0,
+      active_peers_count INTEGER DEFAULT 0,
+      cache_size_bytes INTEGER DEFAULT 0,
+      cache_file_count INTEGER DEFAULT 0,
+      last_audit_at TEXT DEFAULT (DATETIME('now')),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(policy_id) REFERENCES delivery_optimization_policies(id) ON DELETE SET NULL
+    );
+
+    -- 66. DELIVERY_OPTIMIZATION_CONTENT_LOG — Windows Update, App & Package P2P Transfer Audit
+    CREATE TABLE IF NOT EXISTS delivery_optimization_content_log (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      file_hash TEXT DEFAULT '',
+      content_type TEXT NOT NULL DEFAULT 'WINDOWS_UPDATE' CHECK(content_type IN ('WINDOWS_UPDATE', 'WINGET_APP', 'MICROSOFT_STORE', 'DEFENDER_SIGNATURE', 'OTHER')),
+      file_size_bytes INTEGER NOT NULL DEFAULT 0,
+      bytes_from_peers INTEGER NOT NULL DEFAULT 0,
+      bytes_from_http INTEGER NOT NULL DEFAULT 0,
+      peer_source_ip TEXT DEFAULT '',
+      duration_ms INTEGER DEFAULT 0,
+      timestamp TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
   `);
 
   // Indexes
@@ -1387,6 +1445,13 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_devstor_comp ON device_removable_storage_status(compliance_status);
     CREATE INDEX IF NOT EXISTS idx_storevt_device ON removable_storage_events(device_id);
     CREATE INDEX IF NOT EXISTS idx_storevt_time ON removable_storage_events(timestamp DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_dopol_target ON delivery_optimization_policies(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_dopol_enabled ON delivery_optimization_policies(enabled);
+    CREATE INDEX IF NOT EXISTS idx_devdo_device ON device_delivery_optimization_status(device_id);
+    CREATE INDEX IF NOT EXISTS idx_devdo_p2p ON device_delivery_optimization_status(p2p_efficiency_pct);
+    CREATE INDEX IF NOT EXISTS idx_docontent_device ON delivery_optimization_content_log(device_id);
+    CREATE INDEX IF NOT EXISTS idx_docontent_time ON delivery_optimization_content_log(timestamp DESC);
   `);
 
   // Schema migrations for existing databases
@@ -3201,6 +3266,67 @@ exit 0`,
       'grp-all',
       'ALLOW_ALL', 0, 0,
       0, '[]', 1,
+      '-3 days', '-3 days'
+    );
+  }
+
+  // 24. Delivery Optimization & Peer-to-Peer Cache Governance
+  const doPolCount = db.prepare('SELECT COUNT(*) as count FROM delivery_optimization_policies').get().count;
+  if (doPolCount === 0) {
+    const insertDoPol = db.prepare(`
+      INSERT OR IGNORE INTO delivery_optimization_policies (
+        id, name, description, target_group_id,
+        download_mode, group_id_guid, max_cache_size_pct,
+        min_disk_size_gb, min_ram_capacity_gb, min_file_size_mb,
+        max_background_download_pct, max_foreground_download_pct,
+        max_upload_bandwidth_kbps, monthly_upload_cap_gb,
+        cache_retention_days, enabled, created_at, updated_at
+      ) VALUES (
+        ?, ?, ?, ?,
+        ?, ?, ?,
+        ?, ?, ?,
+        ?, ?,
+        ?, ?,
+        ?, 1, DATETIME('now', ?), DATETIME('now', ?)
+      )
+    `);
+
+    insertDoPol.run(
+      'do-corp-lan-peer',
+      'Corporate High-Speed LAN Peering',
+      'Enables local subnet peer-to-peer sharing of Windows Updates, Winget packages, and Store apps with 30% cache reservation and 14-day retention.',
+      'grp-all',
+      'LAN_PEER', '', 30,
+      32, 4, 10,
+      0, 0,
+      0, 100,
+      14,
+      '-3 days', '-3 days'
+    );
+
+    insertDoPol.run(
+      'do-branch-office-restricted',
+      'Branch Office Bandwidth Saver',
+      'Enforces strict group peering and background download rate limits (5 MB/s upload cap, 40% bandwidth cap) for bandwidth-constrained satellite locations.',
+      'grp-workstations',
+      'GROUP_PEER', 'e9c7a230-58d1-4cb5-8d5f-9e79d1a3848b', 20,
+      64, 8, 25,
+      40, 60,
+      5120, 25,
+      30,
+      '-3 days', '-3 days'
+    );
+
+    insertDoPol.run(
+      'do-developer-bypass',
+      'Developer Direct CDN Fast Path',
+      'Bypasses peer caching and fetches packages directly from Microsoft CDN with minimal cache footprint for development rigs.',
+      'grp-all',
+      'HTTP_ONLY', '', 10,
+      16, 2, 50,
+      0, 0,
+      0, 0,
+      3,
       '-3 days', '-3 days'
     );
   }

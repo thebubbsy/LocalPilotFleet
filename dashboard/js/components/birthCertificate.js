@@ -536,6 +536,17 @@
         </div>
       </div>
 
+      <!-- ── Delivery Optimization & Peering Posture ── -->
+      <div class="bc-section" id="bc-do-section">
+        <div class="bc-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>🚀 Delivery Optimization &amp; Peering Posture</span>
+          <button class="intune-link-btn" id="btn-bc-view-do-tab">View DO Blade</button>
+        </div>
+        <div id="bc-do-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading Delivery Optimization posture…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -1760,6 +1771,59 @@
         storageListEl.innerHTML = html;
       }).catch(() => {
         storageListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Removable storage telemetry pending audit.</div>';
+      });
+    }
+
+    // Fetch and populate Delivery Optimization & Peering Posture
+    const doListEl = body.querySelector('#bc-do-list');
+    if (doListEl && _currentDevice?.id) {
+      body.querySelector('#btn-bc-view-do-tab')?.addEventListener('click', () => {
+        close();
+        if (window.App && typeof window.App.navigate === 'function') {
+          window.App.navigate('delivery-optimization');
+        }
+      });
+
+      window.FleetAPI.getDeviceDO(_currentDevice.id).then(res => {
+        if (!res) {
+          doListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">No Delivery Optimization telemetry found.</div>';
+          return;
+        }
+
+        const status = res.status;
+        const policy = res.effective_policy;
+        const p2pBytes = Number(status?.bytes_downloaded_p2p) || 0;
+        const httpBytes = Number(status?.bytes_downloaded_http) || 0;
+        const effPct = Number(status?.p2p_efficiency_pct) || 0;
+        const effColor = effPct >= 50 ? '#10b981' : (effPct >= 20 ? '#f59e0b' : '#60a5fa');
+
+        let html = `
+          <div style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:12px;display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span style="font-size:13px;font-weight:600;color:var(--text-primary);">
+                  🚀 Mode: ${esc(status?.download_mode_active || policy?.download_mode || 'LAN_PEER')}
+                </span>
+                <span class="badge" style="background:${effColor}22;color:${effColor};font-size:10px;font-weight:700;">
+                  ${effPct.toFixed(1)}% P2P Offload
+                </span>
+              </div>
+              <span style="font-size:11px;color:#A78BFA;font-weight:600;">
+                👥 ${status?.active_peers_count || 0} Peer(s)
+              </span>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px;color:var(--text-muted);">
+              <div>Assigned Policy: <strong style="color:var(--text-primary);">${esc(policy ? policy.name : 'Default LAN Peering')}</strong></div>
+              <div>Local Cache: <strong style="color:var(--text-primary);">${fmtBytes(status?.cache_size_bytes)} (${status?.cache_file_count || 0} files)</strong></div>
+              <div>From Local Peers: <strong style="color:#10b981;">${fmtBytes(p2pBytes)}</strong></div>
+              <div>From Microsoft CDN: <strong style="color:var(--text-primary);">${fmtBytes(httpBytes)}</strong></div>
+            </div>
+          </div>
+        `;
+        doListEl.innerHTML = html;
+      }).catch(() => {
+        doListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Delivery Optimization telemetry pending audit.</div>';
       });
     }
 

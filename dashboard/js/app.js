@@ -149,6 +149,9 @@ const App = {
       case 'storage':
         if (window.StorageAccessTable) window.StorageAccessTable.init();
         break;
+      case 'delivery-optimization':
+        if (window.DeliveryOptimizationTable) window.DeliveryOptimizationTable.init();
+        break;
       case 'settings':
         this.renderSettings();
         break;
