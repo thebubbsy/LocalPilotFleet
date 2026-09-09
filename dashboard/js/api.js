@@ -1935,6 +1935,82 @@ async function createNodePortalRequest(nodeId, data) {
   });
 }
 
+// Windows Autopatch & Automated Patch Release Cadence
+async function getAutopatchStats() {
+  return apiFetch('/api/v1/fleet/autopatch/stats');
+}
+
+async function getAutopatchReleases(params = {}) {
+  const query = new URLSearchParams();
+  if (params.active_phase) query.set('active_phase', params.active_phase);
+  if (params.approval_status) query.set('approval_status', params.approval_status);
+  if (params.release_type) query.set('release_type', params.release_type);
+  const qStr = query.toString();
+  return apiFetch(`/api/v1/fleet/autopatch/releases${qStr ? '?' + qStr : ''}`);
+}
+
+async function getAutopatchRelease(id) {
+  return apiFetch(`/api/v1/fleet/autopatch/releases/${encodeURIComponent(id)}`);
+}
+
+async function createAutopatchRelease(data) {
+  return apiFetch('/api/v1/fleet/autopatch/releases', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateAutopatchRelease(id, data) {
+  return apiFetch(`/api/v1/fleet/autopatch/releases/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteAutopatchRelease(id) {
+  return apiFetch(`/api/v1/fleet/autopatch/releases/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function progressAutopatchRelease(id) {
+  return apiFetch(`/api/v1/fleet/autopatch/releases/${encodeURIComponent(id)}/progress`, {
+    method: 'POST'
+  });
+}
+
+async function rollbackAutopatchRelease(id, reason) {
+  return apiFetch(`/api/v1/fleet/autopatch/releases/${encodeURIComponent(id)}/rollback`, {
+    method: 'POST',
+    body: JSON.stringify({ reason })
+  });
+}
+
+async function getAutopatchRings() {
+  return apiFetch('/api/v1/fleet/autopatch/rings');
+}
+
+async function updateAutopatchRing(id, data) {
+  return apiFetch(`/api/v1/fleet/autopatch/rings/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(data)
+  });
+}
+
+async function getAutopatchDeployments(params = {}) {
+  const query = new URLSearchParams();
+  if (params.release_id) query.set('release_id', params.release_id);
+  if (params.ring_id) query.set('ring_id', params.ring_id);
+  if (params.install_status) query.set('install_status', params.install_status);
+  if (params.device_id) query.set('device_id', params.device_id);
+  const qStr = query.toString();
+  return apiFetch(`/api/v1/fleet/autopatch/deployments${qStr ? '?' + qStr : ''}`);
+}
+
+async function getDeviceAutopatch(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/autopatch`);
+}
+
 // Threat & Vulnerability Management (TVM) & Security Baselines
 async function getTvmStats() {
   return apiFetch('/api/v1/fleet/tvm/stats');

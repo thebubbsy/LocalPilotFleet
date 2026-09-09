@@ -3190,8 +3190,12 @@ if ($Mode -eq 'Heartbeat') {
                         -TimeoutSec 15 `
                         -ErrorAction SilentlyContinue
 
-                    if ($scanResult -and $scanResult.matched_count -gt 0) {
-                        Write-AgentLog 'WARN' "TVM Vulnerability scan matched $($scanResult.matched_count) active CVE exposure(s)!"
+                    $mc = 0
+                    try { $mc = [int]$scanResult.matched_count } catch {
+                        try { $mc = [int]$scanResult.count } catch {}
+                    }
+                    if ($mc -gt 0) {
+                        Write-AgentLog 'WARN' "TVM Vulnerability scan matched $mc active CVE exposure(s)!"
                     }
                 }
 
@@ -3203,11 +3207,59 @@ if ($Mode -eq 'Heartbeat') {
                     -TimeoutSec 10 `
                     -ErrorAction SilentlyContinue
 
-                if ($baselinesResp -and $baselinesResp.baselines -and @($baselinesResp.baselines).Count -gt 0) {
-                    Write-AgentLog 'INFO' "Auditing $(@($baselinesResp.baselines).Count) assigned Intune Security Baseline(s)..."
+                $baseList = $null
+                try { $baseList = $baselinesResp.baselines } catch {}
+                if ($baseList -and @($baseList).Count -gt 0) {
+                    Write-AgentLog 'INFO' "Auditing $(@($baseList).Count) assigned Intune Security Baseline(s)..."
                 }
             } catch {
                 Write-AgentLog 'WARN' "TVM / Security Baseline audit check error: $($_.Exception.Message)"
+            }
+
+            # ── 33. Windows Autopatch & Patch Release Cadence Audit ───────────────
+            try {
+                $autopatchResp = Invoke-RestMethod `
+                    -Uri        "$baseUrl/api/v1/nodes/$deviceId/autopatch" `
+                    -Method     GET `
+                    -Headers    $authHeaders `
+                    -TimeoutSec 10 `
+                    -ErrorAction SilentlyContinue
+
+                if ($autopatchResp -and $autopatchResp.active_release) {
+                    $rel = $autopatchResp.active_release
+                    $dep = $autopatchResp.deployment
+                    $targetKBs = $rel.target_kb_numbers -split ',' | ForEach-Object { $_.Trim() }
+
+                    # Query installed hotfixes
+                    $installedKBs = @(Get-HotFix -ErrorAction SilentlyContinue | ForEach-Object { $_.HotFixID.ToUpper() })
+                    $missingKBs = @($targetKBs | Where-Object { $_ -and ($installedKBs -notcontains $_.ToUpper()) })
+
+                    $installStatus = if ($missingKBs.Count -eq 0) { 'INSTALLED' } else { 'PENDING' }
+                    $appliedKb = if ($missingKBs.Count -eq 0) { ($targetKBs -join ', ') } else { $null }
+
+                    # Report patch status back to fleet command center if status needs updating
+                    if (-not $dep -or $dep.install_status -ne $installStatus) {
+                        Write-AgentLog 'INFO' "Autopatch Cadence ($($rel.name)): Reporting status $installStatus (Missing: $($missingKBs -join ', '))"
+                        $patchReportPayload = @{
+                            release_id         = $rel.id
+                            ring_id            = if ($dep -and $dep.ring_id) { $dep.ring_id } else { 'ring-first' }
+                            install_status     = $installStatus
+                            applied_kb         = $appliedKb
+                            exit_code          = 0
+                            post_patch_crashes = 0
+                        }
+
+                        Invoke-RestMethod `
+                            -Uri        "$baseUrl/api/v1/nodes/$deviceId/autopatch/report" `
+                            -Method     POST `
+                            -Headers    $authHeaders `
+                            -Body       ($patchReportPayload | ConvertTo-Json -Depth 3 -Compress) `
+                            -TimeoutSec 10 `
+                            -ErrorAction SilentlyContinue | Out-Null
+                    }
+                }
+            } catch {
+                Write-AgentLog 'WARN' "Windows Autopatch check error: $($_.Exception.Message)"
             }
         } catch {
             Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"

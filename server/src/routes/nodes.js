@@ -39,6 +39,7 @@ import * as remoteHelpEngine from '../services/remoteHelpEngine.js';
 import * as featureUpdateEngine from '../services/featureUpdateEngine.js';
 import * as enterpriseAppEngine from '../services/enterpriseAppEngine.js';
 import * as vulnerabilityEngine from '../services/vulnerabilityEngine.js';
+import * as autopatchEngine from '../services/autopatchEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -1844,6 +1845,31 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { success: true, device_id: id, active_vulnerabilities: activeVulns, count: activeVulns.length });
     } catch (err) {
       sendJson(res, 500, { error: 'NODE_VULN_SCAN_ERROR', message: err.message });
+    }
+  });
+
+  // 77. GET /api/v1/nodes/:id/autopatch (Node queries assigned patch cadence and target KBs)
+  router.get('/api/v1/nodes/:id/autopatch', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const status = autopatchEngine.getDeviceAutopatchStatus(getDb(), id);
+      const activeRelease = getDb().prepare("SELECT * FROM autopatch_release_cadence WHERE active_phase NOT IN ('COMPLETED', 'ROLLED_BACK') ORDER BY created_at DESC LIMIT 1").get();
+      sendJson(res, 200, { device_id: id, deployment: status, active_release: activeRelease || null });
+    } catch (err) {
+      sendJson(res, 500, { error: 'NODE_AUTOPATCH_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 78. POST /api/v1/nodes/:id/autopatch/report (Node reports patch install status and health)
+  router.post('/api/v1/nodes/:id/autopatch/report', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const updated = autopatchEngine.recordDevicePatchReport(getDb(), id, req.body || {});
+      sendJson(res, 200, { success: true, device_id: id, deployment: updated });
+    } catch (err) {
+      sendJson(res, 500, { error: 'NODE_AUTOPATCH_REPORT_ERROR', message: err.message });
     }
   });
 

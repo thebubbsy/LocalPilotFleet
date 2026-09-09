@@ -38,6 +38,7 @@ import * as remoteHelpEngine from '../services/remoteHelpEngine.js';
 import * as featureUpdateEngine from '../services/featureUpdateEngine.js';
 import * as enterpriseAppEngine from '../services/enterpriseAppEngine.js';
 import * as vulnerabilityEngine from '../services/vulnerabilityEngine.js';
+import * as autopatchEngine from '../services/autopatchEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -5497,7 +5498,146 @@ try {
       sendJson(res, 500, { error: 'DEVICE_VULNS_ASSESS_ERROR', message: err.message });
     }
   });
+
+  // 317. GET /api/v1/fleet/autopatch/stats
+  router.get('/api/v1/fleet/autopatch/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      sendJson(res, 200, autopatchEngine.getAutopatchStats(getDb()));
+    } catch (err) {
+      sendJson(res, 500, { error: 'AUTOPATCH_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 318. GET /api/v1/fleet/autopatch/releases
+  router.get('/api/v1/fleet/autopatch/releases', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const releases = autopatchEngine.getReleases(getDb(), req.query);
+      sendJson(res, 200, { releases, count: releases.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'AUTOPATCH_RELEASES_ERROR', message: err.message });
+    }
+  });
+
+  // 319. POST /api/v1/fleet/autopatch/releases
+  router.post('/api/v1/fleet/autopatch/releases', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const release = autopatchEngine.createRelease(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, release });
+    } catch (err) {
+      sendJson(res, 500, { error: 'AUTOPATCH_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 320. GET /api/v1/fleet/autopatch/releases/:id
+  router.get('/api/v1/fleet/autopatch/releases/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const release = autopatchEngine.getRelease(getDb(), req.params.id);
+      if (!release) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Release not found' });
+      sendJson(res, 200, release);
+    } catch (err) {
+      sendJson(res, 500, { error: 'AUTOPATCH_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 321. PUT /api/v1/fleet/autopatch/releases/:id
+  router.put('/api/v1/fleet/autopatch/releases/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const release = autopatchEngine.updateRelease(getDb(), req.params.id, req.body || {});
+      if (!release) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Release not found' });
+      sendJson(res, 200, { success: true, release });
+    } catch (err) {
+      sendJson(res, 500, { error: 'AUTOPATCH_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 322. DELETE /api/v1/fleet/autopatch/releases/:id
+  router.delete('/api/v1/fleet/autopatch/releases/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const success = autopatchEngine.deleteRelease(getDb(), req.params.id);
+      if (!success) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Release not found' });
+      sendJson(res, 200, { success: true, deleted_id: req.params.id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'AUTOPATCH_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 323. POST /api/v1/fleet/autopatch/releases/:id/progress
+  router.post('/api/v1/fleet/autopatch/releases/:id/progress', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const release = autopatchEngine.progressReleasePhase(getDb(), req.params.id);
+      if (!release) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Release not found' });
+      sendJson(res, 200, { success: true, release, new_phase: release.active_phase });
+    } catch (err) {
+      sendJson(res, 500, { error: 'AUTOPATCH_PROGRESS_ERROR', message: err.message });
+    }
+  });
+
+  // 324. POST /api/v1/fleet/autopatch/releases/:id/rollback
+  router.post('/api/v1/fleet/autopatch/releases/:id/rollback', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const reason = req.body?.reason || 'Administrator triggered rollback';
+      const release = autopatchEngine.triggerPatchRollback(getDb(), req.params.id, reason);
+      if (!release) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Release not found' });
+      const rollbackScript = autopatchEngine.generateRollbackScript(release.target_kb_numbers);
+      sendJson(res, 200, { success: true, release, rollback_script: rollbackScript });
+    } catch (err) {
+      sendJson(res, 500, { error: 'AUTOPATCH_ROLLBACK_ERROR', message: err.message });
+    }
+  });
+
+  // 325. GET /api/v1/fleet/autopatch/rings
+  router.get('/api/v1/fleet/autopatch/rings', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const rings = autopatchEngine.getRings(getDb());
+      sendJson(res, 200, { rings, count: rings.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'AUTOPATCH_RINGS_ERROR', message: err.message });
+    }
+  });
+
+  // 326. PUT /api/v1/fleet/autopatch/rings/:id
+  router.put('/api/v1/fleet/autopatch/rings/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const ring = autopatchEngine.updateRing(getDb(), req.params.id, req.body || {});
+      if (!ring) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Ring not found' });
+      sendJson(res, 200, { success: true, ring });
+    } catch (err) {
+      sendJson(res, 500, { error: 'AUTOPATCH_RING_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 327. GET /api/v1/fleet/autopatch/deployments
+  router.get('/api/v1/fleet/autopatch/deployments', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const deployments = autopatchEngine.getDeviceDeployments(getDb(), req.query);
+      sendJson(res, 200, { deployments, count: deployments.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'AUTOPATCH_DEPLOYMENTS_ERROR', message: err.message });
+    }
+  });
+
+  // 328. GET /api/v1/fleet/devices/:id/autopatch
+  router.get('/api/v1/fleet/devices/:id/autopatch', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const status = autopatchEngine.getDeviceAutopatchStatus(getDb(), req.params.id);
+      sendJson(res, 200, { device_id: req.params.id, autopatch: status });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_AUTOPATCH_ERROR', message: err.message });
+    }
+  });
+
 }
 
 export default registerFleetRoutes;
-

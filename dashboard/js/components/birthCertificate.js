@@ -696,6 +696,17 @@
         </div>
       </div>
 
+      <!-- ── Windows Autopatch Cadence & Rollback Posture ── -->
+      <div class="bc-section" id="bc-autopatch-section">
+        <div class="bc-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>🔄 Windows Autopatch &amp; Rollback Posture</span>
+          <button class="intune-link-btn" id="btn-bc-view-autopatch-tab">View Autopatch Blade</button>
+        </div>
+        <div id="bc-autopatch-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading Windows Autopatch ring posture…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -2456,6 +2467,51 @@
         fuListEl.innerHTML = html;
       }).catch(() => {
         fuListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Feature updates and expedited patch posture ready.</div>';
+      });
+    }
+
+    // Fetch and populate Windows Autopatch
+    const apListEl = body.querySelector('#bc-autopatch-list');
+    if (apListEl && _currentDevice?.id) {
+      body.querySelector('#btn-bc-view-autopatch-tab')?.addEventListener('click', () => {
+        close();
+        if (window.App && typeof window.App.navigate === 'function') {
+          window.App.navigate('autopatch');
+        }
+      });
+
+      window.FleetAPI.getDeviceAutopatch(_currentDevice.id).then(res => {
+        const ap = res.autopatch;
+        if (!ap) {
+          apListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">No active patch cadence assigned. Workstation managed under standard baseline.</div>';
+          return;
+        }
+
+        const ringName = ap.ring_name || ap.ring_id || 'Test';
+        const installStatus = ap.install_status || 'PENDING';
+        const appliedKb = ap.applied_kb || '—';
+        const crashes = ap.post_patch_crashes || 0;
+
+        let statusColor = '#10B981';
+        if (installStatus === 'FAILED' || installStatus === 'ROLLED_BACK') statusColor = '#EF4444';
+        else if (installStatus === 'INSTALLING' || installStatus === 'DOWNLOADING') statusColor = '#3B82F6';
+
+        let html = `
+          <div style="background:var(--bg-secondary);padding:10px 12px;border-radius:6px;border:1px solid var(--border-color);margin-top:4px;display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <span style="font-weight:600;color:var(--text-primary);">Assigned Ring: <strong style="color:#8B5CF6;">${esc(ringName)}</strong></span>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">Target KB: <strong style="color:#38BDF8;">${esc(appliedKb)}</strong> &bull; Post-Patch Crashes: <span style="color:${crashes > 0 ? '#EF4444' : '#10B981'};font-weight:700;">${crashes}</span></div>
+              </div>
+              <span class="badge" style="background:${statusColor}22;color:${statusColor};font-weight:700;border:1px solid ${statusColor}55;">
+                ${esc(installStatus)}
+              </span>
+            </div>
+          </div>
+        `;
+        apListEl.innerHTML = html;
+      }).catch(() => {
+        apListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Workstation ready for automated staged patch cadence.</div>';
       });
     }
 

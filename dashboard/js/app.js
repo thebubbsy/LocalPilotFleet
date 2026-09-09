@@ -176,6 +176,9 @@ const App = {
       case 'vulnerabilities':
         if (window.VulnerabilitiesTable) window.VulnerabilitiesTable.init(document.getElementById('view-vulnerabilities') || document.getElementById('tab-vulnerabilities'));
         break;
+      case 'autopatch':
+        if (window.AutopatchTable) window.AutopatchTable.init(document.getElementById('view-autopatch') || document.getElementById('tab-autopatch'));
+        break;
       case 'settings':
         this.renderSettings();
         break;

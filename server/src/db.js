@@ -1962,6 +1962,66 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_devvuln_status ON device_vulnerabilities(status);
     CREATE INDEX IF NOT EXISTS idx_secbase_target ON security_baseline_assessments(target_group_id);
     CREATE INDEX IF NOT EXISTS idx_secbase_enabled ON security_baseline_assessments(enabled);
+
+    -- 92. AUTOPATCH_RELEASE_CADENCE — Windows Monthly Patch Cadence & Rollout State
+    CREATE TABLE IF NOT EXISTS autopatch_release_cadence (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      release_month TEXT NOT NULL,
+      release_type TEXT NOT NULL DEFAULT 'SECURITY_QUALITY' CHECK(release_type IN ('SECURITY_QUALITY', 'OUT_OF_BAND_EXPEDITED', 'OPTIONAL_PREVIEW')),
+      target_kb_numbers TEXT NOT NULL,
+      approval_status TEXT NOT NULL DEFAULT 'AUTOMATIC_APPROVED' CHECK(approval_status IN ('AUTOMATIC_APPROVED', 'MANUAL_APPROVAL_REQUIRED', 'PAUSED', 'ROLLED_BACK')),
+      active_phase TEXT NOT NULL DEFAULT 'TEST' CHECK(active_phase IN ('TEST', 'FIRST', 'FAST', 'BROAD', 'COMPLETED', 'PAUSED', 'ROLLED_BACK')),
+      scheduled_start_date TEXT NOT NULL DEFAULT (DATETIME('now')),
+      broad_target_date TEXT,
+      rollback_reason TEXT,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    -- 93. AUTOPATCH_RINGS — Staged Progressive Deployment Ring Definitions
+    CREATE TABLE IF NOT EXISTS autopatch_rings (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      phase_order INTEGER NOT NULL UNIQUE,
+      deferral_days INTEGER NOT NULL DEFAULT 0,
+      target_device_percentage REAL NOT NULL DEFAULT 25.0,
+      max_allowable_crash_rate REAL NOT NULL DEFAULT 2.0,
+      min_success_rate REAL NOT NULL DEFAULT 95.0,
+      target_group_id TEXT DEFAULT 'grp-all',
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET DEFAULT
+    );
+
+    -- 94. AUTOPATCH_DEVICE_DEPLOYMENTS — Workstation Rollout Status & Crash Feedback
+    CREATE TABLE IF NOT EXISTS autopatch_device_deployments (
+      id TEXT PRIMARY KEY,
+      release_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      ring_id TEXT NOT NULL,
+      install_status TEXT NOT NULL DEFAULT 'PENDING' CHECK(install_status IN ('PENDING', 'DOWNLOADING', 'INSTALLING', 'REBOOT_PENDING', 'INSTALLED', 'FAILED', 'ROLLED_BACK')),
+      applied_kb TEXT,
+      exit_code INTEGER,
+      post_patch_crashes INTEGER DEFAULT 0,
+      error_message TEXT,
+      installed_at TEXT,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(release_id) REFERENCES autopatch_release_cadence(id) ON DELETE CASCADE,
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(ring_id) REFERENCES autopatch_rings(id) ON DELETE CASCADE,
+      UNIQUE(release_id, device_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_autopatch_rel_month ON autopatch_release_cadence(release_month);
+    CREATE INDEX IF NOT EXISTS idx_autopatch_rel_phase ON autopatch_release_cadence(active_phase);
+    CREATE INDEX IF NOT EXISTS idx_autopatch_rel_status ON autopatch_release_cadence(approval_status);
+    CREATE INDEX IF NOT EXISTS idx_autopatch_rings_order ON autopatch_rings(phase_order);
+    CREATE INDEX IF NOT EXISTS idx_autopatch_dep_rel ON autopatch_device_deployments(release_id);
+    CREATE INDEX IF NOT EXISTS idx_autopatch_dep_dev ON autopatch_device_deployments(device_id);
+    CREATE INDEX IF NOT EXISTS idx_autopatch_dep_ring ON autopatch_device_deployments(ring_id);
+    CREATE INDEX IF NOT EXISTS idx_autopatch_dep_status ON autopatch_device_deployments(install_status);
   `);
 
   // Schema migrations for existing databases
@@ -4520,6 +4580,50 @@ exit 0`,
         '22631.3880',
         'ACTIVE',
         9.8
+      );
+    }
+  }
+
+  // 33. Seed Windows Autopatch Cadence & Staged Deployment Rings
+  const autopatchRingsCount = db.prepare('SELECT COUNT(*) as c FROM autopatch_rings').get().c;
+  if (autopatchRingsCount === 0) {
+    const insertRing = db.prepare(`
+      INSERT INTO autopatch_rings (id, name, phase_order, deferral_days, target_device_percentage, max_allowable_crash_rate, min_success_rate, target_group_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    insertRing.run('ring-test', 'Test (Canary / IT Admin Validation)', 1, 0, 5.0, 0.0, 100.0, 'grp-all');
+    insertRing.run('ring-first', 'First (1% Early Adopters Ring)', 2, 2, 10.0, 1.5, 98.0, 'grp-all');
+    insertRing.run('ring-fast', 'Fast (9% Rapid Fleet Deployment)', 3, 4, 25.0, 2.0, 95.0, 'grp-all');
+    insertRing.run('ring-broad', 'Broad (90% General Availability Fleet)', 4, 7, 60.0, 2.0, 95.0, 'grp-all');
+
+    const insertRelease = db.prepare(`
+      INSERT INTO autopatch_release_cadence (id, name, release_month, release_type, target_kb_numbers, approval_status, active_phase, scheduled_start_date, broad_target_date)
+      VALUES (?, ?, ?, ?, ?, ?, ?, DATETIME('now', '-3 days'), DATETIME('now', '+7 days'))
+    `);
+    insertRelease.run(
+      'rel-2026-09-b',
+      'Windows 11 September 2026 Quality Update (B-Release)',
+      '2026-09',
+      'SECURITY_QUALITY',
+      'KB5044284, KB5044310',
+      'AUTOMATIC_APPROVED',
+      'FIRST'
+    );
+
+    const primaryDev = db.prepare("SELECT id FROM devices LIMIT 1").get();
+    if (primaryDev) {
+      db.prepare(`
+        INSERT OR IGNORE INTO autopatch_device_deployments (id, release_id, device_id, ring_id, install_status, applied_kb, exit_code, post_patch_crashes, installed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', '-1 day'))
+      `).run(
+        'dep-primary-01',
+        'rel-2026-09-b',
+        primaryDev.id,
+        'ring-first',
+        'INSTALLED',
+        'KB5044284',
+        0,
+        0
       );
     }
   }
