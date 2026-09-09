@@ -194,6 +194,9 @@ const App = {
       case 'governance':
         if (window.GovernanceRbacTable) window.GovernanceRbacTable.render();
         break;
+      case 'mdm-csp':
+        if (window.MdmCspTable) window.MdmCspTable.render();
+        break;
       case 'settings':
         this.renderSettings();
         break;

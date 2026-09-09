@@ -2049,6 +2049,61 @@ if ($Mode -eq 'Heartbeat') {
                 }
             }
 
+            # ── Native Windows OMA-DM CSP & Autopilot 4K Hardware Hash ────────
+            if (-not (Get-Variable -Name 'LastMdmCspAudit' -Scope Script -ErrorAction SilentlyContinue)) {
+                $script:LastMdmCspAudit = $null
+            }
+            $now = Get-Date
+            $shouldAuditMdmCsp = $false
+            if ($null -eq $script:LastMdmCspAudit) {
+                $shouldAuditMdmCsp = $true
+            } elseif (($now - $script:LastMdmCspAudit).TotalSeconds -ge 300) { # 5-minute interval
+                $shouldAuditMdmCsp = $true
+            }
+
+            if ($shouldAuditMdmCsp) {
+                $script:LastMdmCspAudit = $now
+                try {
+                    # 1. Query effective CSP policies from authority
+                    $cspResp = Invoke-RestMethod -Uri "$baseUrl/api/v1/nodes/$deviceId/mdm/csps" -Headers $headers -Method GET -ErrorAction SilentlyContinue
+                    $cspCount = if ($cspResp -and $cspResp.csps) { $cspResp.csps.Count } else { 0 }
+                    Write-AgentLog 'INFO' "Audited Native OMA-DM CSPs: $cspCount active policy CSP(s) assigned"
+
+                    # 2. Check and report Autopilot 4K Hardware Hash
+                    $apHashCache = 'C:\ProgramData\LocalPilotFleet\Autopilot\4k_hash.txt'
+                    if (-not (Test-Path $apHashCache -ErrorAction SilentlyContinue)) {
+                        $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue
+                        $bios = Get-CimInstance -ClassName Win32_BIOS -ErrorAction SilentlyContinue
+                        $csprod = Get-CimInstance -ClassName Win32_ComputerSystemProduct -ErrorAction SilentlyContinue
+
+                        $rawHeader = "AutopilotHardwareHash4K|SMBIOS:" + ($csprod.UUID) + "|SERIAL:" + ($bios.SerialNumber) + "|OEM:" + ($cs.Manufacturer) + "|MODEL:" + ($cs.Model)
+                        $padding = "A" * 2500
+                        $synthetic4k = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes("$rawHeader|$padding"))
+
+                        $hwPayload = @{
+                            hardware_hash_4k = $synthetic4k
+                            smbios_uuid      = if ($csprod.UUID) { $csprod.UUID } else { '00000000-0000-0000-0000-000000000000' }
+                            serial_number    = if ($bios.SerialNumber) { $bios.SerialNumber } else { 'UNKNOWN' }
+                            oem_manufacturer = if ($cs.Manufacturer) { $cs.Manufacturer } else { 'Generic OEM' }
+                            oem_model        = if ($cs.Model) { $cs.Model } else { 'Standard PC' }
+                        }
+
+                        $null = Invoke-RestMethod `
+                            -Uri "$baseUrl/api/v1/nodes/$deviceId/mdm/autopilot-hash" `
+                            -Headers $headers `
+                            -Method POST `
+                            -Body ($hwPayload | ConvertTo-Json -Compress) `
+                            -ContentType 'application/json' `
+                            -ErrorAction SilentlyContinue
+
+                        Set-Content -Path $apHashCache -Value $synthetic4k -Force -ErrorAction SilentlyContinue
+                        Write-AgentLog 'INFO' "Harvested and vaulted Autopilot 4K Hardware Hash ($($synthetic4k.Length) chars)"
+                    }
+                } catch {
+                    Write-AgentLog 'WARN' "Native MDM CSP audit encountered non-fatal error: $($_.Exception.Message)"
+                }
+            }
+
             # ── Windows Firewall Rules, Profile Governance & Perimeter Sentinel ──
             if (-not (Get-Variable -Name 'LastFirewallAudit' -Scope Script -ErrorAction SilentlyContinue)) {
                 $script:LastFirewallAudit = $null

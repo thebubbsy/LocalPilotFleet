@@ -2256,6 +2256,60 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_siem_enabled ON siem_audit_forwarders(is_enabled);
     CREATE INDEX IF NOT EXISTS idx_siem_dest ON siem_audit_forwarders(destination_type);
 
+    -- 107. MDM_CSP_CONFIGURATIONS — Native Windows OMA-DM Configuration Service Providers
+    CREATE TABLE IF NOT EXISTS mdm_csp_configurations (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      csp_uri TEXT NOT NULL,
+      csp_type TEXT NOT NULL CHECK(csp_type IN ('GET', 'SET', 'EXEC', 'DELETE')),
+      wmi_class TEXT NOT NULL DEFAULT 'MDM_BridgeWmiProvider',
+      data_type TEXT NOT NULL CHECK(data_type IN ('int', 'string', 'boolean', 'xml', 'b64')),
+      target_value TEXT,
+      target_group_id TEXT DEFAULT 'grp-all',
+      is_enforced INTEGER NOT NULL DEFAULT 1 CHECK(is_enforced IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mdm_csp_uri ON mdm_csp_configurations(csp_uri);
+    CREATE INDEX IF NOT EXISTS idx_mdm_csp_enforced ON mdm_csp_configurations(is_enforced);
+
+    -- 108. AUTOPILOT_HARDWARE_HASHES — Hardware-Rooted 4K Hashes for Windows Autopilot Zero-Touch OOBE
+    CREATE TABLE IF NOT EXISTS autopilot_hardware_hashes (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL UNIQUE,
+      hardware_hash_4k TEXT NOT NULL,
+      hash_length INTEGER NOT NULL DEFAULT 4000,
+      smbios_uuid TEXT NOT NULL,
+      serial_number TEXT NOT NULL,
+      oem_manufacturer TEXT NOT NULL,
+      oem_model TEXT NOT NULL,
+      enrollment_state TEXT NOT NULL DEFAULT 'ENROLLED' CHECK(enrollment_state IN ('READY', 'ENROLLED', 'PENDING_RESET', 'RETIRED')),
+      harvested_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ap_hw_device ON autopilot_hardware_hashes(device_id);
+    CREATE INDEX IF NOT EXISTS idx_ap_hw_state ON autopilot_hardware_hashes(enrollment_state);
+
+    -- 109. NATIVE_REMOTE_WIPES — Native RemoteWipe CSP & TPM Crypto-Erase Ledger
+    CREATE TABLE IF NOT EXISTS native_remote_wipes (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      wipe_method TEXT NOT NULL DEFAULT 'REMOTE_WIPE_CSP' CHECK(wipe_method IN ('REMOTE_WIPE_CSP', 'DO_WIPE_PERSIST_PROVISIONING', 'DO_WIPE_PROTECTED')),
+      dual_custody_approval_id TEXT,
+      status TEXT NOT NULL DEFAULT 'QUEUED' CHECK(status IN ('QUEUED', 'DISPATCHED', 'EXECUTING_IN_WINRE', 'CRYPTO_ERASED_COMPLETED', 'FAILED')),
+      initiated_by TEXT NOT NULL,
+      initiated_at TEXT DEFAULT (DATETIME('now')),
+      completed_at TEXT,
+      error_message TEXT,
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_native_wipe_device ON native_remote_wipes(device_id);
+    CREATE INDEX IF NOT EXISTS idx_native_wipe_status ON native_remote_wipes(status);
+
+
 
 
   `);
@@ -5212,6 +5266,75 @@ exit 0`,
       1,
       142
     );
+  }
+
+
+  // 39. Seed Native MDM CSPs & Autopilot 4K Hardware Hashes
+  const mdmCspCount = db.prepare('SELECT COUNT(*) as count FROM mdm_csp_configurations').get().count;
+  if (mdmCspCount === 0) {
+    const insertCsp = db.prepare(`
+      INSERT OR IGNORE INTO mdm_csp_configurations (
+        id, name, csp_uri, csp_type, wmi_class, data_type, target_value, target_group_id, is_enforced
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertCsp.run(
+      'csp-bitlocker-req',
+      'BitLocker Require Device Encryption CSP',
+      './Vendor/MSFT/BitLocker/RequireDeviceEncryption',
+      'SET',
+      'MDM_BitLocker',
+      'int',
+      '1',
+      'grp-all',
+      1
+    );
+
+    insertCsp.run(
+      'csp-devicelock-history',
+      'DeviceLock Password History CSP',
+      './Vendor/MSFT/DeviceLock/DevicePasswordHistory',
+      'SET',
+      'MDM_DeviceLock',
+      'int',
+      '5',
+      'grp-all',
+      1
+    );
+
+    insertCsp.run(
+      'csp-remotewipe-dowipe',
+      'RemoteWipe Native Firmware Reset CSP',
+      './Vendor/MSFT/RemoteWipe/doWipe',
+      'EXEC',
+      'MDM_RemoteWipe',
+      'string',
+      '',
+      'grp-all',
+      1
+    );
+
+    // Seed 1 realistic Autopilot 4K Hardware Hash for host device
+    const hostDev = db.prepare("SELECT id, serial_number, uuid FROM devices LIMIT 1").get();
+    if (hostDev) {
+      // Synthesize authentic 4000-character base64 hardware hash
+      const synthetic4kHash = Buffer.alloc(3000, 0x5a).toString('base64');
+      db.prepare(`
+        INSERT OR IGNORE INTO autopilot_hardware_hashes (
+          id, device_id, hardware_hash_4k, hash_length, smbios_uuid, serial_number, oem_manufacturer, oem_model, enrollment_state
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        'hw-01',
+        hostDev.id,
+        synthetic4kHash,
+        synthetic4kHash.length,
+        hostDev.uuid || '44444444-5555-6666-7777-888888888888',
+        hostDev.serial_number || 'MB-9901-DADDY',
+        'Dell Inc.',
+        'OptiPlex 7090',
+        'ENROLLED'
+      );
+    }
   }
 
 }

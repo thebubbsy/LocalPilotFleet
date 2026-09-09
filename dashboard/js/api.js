@@ -2463,7 +2463,74 @@ async function forwardSiemEvent(data) {
   });
 }
 
+
+// 39. Native Windows MDM Protocol & CSP Integration
+async function getMdmStats() {
+  return apiFetch('/api/v1/fleet/mdm/stats');
+}
+
+async function getMdmCsps(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.csp_type) qs.set('csp_type', params.csp_type);
+  if (params.is_enforced !== undefined) qs.set('is_enforced', params.is_enforced);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/mdm/csps${qStr ? '?' + qStr : ''}`);
+}
+
+async function getMdmCsp(id) {
+  return apiFetch(`/api/v1/fleet/mdm/csps/${encodeURIComponent(id)}`);
+}
+
+async function createMdmCsp(data) {
+  return apiFetch('/api/v1/fleet/mdm/csps', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateMdmCsp(id, data) {
+  return apiFetch(`/api/v1/fleet/mdm/csps/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteMdmCsp(id) {
+  return apiFetch(`/api/v1/fleet/mdm/csps/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getAutopilotHardwareHashes(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.enrollment_state) qs.set('enrollment_state', params.enrollment_state);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/mdm/autopilot-hashes${qStr ? '?' + qStr : ''}`);
+}
+
+async function getAutopilotHardwareHash(deviceId) {
+  return apiFetch(`/api/v1/fleet/mdm/autopilot-hashes/${encodeURIComponent(deviceId)}`);
+}
+
+async function dispatchNativeRemoteWipe(data) {
+  return apiFetch('/api/v1/fleet/mdm/remote-wipe', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
 window.FleetAPI = {
+  // Native Windows MDM Protocol & CSP Integration
+  getMdmStats,
+  getMdmCsps,
+  getMdmCsp,
+  createMdmCsp,
+  updateMdmCsp,
+  deleteMdmCsp,
+  getAutopilotHardwareHashes,
+  getAutopilotHardwareHash,
+  dispatchNativeRemoteWipe,
+
   // Enterprise Governance, Granular RBAC & SIEM Forwarder
   getRbacStats,
   getRbacRoles,

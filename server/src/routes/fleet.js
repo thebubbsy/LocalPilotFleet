@@ -1,3 +1,4 @@
+import { mdmCspEngine } from '../services/mdmCspEngine.js';
 import { rbacEngine } from '../services/rbacEngine.js';
 import { siemForwarderEngine } from '../services/siemForwarderEngine.js';
 import * as supervisorEngine from '../services/supervisorEngine.js';
@@ -6414,6 +6415,128 @@ try {
       sendJson(res, 200, result);
     } catch (err) {
       sendJson(res, 400, { error: 'SIEM_FORWARD_ERROR', message: err.message });
+    }
+  });
+
+
+  // 386. GET /api/v1/fleet/mdm/stats
+  router.get('/api/v1/fleet/mdm/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = mdmCspEngine.getMdmStats();
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'MDM_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 387. GET /api/v1/fleet/mdm/csps
+  router.get('/api/v1/fleet/mdm/csps', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const csps = mdmCspEngine.getCspConfigurations(req.query);
+      sendJson(res, 200, { csps, count: csps.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'CSP_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 388. GET /api/v1/fleet/mdm/csps/:id
+  router.get('/api/v1/fleet/mdm/csps/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const csp = mdmCspEngine.getCspConfigurationById(req.params.id);
+      if (!csp) {
+        return sendJson(res, 404, { error: 'CSP_NOT_FOUND', message: `CSP '${req.params.id}' does not exist` });
+      }
+      sendJson(res, 200, csp);
+    } catch (err) {
+      sendJson(res, 500, { error: 'CSP_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 389. POST /api/v1/fleet/mdm/csps
+  router.post('/api/v1/fleet/mdm/csps', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const created = mdmCspEngine.createCspConfiguration(req.body || {});
+      sendJson(res, 201, created);
+    } catch (err) {
+      sendJson(res, 400, { error: 'CSP_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 390. PATCH /api/v1/fleet/mdm/csps/:id
+  router.patch('/api/v1/fleet/mdm/csps/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const updated = mdmCspEngine.updateCspConfiguration(req.params.id, req.body || {});
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 400, { error: 'CSP_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 391. DELETE /api/v1/fleet/mdm/csps/:id
+  router.delete('/api/v1/fleet/mdm/csps/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const deleted = mdmCspEngine.deleteCspConfiguration(req.params.id);
+      sendJson(res, 200, deleted);
+    } catch (err) {
+      sendJson(res, 400, { error: 'CSP_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 392. GET /api/v1/fleet/mdm/autopilot-hashes
+  router.get('/api/v1/fleet/mdm/autopilot-hashes', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const hashes = mdmCspEngine.getAutopilotHardwareHashes(req.query);
+      sendJson(res, 200, { hashes, count: hashes.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'AP_HASHES_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 393. GET /api/v1/fleet/mdm/autopilot-hashes/:deviceId
+  router.get('/api/v1/fleet/mdm/autopilot-hashes/:deviceId', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const hash = mdmCspEngine.getAutopilotHardwareHashByDeviceId(req.params.deviceId);
+      if (!hash) {
+        return sendJson(res, 404, { error: 'HASH_NOT_FOUND', message: `No 4K hardware hash recorded for '${req.params.deviceId}'` });
+      }
+      sendJson(res, 200, hash);
+    } catch (err) {
+      sendJson(res, 500, { error: 'AP_HASH_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 394. POST /api/v1/fleet/mdm/remote-wipe
+  router.post('/api/v1/fleet/mdm/remote-wipe', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const wipe = mdmCspEngine.dispatchNativeRemoteWipe(req.body || {});
+      sendJson(res, 200, wipe);
+    } catch (err) {
+      sendJson(res, 400, { error: 'WIPE_DISPATCH_ERROR', message: err.message });
+    }
+  });
+
+  // 395. GET /api/v1/fleet/mdm/csps/:id/script
+  router.get('/api/v1/fleet/mdm/csps/:id/script', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const csp = mdmCspEngine.getCspConfigurationById(req.params.id);
+      if (!csp) {
+        return sendJson(res, 404, { error: 'CSP_NOT_FOUND', message: `CSP '${req.params.id}' does not exist` });
+      }
+      const script = mdmCspEngine.generateCspWmiBridgePowerShellScript(csp);
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end(script);
+    } catch (err) {
+      sendJson(res, 500, { error: 'CSP_SCRIPT_ERROR', message: err.message });
     }
   });
 

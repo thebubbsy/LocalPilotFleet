@@ -1,3 +1,4 @@
+import { mdmCspEngine } from '../services/mdmCspEngine.js';
 import * as supervisorEngine from '../services/supervisorEngine.js';
 import * as realtimePushEngine from '../services/realtimePushEngine.js';
 /**
@@ -2107,6 +2108,46 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { success: true, crash_id: dump.id, recovery_action: dump.recovery_action });
     } catch (err) {
       sendJson(res, 500, { error: 'SUPERVISOR_CRASH_REPORT_ERROR', message: err.message });
+    }
+  });
+
+
+  // 91. GET /api/v1/nodes/:id/mdm/csps
+  router.get('/api/v1/nodes/:id/mdm/csps', (req, res) => {
+    const authNode = authenticateNode(req, res);
+    if (!authNode) return;
+    try {
+      const effectiveCsps = mdmCspEngine.getEffectiveCspPoliciesForDevice(req.params.id);
+      sendJson(res, 200, { csps: effectiveCsps, count: effectiveCsps.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'NODE_CSP_ERROR', message: err.message });
+    }
+  });
+
+  // 92. POST /api/v1/nodes/:id/mdm/autopilot-hash
+  router.post('/api/v1/nodes/:id/mdm/autopilot-hash', (req, res) => {
+    const authNode = authenticateNode(req, res);
+    if (!authNode) return;
+    try {
+      const harvested = mdmCspEngine.harvestAutopilotHardwareHash({
+        device_id: req.params.id,
+        ...(req.body || {})
+      });
+      sendJson(res, 201, { success: true, hardware_hash: harvested });
+    } catch (err) {
+      sendJson(res, 400, { error: 'AP_HARVEST_ERROR', message: err.message });
+    }
+  });
+
+  // 93. POST /api/v1/nodes/:id/mdm/wipe-status
+  router.post('/api/v1/nodes/:id/mdm/wipe-status', (req, res) => {
+    const authNode = authenticateNode(req, res);
+    if (!authNode) return;
+    try {
+      const updated = mdmCspEngine.updateRemoteWipeStatus(req.body?.wipe_id, req.body || {});
+      sendJson(res, 200, { success: true, wipe: updated });
+    } catch (err) {
+      sendJson(res, 400, { error: 'WIPE_STATUS_ERROR', message: err.message });
     }
   });
 
