@@ -158,6 +158,9 @@ const App = {
       case 'wip':
         if (window.WipTable) window.WipTable.init();
         break;
+      case 'whfb':
+        if (window.WhfbTable) window.WhfbTable.init();
+        break;
       case 'settings':
         this.renderSettings();
         break;

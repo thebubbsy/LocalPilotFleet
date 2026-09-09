@@ -32,6 +32,7 @@ import * as storageAccessEngine from '../services/storageAccessEngine.js';
 import * as deliveryOptimizationEngine from '../services/deliveryOptimizationEngine.js';
 import * as dfciEngine from '../services/dfciEngine.js';
 import * as wipEngine from '../services/wipEngine.js';
+import * as whfbEngine from '../services/whfbEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -4526,6 +4527,129 @@ try {
       sendJson(res, 200, status);
     } catch (err) {
       sendJson(res, 500, { error: 'DEVICE_WIP_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // ── Windows Hello for Business (WHfB) & FIDO2 Routes (246–254) ──
+  // 246. GET /api/v1/fleet/whfb/stats
+  router.get('/api/v1/fleet/whfb/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const stats = whfbEngine.getWhfbStats(db);
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'WHFB_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 247. GET /api/v1/fleet/whfb/policies
+  router.get('/api/v1/fleet/whfb/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const policies = whfbEngine.getWhfbPolicies(db);
+      sendJson(res, 200, { policies });
+    } catch (err) {
+      sendJson(res, 500, { error: 'WHFB_POLICIES_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 248. POST /api/v1/fleet/whfb/policies
+  router.post('/api/v1/fleet/whfb/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const created = whfbEngine.createWhfbPolicy(db, req.body);
+      sendJson(res, 201, created);
+    } catch (err) {
+      sendJson(res, 400, { error: 'WHFB_POLICY_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 249. GET /api/v1/fleet/whfb/inventory
+  router.get('/api/v1/fleet/whfb/inventory', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const inventory = whfbEngine.getWhfbInventory(db, req.query);
+      sendJson(res, 200, { inventory });
+    } catch (err) {
+      sendJson(res, 500, { error: 'WHFB_INVENTORY_ERROR', message: err.message });
+    }
+  });
+
+  // 250. GET /api/v1/fleet/whfb/audit-log
+  router.get('/api/v1/fleet/whfb/audit-log', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const logs = whfbEngine.getWhfbAuditLog(db, Number(req.query.limit) || 100);
+      sendJson(res, 200, { audit_log: logs });
+    } catch (err) {
+      sendJson(res, 500, { error: 'WHFB_AUDIT_LOG_ERROR', message: err.message });
+    }
+  });
+
+  // 251. GET /api/v1/fleet/whfb/policies/:id
+  router.get('/api/v1/fleet/whfb/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const policy = whfbEngine.getWhfbPolicy(db, id);
+      if (!policy) {
+        return sendJson(res, 404, { error: 'POLICY_NOT_FOUND', message: `WHfB Policy '${id}' does not exist` });
+      }
+      const script = whfbEngine.generateWhfbRegistryScript(policy);
+      sendJson(res, 200, { policy, script });
+    } catch (err) {
+      sendJson(res, 500, { error: 'WHFB_POLICY_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 252. PATCH /api/v1/fleet/whfb/policies/:id
+  router.patch('/api/v1/fleet/whfb/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const updated = whfbEngine.updateWhfbPolicy(db, id, req.body);
+      if (!updated) {
+        return sendJson(res, 404, { error: 'POLICY_NOT_FOUND', message: `WHfB Policy '${id}' does not exist` });
+      }
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 400, { error: 'WHFB_POLICY_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 253. DELETE /api/v1/fleet/whfb/policies/:id
+  router.delete('/api/v1/fleet/whfb/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const deleted = whfbEngine.deleteWhfbPolicy(db, id);
+      if (!deleted) {
+        return sendJson(res, 404, { error: 'POLICY_NOT_FOUND', message: `WHfB Policy '${id}' does not exist` });
+      }
+      sendJson(res, 200, { ok: true, deleted_id: id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'WHFB_POLICY_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 254. GET /api/v1/fleet/devices/:id/whfb
+  router.get('/api/v1/fleet/devices/:id/whfb', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const status = whfbEngine.getDeviceWhfbStatus(db, id);
+      sendJson(res, 200, status);
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_WHFB_FETCH_ERROR', message: err.message });
     }
   });
 }

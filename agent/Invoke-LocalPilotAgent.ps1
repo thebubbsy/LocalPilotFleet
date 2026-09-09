@@ -2802,6 +2802,118 @@ if ($Mode -eq 'Heartbeat') {
                     Write-AgentLog 'WARN' "WIP posture audit encountered non-fatal error: $($_.Exception.Message)"
                 }
             }
+
+            # ── Windows Hello for Business (WHfB) & FIDO2 Passwordless Audit ──
+            if (-not (Get-Variable -Name 'LastWHfBAudit' -Scope Script -ErrorAction SilentlyContinue)) {
+                $script:LastWHfBAudit = $null
+            }
+            $shouldAuditWHfB = $false
+            if ($null -eq $script:LastWHfBAudit) {
+                $shouldAuditWHfB = $true
+            } elseif (($now - $script:LastWHfBAudit).TotalSeconds -ge 180) { # 3-minute interval
+                $shouldAuditWHfB = $true
+            }
+
+            if ($shouldAuditWHfB) {
+                $script:LastWHfBAudit = $now
+                try {
+                    # 1. Inspect Windows Hello / NGC Container Enrollment via dsregcmd
+                    $whfbEnrolled = 0
+                    $tpmPresent = 0
+                    $tpmReady = 0
+                    $dsregOut = & dsregcmd /status 2>&1
+                    if ($dsregOut) {
+                        $dsregStr = $dsregOut -join "`n"
+                        if ($dsregStr -match 'NgcSet\s*:\s*YES') {
+                            $whfbEnrolled = 1
+                        }
+                        if ($dsregStr -match 'TpmPresent\s*:\s*YES') {
+                            $tpmPresent = 1
+                        }
+                        if ($dsregStr -match 'TpmReady\s*:\s*YES') {
+                            $tpmReady = 1
+                        }
+                    }
+
+                    # Fallback TPM check if dsregcmd didn't detect
+                    if ($tpmPresent -eq 0) {
+                        try {
+                            $tpmObj = Get-Tpm -ErrorAction SilentlyContinue
+                            if ($tpmObj -and $tpmObj.TpmPresent) {
+                                $tpmPresent = 1
+                                if ($tpmObj.TpmReady) { $tpmReady = 1 }
+                            }
+                        } catch {}
+                    }
+
+                    # 2. Inspect Biometrics Subsystem (Windows Biometric Service & Devices)
+                    $bioAvail = 0
+                    $faceConfigured = 0
+                    $fingerprintConfigured = 0
+                    try {
+                        $bioSvc = Get-Service -Name 'WbioSrvc' -ErrorAction SilentlyContinue
+                        if ($bioSvc -and $bioSvc.Status -eq 'Running') {
+                            $bioAvail = 1
+                        }
+                        $bioDevices = Get-PnpDevice -Class 'Biometric' -Status 'OK' -ErrorAction SilentlyContinue
+                        if ($bioDevices) {
+                            $bioAvail = 1
+                            foreach ($dev in $bioDevices) {
+                                if ($dev.FriendlyName -match 'Face|Camera|IR') {
+                                    $faceConfigured = 1
+                                }
+                                if ($dev.FriendlyName -match 'Fingerprint|Sensor|Validity|Touch') {
+                                    $fingerprintConfigured = 1
+                                }
+                            }
+                        }
+                    } catch {}
+
+                    # 3. Check Enhanced Anti-Spoofing Configuration
+                    $antiSpoofActive = 0
+                    $antiSpoofReg = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\PassportForWork\Biometrics' -Name 'FacialFeaturesUseEnhancedAntiSpoofing' -ErrorAction SilentlyContinue
+                    if ($antiSpoofReg -and $antiSpoofReg.FacialFeaturesUseEnhancedAntiSpoofing -eq 1) {
+                        $antiSpoofActive = 1
+                    }
+
+                    # 4. Check FIDO2 / WebAuthn Security Keys
+                    $fido2KeysCount = 0
+                    try {
+                        $fidoDevs = Get-PnpDevice -Status 'OK' -ErrorAction SilentlyContinue | Where-Object { $_.FriendlyName -match 'FIDO|YubiKey|Security Key' }
+                        if ($fidoDevs) {
+                            $fido2KeysCount = ($fidoDevs | Measure-Object).Count
+                        }
+                    } catch {}
+
+                    $provisioningState = if ($whfbEnrolled -eq 1) { 'ENROLLED' } else { 'NOT_ENROLLED' }
+                    $complianceStatus = if ($whfbEnrolled -eq 1) { 'COMPLIANT' } else { 'NOT_ENROLLED' }
+
+                    $whfbPayload = @{
+                        whfb_enrolled               = $whfbEnrolled
+                        whfb_provisioning_state     = $provisioningState
+                        tpm_present                 = $tpmPresent
+                        tpm_ready                   = $tpmReady
+                        biometrics_available        = $bioAvail
+                        face_auth_configured        = $faceConfigured
+                        fingerprint_auth_configured = $fingerprintConfigured
+                        pin_complexity_compliant    = 1
+                        fido2_keys_count            = $fido2KeysCount
+                        anti_spoofing_active        = $antiSpoofActive
+                        compliance_status           = $complianceStatus
+                    }
+
+                    Invoke-RestMethod `
+                        -Uri        "$baseUrl/api/v1/nodes/$deviceId/whfb-status" `
+                        -Method     POST `
+                        -Body       ($whfbPayload | ConvertTo-Json -Depth 5 -Compress) `
+                        -Headers    $authHeaders `
+                        -TimeoutSec 10 `
+                        -ErrorAction SilentlyContinue | Out-Null
+                    Write-AgentLog 'INFO' "Reported Windows Hello & FIDO2 posture (Enrolled: $whfbEnrolled, TPM: $tpmPresent, Bio: $bioAvail, FIDO2: $fido2KeysCount)"
+                } catch {
+                    Write-AgentLog 'WARN' "Windows Hello posture audit encountered non-fatal error: $($_.Exception.Message)"
+                }
+            }
         } catch {
             Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
             if (-not $Continuous) { exit 1 }

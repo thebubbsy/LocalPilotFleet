@@ -569,6 +569,17 @@
         </div>
       </div>
 
+      <!-- ── Windows Hello for Business (WHfB) & FIDO2 Posture ── -->
+      <div class="bc-section" id="bc-whfb-section">
+        <div class="bc-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>🔑 Windows Hello for Business &amp; FIDO2</span>
+          <button class="intune-link-btn" id="btn-bc-view-whfb-tab">View WHfB Blade</button>
+        </div>
+        <div id="bc-whfb-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading Windows Hello posture…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -1956,6 +1967,61 @@
         wipListEl.innerHTML = html;
       }).catch(() => {
         wipListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">WIP telemetry pending audit.</div>';
+      });
+    }
+
+    // Fetch and populate WHfB Posture
+    const whfbListEl = body.querySelector('#bc-whfb-list');
+    if (whfbListEl && _currentDevice?.id) {
+      body.querySelector('#btn-bc-view-whfb-tab')?.addEventListener('click', () => {
+        close();
+        if (window.App && typeof window.App.navigate === 'function') {
+          window.App.navigate('whfb');
+        }
+      });
+
+      window.FleetAPI.getDeviceWhfb(_currentDevice.id).then(res => {
+        if (!res || !res.status) {
+          whfbListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">No Windows Hello telemetry reported yet.</div>';
+          return;
+        }
+
+        const status = res.status;
+        const policy = res.effective_policy;
+        const isEnrolled = status?.whfb_enrolled === 1;
+
+        let bioStr = 'None';
+        if (status?.face_auth_configured && status?.fingerprint_auth_configured) {
+          bioStr = '👤 Face + 👆 Fingerprint';
+        } else if (status?.face_auth_configured) {
+          bioStr = '👤 Face (IR Depth)';
+        } else if (status?.fingerprint_auth_configured) {
+          bioStr = '👆 Fingerprint';
+        }
+
+        const html = `
+          <div style="background:var(--bg-secondary);padding:10px 12px;border-radius:6px;border:1px solid var(--border-color);margin-top:4px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <span style="font-weight:600;color:var(--text-primary);display:flex;align-items:center;gap:6px;">
+                <span>🔑</span> ${policy ? policy.name : 'Default Windows Hello Policy'}
+              </span>
+              <span class="badge" style="background:${isEnrolled ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)'};color:${isEnrolled ? '#10b981' : '#f59e0b'};font-weight:700;">
+                ${isEnrolled ? '✅ ENROLLED' : '⏳ NOT ENROLLED'}
+              </span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;font-size:11px;color:var(--text-muted);">
+              <div>TPM 2.0: <strong style="color:var(--text-primary);">${status?.tpm_present && status?.tpm_ready ? '🔒 Present & Ready' : (status?.tpm_present ? '⚠️ Not Ready' : '❌ Missing')}</strong></div>
+              <div>Biometrics: <strong style="color:var(--text-primary);">${bioStr}</strong></div>
+              <div>FIDO2 Security Keys: <strong style="color:var(--text-primary);">${status?.fido2_keys_count > 0 ? '🔑 ' + status.fido2_keys_count + ' key(s)' : '0 registered'}</strong></div>
+              <div>PIN Complexity: <strong style="color:${status?.pin_complexity_compliant ? '#10b981' : '#ef4444'};">${status?.pin_complexity_compliant ? '✅ Compliant' : '🚨 Violates Policy'}</strong></div>
+              <div>Anti-Spoofing: <strong style="color:var(--text-primary);">${status?.anti_spoofing_active ? '🛡️ Active' : 'Standard'}</strong></div>
+              <div>Compliance: <strong style="color:${status?.compliance_status === 'COMPLIANT' ? '#10b981' : '#f59e0b'};">${status?.compliance_status || 'UNKNOWN'}</strong></div>
+            </div>
+          </div>
+        `;
+        whfbListEl.innerHTML = html;
+      }).catch(() => {
+        whfbListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Windows Hello telemetry pending audit.</div>';
       });
     }
 

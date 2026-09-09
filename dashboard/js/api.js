@@ -1551,6 +1551,61 @@ async function getDeviceWip(deviceId) {
   return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/wip`);
 }
 
+/* ── Windows Hello for Business (WHfB) & FIDO2 Passwordless ── */
+async function getWhfbStats() {
+  return apiFetch('/api/v1/fleet/whfb/stats');
+}
+
+async function getWhfbPolicies() {
+  return apiFetch('/api/v1/fleet/whfb/policies');
+}
+
+async function getWhfbPolicy(id) {
+  return apiFetch(`/api/v1/fleet/whfb/policies/${encodeURIComponent(id)}`);
+}
+
+async function createWhfbPolicy(data) {
+  return apiFetch('/api/v1/fleet/whfb/policies', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateWhfbPolicy(id, data) {
+  return apiFetch(`/api/v1/fleet/whfb/policies/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteWhfbPolicy(id) {
+  return apiFetch(`/api/v1/fleet/whfb/policies/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getWhfbInventory(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/whfb/inventory${qStr ? '?' + qStr : ''}`);
+}
+
+async function getWhfbAuditLog(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/whfb/audit-log${qStr ? '?' + qStr : ''}`);
+}
+
+async function getDeviceWhfb(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/whfb`);
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -1675,6 +1730,16 @@ window.FleetAPI = {
   getWipInventory,
   getWipAuditLog,
   getDeviceWip,
+  // Windows Hello for Business (WHfB) & FIDO2 Passwordless
+  getWhfbStats,
+  getWhfbPolicies,
+  getWhfbPolicy,
+  createWhfbPolicy,
+  updateWhfbPolicy,
+  deleteWhfbPolicy,
+  getWhfbInventory,
+  getWhfbAuditLog,
+  getDeviceWhfb,
   // Proactive Remediations
   getRemediations,
   getRemediationStats,

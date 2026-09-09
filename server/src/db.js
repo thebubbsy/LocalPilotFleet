@@ -1395,6 +1395,67 @@ export function initDb(dbOrPath, options = {}) {
       timestamp TEXT DEFAULT (DATETIME('now')),
       FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
     );
+
+    -- 73. WHFB_POLICIES — Windows Hello for Business & FIDO2 Passwordless Authentication Governance
+    CREATE TABLE IF NOT EXISTS whfb_policies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      target_group_id TEXT DEFAULT NULL,
+      state TEXT DEFAULT 'ENABLED' CHECK(state IN ('ENABLED', 'DISABLED', 'NOT_CONFIGURED')),
+      min_pin_length INTEGER DEFAULT 6,
+      max_pin_length INTEGER DEFAULT 127,
+      pin_uppercase TEXT DEFAULT 'ALLOWED' CHECK(pin_uppercase IN ('ALLOWED', 'REQUIRED', 'DISALLOWED')),
+      pin_lowercase TEXT DEFAULT 'ALLOWED' CHECK(pin_lowercase IN ('ALLOWED', 'REQUIRED', 'DISALLOWED')),
+      pin_special_chars TEXT DEFAULT 'ALLOWED' CHECK(pin_special_chars IN ('ALLOWED', 'REQUIRED', 'DISALLOWED')),
+      pin_digits TEXT DEFAULT 'REQUIRED' CHECK(pin_digits IN ('ALLOWED', 'REQUIRED', 'DISALLOWED')),
+      pin_expiration_days INTEGER DEFAULT 0,
+      pin_history_count INTEGER DEFAULT 0,
+      allow_biometrics INTEGER DEFAULT 1,
+      require_enhanced_anti_spoofing INTEGER DEFAULT 1,
+      use_tpm_only INTEGER DEFAULT 1,
+      allow_fido2_security_keys INTEGER DEFAULT 1,
+      enabled INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET NULL
+    );
+
+    -- 74. DEVICE_WHFB_STATUS — Workstation Windows Hello Enrollment, TPM Attestation & FIDO2 Posture
+    CREATE TABLE IF NOT EXISTS device_whfb_status (
+      id TEXT PRIMARY KEY,
+      device_id TEXT UNIQUE NOT NULL,
+      policy_id TEXT DEFAULT NULL,
+      whfb_enrolled INTEGER DEFAULT 0,
+      whfb_provisioning_state TEXT DEFAULT 'NOT_ENROLLED' CHECK(whfb_provisioning_state IN ('ENROLLED', 'NOT_ENROLLED', 'PREREQUISITES_FAILED', 'DISABLED')),
+      tpm_present INTEGER DEFAULT 0,
+      tpm_ready INTEGER DEFAULT 0,
+      biometrics_available INTEGER DEFAULT 0,
+      face_auth_configured INTEGER DEFAULT 0,
+      fingerprint_auth_configured INTEGER DEFAULT 0,
+      pin_complexity_compliant INTEGER DEFAULT 1,
+      fido2_keys_count INTEGER DEFAULT 0,
+      anti_spoofing_active INTEGER DEFAULT 0,
+      compliance_status TEXT DEFAULT 'NOT_ENROLLED' CHECK(compliance_status IN ('COMPLIANT', 'NOT_ENROLLED', 'NON_COMPLIANT')),
+      last_audit_at TEXT,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(policy_id) REFERENCES whfb_policies(id) ON DELETE SET NULL
+    );
+
+    -- 75. WHFB_AUDIT_LOG — Hello for Business Provisioning, Biometrics & FIDO2 Event Ledger
+    CREATE TABLE IF NOT EXISTS whfb_audit_log (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      event_type TEXT NOT NULL CHECK(event_type IN ('PIN_PROVISIONED', 'PIN_RESET', 'BIOMETRIC_ENROLLED', 'FIDO2_KEY_REGISTERED', 'AUTH_FAILURE', 'POLICY_APPLIED', 'SPOOF_ATTEMPT_BLOCKED')),
+      credential_type TEXT DEFAULT 'PIN' CHECK(credential_type IN ('PIN', 'FACE', 'FINGERPRINT', 'FIDO2_KEY', 'TPM_ATTESTATION')),
+      user_name TEXT DEFAULT '',
+      status TEXT DEFAULT 'SUCCESS' CHECK(status IN ('SUCCESS', 'FAILURE', 'BLOCKED')),
+      details TEXT DEFAULT '',
+      timestamp TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
   `);
 
   // Indexes
@@ -1587,6 +1648,14 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_devwip_enforce ON device_wip_status(enforcement_active);
     CREATE INDEX IF NOT EXISTS idx_wipaudit_device ON wip_audit_log(device_id);
     CREATE INDEX IF NOT EXISTS idx_wipaudit_time ON wip_audit_log(timestamp DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_whfbpol_target ON whfb_policies(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_whfbpol_enabled ON whfb_policies(enabled);
+    CREATE INDEX IF NOT EXISTS idx_devwhfb_device ON device_whfb_status(device_id);
+    CREATE INDEX IF NOT EXISTS idx_devwhfb_comp ON device_whfb_status(compliance_status);
+    CREATE INDEX IF NOT EXISTS idx_devwhfb_enrolled ON device_whfb_status(whfb_enrolled);
+    CREATE INDEX IF NOT EXISTS idx_whfbaudit_device ON whfb_audit_log(device_id);
+    CREATE INDEX IF NOT EXISTS idx_whfbaudit_time ON whfb_audit_log(timestamp DESC);
   `);
 
   // Schema migrations for existing databases
@@ -3585,6 +3654,59 @@ exit 0`,
       defaultApps,
       defaultBoundaries,
       1, 0, 0,
+      '-3 days', '-3 days'
+    );
+  }
+
+  // Seed Windows Hello for Business & FIDO2 Passwordless Policies
+  const whfbCount = db.prepare("SELECT COUNT(*) as c FROM whfb_policies").get().c;
+  if (whfbCount === 0) {
+    const insertWhfbPol = db.prepare(`
+      INSERT INTO whfb_policies (
+        id, name, description, target_group_id, state,
+        min_pin_length, max_pin_length, pin_uppercase, pin_lowercase,
+        pin_special_chars, pin_digits, pin_expiration_days, pin_history_count,
+        allow_biometrics, require_enhanced_anti_spoofing, use_tpm_only,
+        allow_fido2_security_keys, enabled, created_at, updated_at
+      ) VALUES (
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        ?, ?, ?,
+        ?, 1, DATETIME('now', ?), DATETIME('now', ?)
+      )
+    `);
+
+    insertWhfbPol.run(
+      'whfb-corp-strict',
+      'Enterprise Passwordless Zero-Trust WHfB Baseline',
+      'Mandates hardware TPM 2.0 key attestation, biometrics with enhanced anti-spoofing, 8+ character alphanumeric PINs, and FIDO2 keys.',
+      'grp-all',
+      'ENABLED',
+      8, 127, 'ALLOWED', 'ALLOWED', 'ALLOWED', 'REQUIRED', 90, 5,
+      1, 1, 1, 1,
+      '-3 days', '-3 days'
+    );
+
+    insertWhfbPol.run(
+      'whfb-standard-workstation',
+      'Standard Workstation PIN & Biometrics',
+      'Enables Windows Hello PIN and biometric sign-in with software TPM fallback allowed for non-TPM workstations.',
+      'grp-workstations',
+      'ENABLED',
+      6, 64, 'ALLOWED', 'ALLOWED', 'ALLOWED', 'REQUIRED', 0, 0,
+      1, 0, 0, 1,
+      '-3 days', '-3 days'
+    );
+
+    insertWhfbPol.run(
+      'whfb-kiosk-disallowed',
+      'Kiosk & Shared Workstation WHfB Lockout',
+      'Disables Windows Hello for Business enrollment on shared public kiosk terminals and exam machines.',
+      'grp-family-laptops',
+      'DISABLED',
+      6, 127, 'DISALLOWED', 'DISALLOWED', 'DISALLOWED', 'ALLOWED', 0, 0,
+      0, 0, 0, 0,
       '-3 days', '-3 days'
     );
   }

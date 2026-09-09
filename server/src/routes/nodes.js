@@ -33,6 +33,7 @@ import * as storageAccessEngine from '../services/storageAccessEngine.js';
 import * as deliveryOptimizationEngine from '../services/deliveryOptimizationEngine.js';
 import * as dfciEngine from '../services/dfciEngine.js';
 import * as wipEngine from '../services/wipEngine.js';
+import * as whfbEngine from '../services/whfbEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -365,7 +366,8 @@ export function registerNodeRoutes(router) {
         storage_access_policy: storageAccessEngine.getEffectivePolicyForDevice(db, deviceId),
         delivery_optimization_policy: deliveryOptimizationEngine.getEffectivePolicyForDevice(db, deviceId),
         dfci_policy: dfciEngine.getEffectivePolicyForDevice(db, deviceId),
-        wip_policy: wipEngine.getEffectiveWipPolicyForDevice(db, deviceId)
+        wip_policy: wipEngine.getEffectiveWipPolicyForDevice(db, deviceId),
+        whfb_policy: whfbEngine.getEffectiveWhfbPolicyForDevice(db, deviceId)
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -1585,6 +1587,46 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { device_id: id, policy });
     } catch (err) {
       sendJson(res, 500, { error: 'WIP_POLICY_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // ── Windows Hello for Business (WHfB) & FIDO2 Node Routes (59–61) ──
+  // 59. POST /api/v1/nodes/:id/whfb-status (Agent reports WHfB enrollment & hardware attestation)
+  router.post('/api/v1/nodes/:id/whfb-status', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const result = whfbEngine.saveDeviceWhfbStatus(db, id, req.body || {});
+      sendJson(res, 200, { ok: true, whfb_status: result });
+    } catch (err) {
+      sendJson(res, 400, { error: 'WHFB_STATUS_INGEST_ERROR', message: err.message });
+    }
+  });
+
+  // 60. POST /api/v1/nodes/:id/whfb-event (Agent reports PIN/Biometric/FIDO2 authentication event)
+  router.post('/api/v1/nodes/:id/whfb-event', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const result = whfbEngine.recordWhfbEvent(db, id, req.body || {});
+      sendJson(res, 201, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'WHFB_EVENT_LOG_ERROR', message: err.message });
+    }
+  });
+
+  // 61. GET /api/v1/nodes/:id/whfb-policy (Agent fetches effective assigned WHfB policy)
+  router.get('/api/v1/nodes/:id/whfb-policy', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const policy = whfbEngine.getEffectiveWhfbPolicyForDevice(db, id);
+      sendJson(res, 200, { device_id: id, policy });
+    } catch (err) {
+      sendJson(res, 500, { error: 'WHFB_POLICY_FETCH_ERROR', message: err.message });
     }
   });
 }
