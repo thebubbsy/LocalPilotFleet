@@ -1,3 +1,4 @@
+import * as supervisorEngine from '../services/supervisorEngine.js';
 import * as realtimePushEngine from '../services/realtimePushEngine.js';
 /**
  * LocalPilot Fleet — Node Agent Endpoints
@@ -2061,6 +2062,51 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { success: true, timestamp: new Date().toISOString() });
     } catch (err) {
       sendJson(res, 500, { error: 'PUSH_PING_ERROR', message: err.message });
+    }
+  });
+
+  // 88. POST /api/v1/nodes/:id/supervisor/register
+  router.post('/api/v1/nodes/:id/supervisor/register', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const sup = supervisorEngine.registerSupervisor(getDb(), {
+        deviceId: id,
+        ...req.body
+      });
+      sendJson(res, 200, { success: true, supervisor: sup });
+    } catch (err) {
+      sendJson(res, 500, { error: 'SUPERVISOR_REG_ERROR', message: err.message });
+    }
+  });
+
+  // 89. POST /api/v1/nodes/:id/supervisor/heartbeat
+  router.post('/api/v1/nodes/:id/supervisor/heartbeat', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const ok = supervisorEngine.heartbeatSupervisor(getDb(), {
+        deviceId: id,
+        ...req.body
+      });
+      sendJson(res, 200, { success: ok, timestamp: new Date().toISOString() });
+    } catch (err) {
+      sendJson(res, 500, { error: 'SUPERVISOR_HEARTBEAT_ERROR', message: err.message });
+    }
+  });
+
+  // 90. POST /api/v1/nodes/:id/supervisor/crash (Watchdog reports worker crash & auto-restart)
+  router.post('/api/v1/nodes/:id/supervisor/crash', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const dump = supervisorEngine.recordCrashDump(getDb(), {
+        deviceId: id,
+        ...req.body
+      });
+      sendJson(res, 200, { success: true, crash_id: dump.id, recovery_action: dump.recovery_action });
+    } catch (err) {
+      sendJson(res, 500, { error: 'SUPERVISOR_CRASH_REPORT_ERROR', message: err.message });
     }
   });
 

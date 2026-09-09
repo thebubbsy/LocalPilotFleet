@@ -2310,7 +2310,47 @@ async function prunePushChannels(timeoutSec = 120) {
   });
 }
 
+
+// 37. Agent Architecture & Host Supervisor
+async function getSupervisorStats() {
+  return apiFetch('/api/v1/fleet/supervisor/stats');
+}
+
+async function getSupervisorNodes(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.device_id) qs.set('device_id', params.device_id);
+  if (params.status) qs.set('status', params.status);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/supervisor/nodes${qStr ? '?' + qStr : ''}`);
+}
+
+async function getSupervisorNode(id) {
+  return apiFetch(`/api/v1/fleet/supervisor/nodes/${encodeURIComponent(id)}`);
+}
+
+async function getSupervisorCrashes(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.device_id) qs.set('device_id', params.device_id);
+  if (params.crash_type) qs.set('crash_type', params.crash_type);
+  if (params.limit) qs.set('limit', params.limit);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/supervisor/crashes${qStr ? '?' + qStr : ''}`);
+}
+
+async function updateSupervisorQuotas(data) {
+  return apiFetch('/api/v1/fleet/supervisor/quotas', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
 window.FleetAPI = {
+  // Agent Architecture & Host Supervisor
+  getSupervisorStats,
+  getSupervisorNodes,
+  getSupervisorNode,
+  getSupervisorCrashes,
+  updateSupervisorQuotas,
   // Real-Time Push Transport
   getPushStats,
   getPushChannels,

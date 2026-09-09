@@ -2152,6 +2152,51 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_push_msg_status ON realtime_push_messages(status);
     CREATE INDEX IF NOT EXISTS idx_push_msg_dispatched ON realtime_push_messages(dispatched_at DESC);
 
+    -- 102. AGENT_SUPERVISORS — Native Windows Service Supervisor & External Watchdog Process
+    CREATE TABLE IF NOT EXISTS agent_supervisors (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL UNIQUE,
+      service_name TEXT NOT NULL DEFAULT 'LocalPilotHostSvc',
+      service_display_name TEXT NOT NULL DEFAULT 'LocalPilot Fleet Host Supervisor',
+      service_status TEXT NOT NULL DEFAULT 'RUNNING' CHECK(service_status IN ('RUNNING', 'STOPPED', 'DEGRADED', 'CRASH_LOOP', 'UNINSTALLED')),
+      supervisor_pid INTEGER,
+      worker_pid INTEGER,
+      watchdog_pid INTEGER,
+      binary_path TEXT DEFAULT 'C:\\ProgramData\\LocalPilotFleet\\bin\\LocalPilotHostSvc.exe',
+      binary_version TEXT DEFAULT '1.0.0',
+      cpu_limit_percent INTEGER NOT NULL DEFAULT 5,
+      ram_limit_mb INTEGER NOT NULL DEFAULT 150,
+      job_object_active INTEGER NOT NULL DEFAULT 1 CHECK(job_object_active IN (0, 1)),
+      tamper_protection_enabled INTEGER NOT NULL DEFAULT 1 CHECK(tamper_protection_enabled IN (0, 1)),
+      crash_count INTEGER NOT NULL DEFAULT 0,
+      last_watchdog_ping TEXT DEFAULT (DATETIME('now')),
+      installed_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    -- 103. AGENT_CRASH_DUMPS — Agent Worker Crash Log Ledger & Automatic Recovery Forensics
+    CREATE TABLE IF NOT EXISTS agent_crash_dumps (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      crash_type TEXT NOT NULL DEFAULT 'UNHANDLED_EXCEPTION' CHECK(crash_type IN ('UNHANDLED_EXCEPTION', 'OUT_OF_MEMORY', 'TERMINATED_BY_USER', 'WATCHDOG_TIMEOUT', 'JOB_OBJECT_VIOLATION')),
+      exit_code INTEGER NOT NULL DEFAULT 1,
+      exception_message TEXT DEFAULT '',
+      stack_trace TEXT DEFAULT '',
+      dump_file_path TEXT DEFAULT '',
+      recovery_action TEXT NOT NULL DEFAULT 'RESTARTED_WORKER' CHECK(recovery_action IN ('RESTARTED_WORKER', 'REINSTALLED_SERVICE', 'ALERT_ADMIN', 'QUARANTINED')),
+      recovery_duration_ms INTEGER NOT NULL DEFAULT 1200,
+      crashed_at TEXT DEFAULT (DATETIME('now')),
+      recovered_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_supervisor_device ON agent_supervisors(device_id);
+    CREATE INDEX IF NOT EXISTS idx_supervisor_status ON agent_supervisors(service_status);
+    CREATE INDEX IF NOT EXISTS idx_crash_dumps_device ON agent_crash_dumps(device_id);
+    CREATE INDEX IF NOT EXISTS idx_crash_dumps_crashed_at ON agent_crash_dumps(crashed_at DESC);
+
+
   `);
 
   // Schema migrations for existing databases
@@ -4948,6 +4993,73 @@ exit 0`,
       new Date(Date.now() - 599952).toISOString(),
       48.8
     );
+  }
+
+  // 37. Seed Agent Supervisors & Watchdog Process Status
+  const supervisorCount = db.prepare('SELECT COUNT(*) as c FROM agent_supervisors').get().c;
+  if (supervisorCount === 0) {
+    const dev = db.prepare('SELECT id FROM devices LIMIT 1').get();
+    const hostId = dev ? dev.id : 'dev-daddy-pc';
+
+    const insertSup = db.prepare(`
+      INSERT INTO agent_supervisors (
+        id, device_id, service_name, service_display_name, service_status,
+        supervisor_pid, worker_pid, watchdog_pid, cpu_limit_percent, ram_limit_mb,
+        job_object_active, tamper_protection_enabled, crash_count, last_watchdog_ping
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', '-10 seconds'))
+    `);
+
+    insertSup.run(
+      'sup-01',
+      hostId,
+      'LocalPilotHostSvc',
+      'LocalPilot Fleet Host Supervisor',
+      'RUNNING',
+      4112,
+      4116,
+      4120,
+      5,
+      150,
+      1,
+      1,
+      0
+    );
+
+    const dev2 = db.prepare("SELECT id FROM devices WHERE id != ? LIMIT 1").get(hostId);
+    if (dev2) {
+      insertSup.run(
+        'sup-02',
+        dev2.id,
+        'LocalPilotHostSvc',
+        'LocalPilot Fleet Host Supervisor',
+        'RUNNING',
+        2840,
+        2844,
+        2848,
+        5,
+        150,
+        1,
+        1,
+        1
+      );
+
+      // Seed 1 crash dump auto-recovery record
+      db.prepare(`
+        INSERT INTO agent_crash_dumps (
+          id, device_id, crash_type, exit_code, exception_message,
+          stack_trace, recovery_action, recovery_duration_ms, crashed_at, recovered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', '-1 day'), DATETIME('now', '-1 day', '+1450 milliseconds'))
+      `).run(
+        'crash-01',
+        dev2.id,
+        'TERMINATED_BY_USER',
+        -1073741510,
+        'Process terminated via taskkill command',
+        'at System.Diagnostics.Process.Kill()',
+        'RESTARTED_WORKER',
+        1450
+      );
+    }
   }
 
 }

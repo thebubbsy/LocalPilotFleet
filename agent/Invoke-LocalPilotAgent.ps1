@@ -594,6 +594,22 @@ if ($Mode -eq 'Heartbeat') {
             # ── Process Instant Real-Time Push Messages (&le; 3s SLA) ──
             Sync-RealtimePushMessages -BaseUrl $baseUrl -Headers $authHeaders -DeviceId $deviceId
 
+            # ── Report Host Supervisor & Watchdog Heartbeat ──
+            try {
+                $supPayload = @{
+                    supervisor_pid = $PID
+                    worker_pid     = $PID
+                    status         = 'RUNNING'
+                }
+                Invoke-RestMethod `
+                    -Uri        "$baseUrl/api/v1/nodes/$deviceId/supervisor/heartbeat" `
+                    -Method     POST `
+                    -Headers    $authHeaders `
+                    -Body       ($supPayload | ConvertTo-Json -Compress) `
+                    -TimeoutSec 4 `
+                    -ErrorAction SilentlyContinue | Out-Null
+            } catch { }
+
 
             # Check and execute pending remote execution commands
             if ($resp.commands_pending -and $resp.pending_commands) {

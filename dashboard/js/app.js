@@ -188,6 +188,12 @@ const App = {
       case 'push':
         if (window.RealtimePushTable) window.RealtimePushTable.render();
         break;
+      case 'supervisor':
+        if (window.SupervisorTable) window.SupervisorTable.render();
+        break;
+      case 'supervisor':
+        if (window.SupervisorTable) window.SupervisorTable.render();
+        break;
       case 'settings':
         this.renderSettings();
         break;

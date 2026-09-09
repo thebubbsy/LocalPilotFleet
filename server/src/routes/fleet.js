@@ -1,3 +1,4 @@
+import * as supervisorEngine from '../services/supervisorEngine.js';
 import * as realtimePushEngine from '../services/realtimePushEngine.js';
 /**
  * LocalPilot Fleet — Fleet Command Center REST Endpoints
@@ -6085,6 +6086,113 @@ try {
       sendJson(res, 200, { success: true, pruned_channels: pruned });
     } catch (err) {
       sendJson(res, 500, { error: 'PUSH_PRUNE_ERROR', message: err.message });
+    }
+  });
+
+  // 361. GET /api/v1/fleet/supervisor/stats
+  router.get('/api/v1/fleet/supervisor/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = supervisorEngine.getSupervisorStats(getDb());
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'SUPERVISOR_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 362. GET /api/v1/fleet/supervisor/nodes
+  router.get('/api/v1/fleet/supervisor/nodes', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const nodes = supervisorEngine.getSupervisors(getDb(), {
+        deviceId: req.query.device_id,
+        status: req.query.status
+      });
+      sendJson(res, 200, { supervisors: nodes, count: nodes.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'SUPERVISOR_NODES_ERROR', message: err.message });
+    }
+  });
+
+  // 363. GET /api/v1/fleet/supervisor/nodes/:id
+  router.get('/api/v1/fleet/supervisor/nodes/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const sup = supervisorEngine.getSupervisorByDeviceId(getDb(), req.params.id);
+      if (!sup) return sendJson(res, 404, { error: 'NOT_FOUND', message: 'Supervisor not found for device' });
+      sendJson(res, 200, sup);
+    } catch (err) {
+      sendJson(res, 500, { error: 'SUPERVISOR_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 364. GET /api/v1/fleet/supervisor/crashes
+  router.get('/api/v1/fleet/supervisor/crashes', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const crashes = supervisorEngine.getCrashDumps(getDb(), {
+        deviceId: req.query.device_id,
+        crashType: req.query.crash_type,
+        limit: req.query.limit ? Number(req.query.limit) : 50
+      });
+      sendJson(res, 200, { crashes, count: crashes.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'SUPERVISOR_CRASHES_ERROR', message: err.message });
+    }
+  });
+
+  // 365. POST /api/v1/fleet/supervisor/quotas
+  router.post('/api/v1/fleet/supervisor/quotas', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const { device_id, group_id, cpu_limit_percent, ram_limit_mb, job_object_active, tamper_protection_enabled } = req.body || {};
+      const db = getDb();
+      let updatedCount = 0;
+
+      if (group_id) {
+        const members = db.prepare('SELECT device_id FROM group_memberships WHERE group_id = ?').all(group_id);
+        for (const m of members) {
+          supervisorEngine.updateResourceQuotas(db, {
+            deviceId: m.device_id,
+            cpuLimitPercent: cpu_limit_percent ?? 5,
+            ramLimitMb: ram_limit_mb ?? 150,
+            jobObjectActive: job_object_active ?? 1,
+            tamperProtectionEnabled: tamper_protection_enabled ?? 1
+          });
+          updatedCount++;
+        }
+      } else if (device_id) {
+        supervisorEngine.updateResourceQuotas(db, {
+          deviceId: device_id,
+          cpuLimitPercent: cpu_limit_percent ?? 5,
+          ramLimitMb: ram_limit_mb ?? 150,
+          jobObjectActive: job_object_active ?? 1,
+          tamperProtectionEnabled: tamper_protection_enabled ?? 1
+        });
+        updatedCount = 1;
+      } else {
+        return sendJson(res, 400, { error: 'BAD_REQUEST', message: 'device_id or group_id required' });
+      }
+
+      sendJson(res, 200, { success: true, updated_count: updatedCount });
+    } catch (err) {
+      sendJson(res, 500, { error: 'SUPERVISOR_QUOTA_ERROR', message: err.message });
+    }
+  });
+
+  // 366. GET /api/v1/fleet/supervisor/script
+  router.get('/api/v1/fleet/supervisor/script', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const script = supervisorEngine.generateSupervisorScript({
+        deviceId: req.query.device_id || '',
+        cpuLimit: req.query.cpu_limit ? Number(req.query.cpu_limit) : 5,
+        ramLimitMb: req.query.ram_limit ? Number(req.query.ram_limit) : 150
+      });
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end(script);
+    } catch (err) {
+      sendJson(res, 500, { error: 'SUPERVISOR_SCRIPT_ERROR', message: err.message });
     }
   });
 

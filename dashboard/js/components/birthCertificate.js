@@ -586,6 +586,28 @@
         </div>
       </div>
 
+      <!-- ── Host Service Supervisor & Watchdog Resilience Posture ── -->
+      <div class="bc-section" id="bc-supervisor-section">
+        <div class="bc-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>🛡️ Host Service Supervisor &amp; Watchdog Resilience</span>
+          <button class="intune-link-btn" id="btn-bc-view-sup-tab">View Supervisor Blade</button>
+        </div>
+        <div id="bc-supervisor-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading supervisor &amp; watchdog posture…
+        </div>
+      </div>
+
+      <!-- ── Host Service Supervisor & Watchdog Resilience Posture ── -->
+      <div class="bc-section" id="bc-supervisor-section">
+        <div class="bc-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>🛡️ Host Service Supervisor &amp; Watchdog Resilience</span>
+          <button class="intune-link-btn" id="btn-bc-view-sup-tab">View Supervisor Blade</button>
+        </div>
+        <div id="bc-supervisor-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading supervisor &amp; watchdog posture…
+        </div>
+      </div>
+
       <!-- ── Wi-Fi & VPN Network Posture ── -->
       <div class="bc-section" id="bc-network-section">
         <div class="bc-section-title" style="display:flex;justify-content:space-between;align-items:center;">
@@ -2277,6 +2299,84 @@
           window.App.navigate('pki');
         }
       });
+
+    // Fetch and populate Host Service Supervisor Posture
+    const supListEl = body.querySelector('#bc-supervisor-list');
+    if (supListEl && _currentDevice?.id) {
+      body.querySelector('#btn-bc-view-sup-tab')?.addEventListener('click', () => {
+        close();
+        if (window.App && typeof window.App.navigate === 'function') {
+          window.App.navigate('supervisor');
+        }
+      });
+
+      window.FleetAPI.getSupervisorNodes({ device_id: _currentDevice.id }).then(res => {
+        const sups = res.supervisors || [];
+        const sup = sups[0];
+        if (sup) {
+          supListEl.innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;">
+              <div>
+                <span class="badge badge-success" style="font-size:11px;padding:2px 6px;">${sup.service_status}</span>
+                <span style="font-weight:600;margin-left:6px;color:#38bdf8;">${sup.service_name}</span>
+              </div>
+              <span style="color:#10b981;font-size:11px;font-weight:600;">${sup.job_object_active ? 'Job Object Throttled' : 'Unrestricted'}</span>
+            </div>
+            <div style="font-size:11px;color:#94a3b8;margin-top:2px;">
+              Limits: ${sup.cpu_limit_percent}% CPU &bull; ${sup.ram_limit_mb}MB RAM &bull; PIDs: Sup ${sup.supervisor_pid || '--'} / Work ${sup.worker_pid || '--'} / Watch ${sup.watchdog_pid || '--'}
+            </div>
+          `;
+        } else {
+          supListEl.innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;">
+              <span class="badge badge-secondary" style="font-size:11px;padding:2px 6px;">STANDALONE PROCESS</span>
+              <span style="color:#f59e0b;font-size:11px;">Standard PowerShell Task</span>
+            </div>
+          `;
+        }
+      }).catch(err => {
+        supListEl.innerHTML = `<span style="color:#ef4444;font-size:11px;">Error loading supervisor posture: ${err.message}</span>`;
+      });
+    }
+
+    // Fetch and populate Host Service Supervisor Posture
+    const supListEl = body.querySelector('#bc-supervisor-list');
+    if (supListEl && _currentDevice?.id) {
+      body.querySelector('#btn-bc-view-sup-tab')?.addEventListener('click', () => {
+        close();
+        if (window.App && typeof window.App.navigate === 'function') {
+          window.App.navigate('supervisor');
+        }
+      });
+
+      window.FleetAPI.getSupervisorNodes({ device_id: _currentDevice.id }).then(res => {
+        const sups = res.supervisors || [];
+        const sup = sups[0];
+        if (sup) {
+          supListEl.innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;">
+              <div>
+                <span class="badge badge-success" style="font-size:11px;padding:2px 6px;">${sup.service_status}</span>
+                <span style="font-weight:600;margin-left:6px;color:#38bdf8;">${sup.service_name}</span>
+              </div>
+              <span style="color:#10b981;font-size:11px;font-weight:600;">${sup.job_object_active ? 'Job Object Throttled' : 'Unrestricted'}</span>
+            </div>
+            <div style="font-size:11px;color:#94a3b8;margin-top:2px;">
+              Limits: ${sup.cpu_limit_percent}% CPU &bull; ${sup.ram_limit_mb}MB RAM &bull; PIDs: Sup ${sup.supervisor_pid || '--'} / Work ${sup.worker_pid || '--'} / Watch ${sup.watchdog_pid || '--'}
+            </div>
+          `;
+        } else {
+          supListEl.innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;">
+              <span class="badge badge-secondary" style="font-size:11px;padding:2px 6px;">STANDALONE PROCESS</span>
+              <span style="color:#f59e0b;font-size:11px;">Standard PowerShell Task</span>
+            </div>
+          `;
+        }
+      }).catch(err => {
+        supListEl.innerHTML = `<span style="color:#ef4444;font-size:11px;">Error loading supervisor posture: ${err.message}</span>`;
+      });
+    }
 
     // Fetch and populate Real-Time Push Transport Posture
     const pushListEl = body.querySelector('#bc-push-list');
