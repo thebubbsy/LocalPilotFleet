@@ -1,3 +1,4 @@
+import * as realtimePushEngine from '../services/realtimePushEngine.js';
 /**
  * LocalPilot Fleet — Node Agent Endpoints
  * server/src/routes/nodes.js
@@ -1952,6 +1953,114 @@ export function registerNodeRoutes(router) {
       });
     } catch (err) {
       sendJson(res, 500, { error: 'NODE_PKI_REPORT_ERROR', message: err.message });
+    }
+  });
+
+  // 84. GET /api/v1/nodes/:id/push/stream (SSE Duplex Real-Time Push Stream)
+  router.get('/api/v1/nodes/:id/push/stream', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    const db = getDb();
+
+    // Register active channel in DB
+    const clientIp = req.socket.remoteAddress || req.headers['x-forwarded-for'] || '';
+    const userAgent = req.headers['user-agent'] || 'LocalPilot-Agent';
+    realtimePushEngine.registerChannel(db, {
+      nodeId: id,
+      transportType: 'SSE_STREAM',
+      protocolVersion: 'v1.0',
+      clientIp,
+      userAgent
+    });
+
+    // Set SSE headers
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no'
+    });
+
+    res.write(`event: connected\ndata: ${JSON.stringify({ status: 'CONNECTED', node_id: id, timestamp: new Date().toISOString() })}\n\n`);
+
+    // Attach to in-memory push dispatcher
+    realtimePushEngine.attachClientStream(id, res);
+
+    // Flush any pending queued messages immediately
+    const pending = realtimePushEngine.getPendingMessagesForNode(db, id);
+    for (const msg of pending) {
+      let payloadObj = {};
+      try { payloadObj = JSON.parse(msg.payload_json); } catch {}
+      res.write(`event: ${msg.topic}\ndata: ${JSON.stringify({ message_id: msg.id, topic: msg.topic, priority: msg.priority, payload: payloadObj, dispatched_at: msg.dispatched_at })}\n\n`);
+    }
+
+    // Keepalive ping interval
+    const pingTimer = setInterval(() => {
+      try {
+        res.write(': ping\n\n');
+        realtimePushEngine.heartbeatChannel(db, id);
+      } catch {
+        clearInterval(pingTimer);
+      }
+    }, 25000);
+
+    req.on('close', () => {
+      clearInterval(pingTimer);
+      realtimePushEngine.detachClientStream(id, res);
+      realtimePushEngine.closeChannel(db, id);
+    });
+  });
+
+  // 85. POST /api/v1/nodes/:id/push/ack (Node confirms instant message delivery & latency)
+  router.post('/api/v1/nodes/:id/push/ack', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const { message_id, client_timestamp, latency_ms, error_message } = req.body || {};
+      if (!message_id) {
+        return sendJson(res, 400, { error: 'BAD_REQUEST', message: 'message_id is required' });
+      }
+
+      const result = realtimePushEngine.acknowledgePushMessage(getDb(), {
+        messageId: message_id,
+        nodeId: id,
+        clientTimestamp: client_timestamp,
+        latencyMs: latency_ms ? Number(latency_ms) : null,
+        errorMessage: error_message
+      });
+
+      if (result.error) {
+        return sendJson(res, 404, result);
+      }
+
+      sendJson(res, 200, { success: true, message: result });
+    } catch (err) {
+      sendJson(res, 500, { error: 'PUSH_ACK_ERROR', message: err.message });
+    }
+  });
+
+  // 86. GET /api/v1/nodes/:id/push/pending (Poll fallback for queued push messages)
+  router.get('/api/v1/nodes/:id/push/pending', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const pending = realtimePushEngine.getPendingMessagesForNode(getDb(), id);
+      sendJson(res, 200, { node_id: id, pending_messages: pending, count: pending.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'PUSH_PENDING_ERROR', message: err.message });
+    }
+  });
+
+  // 87. POST /api/v1/nodes/:id/push/ping (Channel heartbeat)
+  router.post('/api/v1/nodes/:id/push/ping', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const channelId = req.body?.channel_id || id;
+      realtimePushEngine.heartbeatChannel(getDb(), channelId);
+      sendJson(res, 200, { success: true, timestamp: new Date().toISOString() });
+    } catch (err) {
+      sendJson(res, 500, { error: 'PUSH_PING_ERROR', message: err.message });
     }
   });
 

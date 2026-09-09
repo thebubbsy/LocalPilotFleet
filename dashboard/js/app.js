@@ -185,6 +185,9 @@ const App = {
       case 'pki':
         if (window.PkiSigningTable) window.PkiSigningTable.render();
         break;
+      case 'push':
+        if (window.RealtimePushTable) window.RealtimePushTable.render();
+        break;
       case 'settings':
         this.renderSettings();
         break;

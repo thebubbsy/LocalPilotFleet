@@ -1,3 +1,4 @@
+import * as realtimePushEngine from '../services/realtimePushEngine.js';
 /**
  * LocalPilot Fleet — Fleet Command Center REST Endpoints
  * server/src/routes/fleet.js
@@ -5984,6 +5985,106 @@ try {
       sendJson(res, 200, { manifests, count: manifests.length });
     } catch (err) {
       sendJson(res, 500, { error: 'PKI_MANIFESTS_ERROR', message: err.message });
+    }
+  });
+
+  // 356. GET /api/v1/fleet/push/stats
+  router.get('/api/v1/fleet/push/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = realtimePushEngine.getPushStats(getDb());
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'PUSH_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 357. GET /api/v1/fleet/push/channels
+  router.get('/api/v1/fleet/push/channels', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const channels = realtimePushEngine.getActiveChannels(getDb(), {
+        nodeId: req.query.node_id,
+        status: req.query.status
+      });
+      sendJson(res, 200, { channels, count: channels.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'PUSH_CHANNELS_ERROR', message: err.message });
+    }
+  });
+
+  // 358. GET /api/v1/fleet/push/messages
+  router.get('/api/v1/fleet/push/messages', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const messages = realtimePushEngine.getPushMessages(getDb(), {
+        nodeId: req.query.node_id,
+        status: req.query.status,
+        topic: req.query.topic,
+        limit: req.query.limit ? Number(req.query.limit) : 50
+      });
+      sendJson(res, 200, { messages, count: messages.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'PUSH_MESSAGES_ERROR', message: err.message });
+    }
+  });
+
+  // 359. POST /api/v1/fleet/push/dispatch
+  router.post('/api/v1/fleet/push/dispatch', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const { node_id, group_id, topic, payload, priority, ttl_seconds } = req.body || {};
+      if (!topic) {
+        return sendJson(res, 400, { error: 'BAD_REQUEST', message: 'Topic is required' });
+      }
+
+      const db = getDb();
+      const dispatched = [];
+
+      if (group_id) {
+        const members = db.prepare('SELECT device_id FROM group_memberships WHERE group_id = ?').all(group_id);
+        for (const m of members) {
+          const msg = realtimePushEngine.dispatchPushMessage(db, {
+            nodeId: m.device_id,
+            topic,
+            payload: payload || {},
+            priority: priority || 'HIGH',
+            ttlSeconds: ttl_seconds || 300
+          });
+          dispatched.push(msg);
+        }
+      } else if (node_id) {
+        const msg = realtimePushEngine.dispatchPushMessage(db, {
+          nodeId: node_id,
+          topic,
+          payload: payload || {},
+          priority: priority || 'HIGH',
+          ttlSeconds: ttl_seconds || 300
+        });
+        dispatched.push(msg);
+      } else {
+        return sendJson(res, 400, { error: 'BAD_REQUEST', message: 'Either node_id or group_id must be specified' });
+      }
+
+      sendJson(res, 200, {
+        success: true,
+        dispatched_count: dispatched.length,
+        messages: dispatched
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: 'PUSH_DISPATCH_ERROR', message: err.message });
+    }
+  });
+
+  // 360. POST /api/v1/fleet/push/channels/prune
+  router.post('/api/v1/fleet/push/channels/prune', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const timeoutSec = req.body?.timeout_sec ? Number(req.body.timeout_sec) : 120;
+      const pruned = realtimePushEngine.pruneStaleChannels(getDb(), timeoutSec);
+      sendJson(res, 200, { success: true, pruned_channels: pruned });
+    } catch (err) {
+      sendJson(res, 500, { error: 'PUSH_PRUNE_ERROR', message: err.message });
     }
   });
 

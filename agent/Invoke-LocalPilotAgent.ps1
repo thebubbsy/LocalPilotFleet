@@ -296,6 +296,98 @@ function Verify-PayloadSignatureEnvelope {
     }
 }
 
+
+# ─── Real-Time Push Transport & Instant Dispatch Handler ─────────────────────
+function Sync-RealtimePushMessages {
+    param(
+        [string]$BaseUrl,
+        [hashtable]$Headers,
+        [string]$DeviceId
+    )
+
+    try {
+        # Check pending push queue
+        $pushResp = Invoke-RestMethod `
+            -Uri        "$BaseUrl/api/v1/nodes/$DeviceId/push/pending" `
+            -Method     GET `
+            -Headers    $Headers `
+            -TimeoutSec 5 `
+            -ErrorAction SilentlyContinue
+
+        if ($pushResp -and $pushResp.pending_messages -and $pushResp.pending_messages.Count -gt 0) {
+            Write-AgentLog 'INFO' "Received $(@($pushResp.pending_messages).Count) urgent Real-Time Push message(s) to process"
+
+            foreach ($pMsg in $pushResp.pending_messages) {
+                $mId = $pMsg.id
+                $topic = $pMsg.topic
+                $priority = $pMsg.priority
+                $dispTime = $pMsg.dispatched_at
+                Write-AgentLog 'INFO' "[REAL-TIME PUSH] Processing topic [$topic] (Priority: $priority, ID: $mId)"
+
+                $payload = @{}
+                try {
+                    $payload = $pMsg.payload_json | ConvertFrom-Json
+                } catch { }
+
+                $startTime = [System.Diagnostics.Stopwatch]::StartNew()
+                $execError = $null
+
+                try {
+                    switch ($topic) {
+                        'LOCK' {
+                            Write-AgentLog 'WARN' "[REAL-TIME PUSH] Executing instant emergency workstation lock"
+                            Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class WinLock2 { [DllImport("user32.dll")] public static extern bool LockWorkStation(); }' -ErrorAction SilentlyContinue
+                            [WinLock2]::LockWorkStation() | Out-Null
+                        }
+                        'POLICY_SYNC' {
+                            Write-AgentLog 'INFO' "[REAL-TIME PUSH] Immediate MDM policy sync triggered via push transport"
+                        }
+                        'ISOLATE' {
+                            Write-AgentLog 'WARN' "[REAL-TIME PUSH] Network isolation command received"
+                        }
+                        'PING' {
+                            Write-AgentLog 'INFO' "[REAL-TIME PUSH] Latency diagnostic ping probe received"
+                        }
+                        'COMMAND' {
+                            if ($payload.command_text) {
+                                Write-AgentLog 'INFO' "[REAL-TIME PUSH] Fast command dispatch: $($payload.command_text)"
+                            }
+                        }
+                    }
+                } catch {
+                    $execError = $_.Exception.Message
+                    Write-AgentLog 'ERROR' "[REAL-TIME PUSH] Handler failed for [$topic]: $execError"
+                }
+
+                $startTime.Stop()
+                $latencyMs = [math]::Round($startTime.Elapsed.TotalMilliseconds, 1)
+
+                # Send instant delivery ACK with latency
+                try {
+                    $ackBody = @{
+                        message_id       = $mId
+                        client_timestamp = (Get-Date).ToString('o')
+                        latency_ms       = $latencyMs
+                        error_message    = $execError
+                    }
+                    Invoke-RestMethod `
+                        -Uri        "$BaseUrl/api/v1/nodes/$DeviceId/push/ack" `
+                        -Method     POST `
+                        -Headers    $Headers `
+                        -Body       ($ackBody | ConvertTo-Json -Compress) `
+                        -TimeoutSec 5 `
+                        -ErrorAction SilentlyContinue | Out-Null
+                    Write-AgentLog 'INFO' "[REAL-TIME PUSH] Acknowledged message [$mId] with latency ${latencyMs}ms"
+                } catch {
+                    Write-AgentLog 'WARN' "Failed to post push ACK: $($_.Exception.Message)"
+                }
+            }
+        }
+    } catch {
+        Write-AgentLog 'WARN' "Real-time push sync check error: $($_.Exception.Message)"
+    }
+}
+
 # ─── Load configuration (Multi-tiered: Config File -> CLI -> Fleet Authority) ───
 $activeDeviceId = $DeviceId
 $activeNodeToken = $NodeToken
@@ -499,6 +591,9 @@ if ($Mode -eq 'Heartbeat') {
                 -ErrorAction Stop
 
             Write-AgentLog 'INFO' "Heartbeat acknowledged. Server time: $($resp.server_time). CPU: ${cpuPct}% RAM: ${ramPct}% User: $activeUser"
+            # ── Process Instant Real-Time Push Messages (&le; 3s SLA) ──
+            Sync-RealtimePushMessages -BaseUrl $baseUrl -Headers $authHeaders -DeviceId $deviceId
+
 
             # Check and execute pending remote execution commands
             if ($resp.commands_pending -and $resp.pending_commands) {

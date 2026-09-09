@@ -2272,7 +2272,51 @@ async function getPublicPkiCert() {
   return apiFetch('/api/v1/pki/cert');
 }
 
+
+// 36. Real-Time Push Transport & Scalability
+async function getPushStats() {
+  return apiFetch('/api/v1/fleet/push/stats');
+}
+
+async function getPushChannels(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.node_id) qs.set('node_id', params.node_id);
+  if (params.status) qs.set('status', params.status);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/push/channels${qStr ? '?' + qStr : ''}`);
+}
+
+async function getPushMessages(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.node_id) qs.set('node_id', params.node_id);
+  if (params.status) qs.set('status', params.status);
+  if (params.topic) qs.set('topic', params.topic);
+  if (params.limit) qs.set('limit', params.limit);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/push/messages${qStr ? '?' + qStr : ''}`);
+}
+
+async function dispatchPushMessage(data) {
+  return apiFetch('/api/v1/fleet/push/dispatch', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function prunePushChannels(timeoutSec = 120) {
+  return apiFetch('/api/v1/fleet/push/channels/prune', {
+    method: 'POST',
+    body: JSON.stringify({ timeout_sec: timeoutSec })
+  });
+}
+
 window.FleetAPI = {
+  // Real-Time Push Transport
+  getPushStats,
+  getPushChannels,
+  getPushMessages,
+  dispatchPushMessage,
+  prunePushChannels,
   // Enterprise PKI Code-Signing
   getPkiStats,
   getSigningKeys,

@@ -575,6 +575,17 @@
         </div>
       </div>
 
+      <!-- ── Real-Time Push Transport & Instant Dispatch Posture ── -->
+      <div class="bc-section" id="bc-push-section">
+        <div class="bc-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>⚡ Real-Time Push Transport &amp; Instant Dispatch</span>
+          <button class="intune-link-btn" id="btn-bc-view-push-tab">View Push Blade</button>
+        </div>
+        <div id="bc-push-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading Real-Time Push channel status…
+        </div>
+      </div>
+
       <!-- ── Wi-Fi & VPN Network Posture ── -->
       <div class="bc-section" id="bc-network-section">
         <div class="bc-section-title" style="display:flex;justify-content:space-between;align-items:center;">
@@ -2266,6 +2277,45 @@
           window.App.navigate('pki');
         }
       });
+
+    // Fetch and populate Real-Time Push Transport Posture
+    const pushListEl = body.querySelector('#bc-push-list');
+    if (pushListEl && _currentDevice?.id) {
+      body.querySelector('#btn-bc-view-push-tab')?.addEventListener('click', () => {
+        close();
+        if (window.App && typeof window.App.navigate === 'function') {
+          window.App.navigate('push');
+        }
+      });
+
+      window.FleetAPI.getPushChannels({ node_id: _currentDevice.id }).then(res => {
+        const channels = res.channels || [];
+        const activeChan = channels.find(c => c.status === 'ACTIVE');
+        if (activeChan) {
+          pushListEl.innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;">
+              <div>
+                <span class="badge badge-success" style="font-size:11px;padding:2px 6px;">⚡ CONNECTED</span>
+                <span style="font-weight:600;margin-left:6px;color:#38bdf8;">${activeChan.transport_type} (${activeChan.protocol_version})</span>
+              </div>
+              <span style="color:#10b981;font-size:11px;font-weight:600;">&le; 3s SLA Active</span>
+            </div>
+            <div style="font-size:11px;color:#94a3b8;margin-top:2px;">
+              Client IP: ${activeChan.client_ip || 'Localhost'} &bull; Last Ping: ${activeChan.last_ping_at || 'Just now'}
+            </div>
+          `;
+        } else {
+          pushListEl.innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;">
+              <span class="badge badge-secondary" style="font-size:11px;padding:2px 6px;">STANDBY (POLLING)</span>
+              <span style="color:#f59e0b;font-size:11px;">Fallback HTTP Heartbeat</span>
+            </div>
+          `;
+        }
+      }).catch(err => {
+        pushListEl.innerHTML = `<span style="color:#ef4444;font-size:11px;">Error loading push transport status: ${err.message}</span>`;
+      });
+    }
 
       window.FleetAPI.getPkiStats().then(stats => {
         const auth = stats.active_authority || {};

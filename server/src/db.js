@@ -2113,6 +2113,45 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_pki_keys_active ON enterprise_signing_keys(is_active);
     CREATE INDEX IF NOT EXISTS idx_pki_manifest_sha ON signed_payload_manifests(sha256_hash);
     CREATE INDEX IF NOT EXISTS idx_pki_manifest_target ON signed_payload_manifests(target_id);
+
+    -- 100. REALTIME_PUSH_CHANNELS — Persistent Bi-Directional Transport Channels (WebSocket / SSE Duplex)
+    CREATE TABLE IF NOT EXISTS realtime_push_channels (
+      id TEXT PRIMARY KEY,
+      node_id TEXT NOT NULL,
+      transport_type TEXT NOT NULL DEFAULT 'WEBSOCKET' CHECK(transport_type IN ('WEBSOCKET', 'SSE_STREAM', 'LONG_POLL')),
+      protocol_version TEXT NOT NULL DEFAULT 'v1.0',
+      connected_at TEXT DEFAULT (DATETIME('now')),
+      last_ping_at TEXT DEFAULT (DATETIME('now')),
+      disconnected_at TEXT,
+      status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE', 'IDLE', 'DISCONNECTED')),
+      client_ip TEXT DEFAULT '',
+      user_agent TEXT DEFAULT '',
+      FOREIGN KEY(node_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    -- 101. REALTIME_PUSH_MESSAGES — Real-Time Push Message Delivery Ledger & Latency SLA
+    CREATE TABLE IF NOT EXISTS realtime_push_messages (
+      id TEXT PRIMARY KEY,
+      node_id TEXT NOT NULL,
+      topic TEXT NOT NULL CHECK(topic IN ('COMMAND', 'WIPE', 'LOCK', 'ISOLATE', 'POLICY_SYNC', 'CANCEL', 'PING')),
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      priority TEXT NOT NULL DEFAULT 'HIGH' CHECK(priority IN ('URGENT', 'HIGH', 'NORMAL', 'LOW')),
+      status TEXT NOT NULL DEFAULT 'QUEUED' CHECK(status IN ('QUEUED', 'SENT', 'ACKNOWLEDGED', 'EXPIRED', 'FAILED')),
+      ttl_seconds INTEGER NOT NULL DEFAULT 300,
+      dispatched_at TEXT DEFAULT (DATETIME('now')),
+      delivered_at TEXT,
+      acknowledged_at TEXT,
+      latency_ms REAL DEFAULT NULL,
+      error_message TEXT DEFAULT NULL,
+      FOREIGN KEY(node_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_push_channels_node ON realtime_push_channels(node_id);
+    CREATE INDEX IF NOT EXISTS idx_push_channels_status ON realtime_push_channels(status);
+    CREATE INDEX IF NOT EXISTS idx_push_msg_node ON realtime_push_messages(node_id);
+    CREATE INDEX IF NOT EXISTS idx_push_msg_status ON realtime_push_messages(status);
+    CREATE INDEX IF NOT EXISTS idx_push_msg_dispatched ON realtime_push_messages(dispatched_at DESC);
+
   `);
 
   // Schema migrations for existing databases
@@ -4849,6 +4888,68 @@ exit 0`,
       thumbprint
     );
   }
+
+  // 36. Seed Real-Time Push Channels & Delivery Latency Ledger
+  const pushMsgCount = db.prepare('SELECT COUNT(*) as c FROM realtime_push_messages').get().c;
+  if (pushMsgCount === 0) {
+    const dev = db.prepare('SELECT id FROM devices LIMIT 1').get();
+    const hostId = dev ? dev.id : 'dev-daddy-pc';
+
+    const insertChannel = db.prepare(`
+      INSERT INTO realtime_push_channels (id, node_id, transport_type, protocol_version, connected_at, last_ping_at, status, client_ip, user_agent)
+      VALUES (?, ?, ?, ?, DATETIME('now', '-2 hours'), DATETIME('now', '-5 seconds'), ?, ?, ?)
+    `);
+
+    insertChannel.run('chan-01', hostId, 'WEBSOCKET', 'v1.0', 'ACTIVE', '127.0.0.1', 'LocalPilot-Agent/1.0.0 (Windows NT 10.0; Win64; x64)');
+
+    const insertMsg = db.prepare(`
+      INSERT INTO realtime_push_messages (id, node_id, topic, payload_json, priority, status, ttl_seconds, dispatched_at, delivered_at, acknowledged_at, latency_ms)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertMsg.run(
+      'msg-push-01',
+      hostId,
+      'LOCK',
+      JSON.stringify({ action: 'REMOTE_LOCK', reason: 'Emergency Executive Screen Lock' }),
+      'URGENT',
+      'ACKNOWLEDGED',
+      300,
+      new Date(Date.now() - 3600000).toISOString(),
+      new Date(Date.now() - 3599955).toISOString(),
+      new Date(Date.now() - 3599935).toISOString(),
+      65.4
+    );
+
+    insertMsg.run(
+      'msg-push-02',
+      hostId,
+      'POLICY_SYNC',
+      JSON.stringify({ action: 'SYNC_MDM', scope: 'FULL_POLICY' }),
+      'HIGH',
+      'ACKNOWLEDGED',
+      300,
+      new Date(Date.now() - 1800000).toISOString(),
+      new Date(Date.now() - 1799960).toISOString(),
+      new Date(Date.now() - 1799948).toISOString(),
+      52.1
+    );
+
+    insertMsg.run(
+      'msg-push-03',
+      hostId,
+      'COMMAND',
+      JSON.stringify({ command_id: 'cmd-fast-01', command_text: 'Get-Process | Select -First 5' }),
+      'HIGH',
+      'ACKNOWLEDGED',
+      300,
+      new Date(Date.now() - 600000).toISOString(),
+      new Date(Date.now() - 599962).toISOString(),
+      new Date(Date.now() - 599952).toISOString(),
+      48.8
+    );
+  }
+
 }
 
 
