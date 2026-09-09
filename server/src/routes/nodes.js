@@ -34,6 +34,7 @@ import * as deliveryOptimizationEngine from '../services/deliveryOptimizationEng
 import * as dfciEngine from '../services/dfciEngine.js';
 import * as wipEngine from '../services/wipEngine.js';
 import * as whfbEngine from '../services/whfbEngine.js';
+import * as driverUpdateEngine from '../services/driverUpdateEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -367,7 +368,8 @@ export function registerNodeRoutes(router) {
         delivery_optimization_policy: deliveryOptimizationEngine.getEffectivePolicyForDevice(db, deviceId),
         dfci_policy: dfciEngine.getEffectivePolicyForDevice(db, deviceId),
         wip_policy: wipEngine.getEffectiveWipPolicyForDevice(db, deviceId),
-        whfb_policy: whfbEngine.getEffectiveWhfbPolicyForDevice(db, deviceId)
+        whfb_policy: whfbEngine.getEffectiveWhfbPolicyForDevice(db, deviceId),
+        driver_policy: driverUpdateEngine.getEffectiveDriverPolicyForDevice(db, deviceId)
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -1627,6 +1629,48 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { device_id: id, policy });
     } catch (err) {
       sendJson(res, 500, { error: 'WHFB_POLICY_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // ── Windows Driver & Firmware Update Profiles (WUfB) Node Routes (62–64) ──
+  // 62. POST /api/v1/nodes/:id/drivers/inventory (Agent reports scanned PnP signed drivers & firmware)
+  router.post('/api/v1/nodes/:id/drivers/inventory', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const drivers = req.body?.drivers || req.body || [];
+      const result = driverUpdateEngine.saveDeviceDriverInventory(db, id, drivers);
+      sendJson(res, 200, { ok: true, drivers_ingested: result.count, result });
+    } catch (err) {
+      sendJson(res, 400, { error: 'DRIVER_INVENTORY_INGEST_ERROR', message: err.message });
+    }
+  });
+
+  // 63. GET /api/v1/nodes/:id/driver-policy (Agent fetches effective assigned Driver update policy & approval registry script)
+  router.get('/api/v1/nodes/:id/driver-policy', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const policy = driverUpdateEngine.getEffectiveDriverPolicyForDevice(db, id);
+      const registryScript = driverUpdateEngine.generateDriverRegistryScript(policy);
+      sendJson(res, 200, { device_id: id, policy, registry_script: registryScript });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DRIVER_POLICY_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 64. GET /api/v1/nodes/:id/drivers (Agent or admin queries drivers inventory for specific device)
+  router.get('/api/v1/nodes/:id/drivers', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const data = driverUpdateEngine.getDeviceDrivers(db, id);
+      sendJson(res, 200, data);
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_DRIVERS_FETCH_ERROR', message: err.message });
     }
   });
 }

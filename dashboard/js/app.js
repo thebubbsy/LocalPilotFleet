@@ -161,6 +161,9 @@ const App = {
       case 'whfb':
         if (window.WhfbTable) window.WhfbTable.init();
         break;
+      case 'drivers':
+        if (window.DriverUpdatesTable) window.DriverUpdatesTable.init();
+        break;
       case 'settings':
         this.renderSettings();
         break;

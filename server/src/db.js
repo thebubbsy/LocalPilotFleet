@@ -1456,6 +1456,54 @@ export function initDb(dbOrPath, options = {}) {
       timestamp TEXT DEFAULT (DATETIME('now')),
       FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
     );
+
+    -- 76. DRIVER_UPDATE_POLICIES — Windows Driver & Firmware Update Profiles (WUfB Driver Policies)
+    CREATE TABLE IF NOT EXISTS driver_update_policies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      target_group_id TEXT DEFAULT 'grp-all',
+      approval_method TEXT DEFAULT 'MANUAL' CHECK(approval_method IN ('AUTOMATIC', 'MANUAL')),
+      automatic_approval_delay_days INTEGER DEFAULT 7,
+      allow_optional_drivers INTEGER DEFAULT 1,
+      enabled INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET NULL
+    );
+
+    -- 77. FLEET_DRIVER_CATALOG — Discovered & Recommended OEM Driver Catalog
+    CREATE TABLE IF NOT EXISTS fleet_driver_catalog (
+      id TEXT PRIMARY KEY,
+      driver_name TEXT NOT NULL,
+      driver_class TEXT NOT NULL CHECK(driver_class IN ('DISPLAY', 'NET', 'MEDIA', 'SYSTEM', 'FIRMWARE', 'BLUETOOTH', 'STORAGE', 'OTHER')),
+      driver_provider TEXT NOT NULL,
+      driver_version TEXT NOT NULL,
+      driver_date TEXT DEFAULT '',
+      hardware_id TEXT DEFAULT '',
+      approval_status TEXT DEFAULT 'PENDING_REVIEW' CHECK(approval_status IN ('APPROVED', 'PENDING_REVIEW', 'DECLINED', 'SUSPENDED')),
+      approved_at TEXT,
+      approved_by TEXT DEFAULT '',
+      applicable_devices_count INTEGER DEFAULT 0,
+      installed_devices_count INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    -- 78. DEVICE_DRIVER_STATUS — Per-Workstation Driver Inventory, Alignment & Update State
+    CREATE TABLE IF NOT EXISTS device_driver_status (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      driver_id TEXT NOT NULL,
+      current_version TEXT NOT NULL,
+      install_status TEXT DEFAULT 'INSTALLED' CHECK(install_status IN ('INSTALLED', 'NEEDS_UPDATE', 'UPDATING', 'FAILED', 'REBOOT_REQUIRED')),
+      last_scanned_at TEXT,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(driver_id) REFERENCES fleet_driver_catalog(id) ON DELETE CASCADE,
+      UNIQUE(device_id, driver_id)
+    );
   `);
 
   // Indexes
@@ -1656,6 +1704,14 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_devwhfb_enrolled ON device_whfb_status(whfb_enrolled);
     CREATE INDEX IF NOT EXISTS idx_whfbaudit_device ON whfb_audit_log(device_id);
     CREATE INDEX IF NOT EXISTS idx_whfbaudit_time ON whfb_audit_log(timestamp DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_drvpol_target ON driver_update_policies(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_drvpol_enabled ON driver_update_policies(enabled);
+    CREATE INDEX IF NOT EXISTS idx_drvcat_class ON fleet_driver_catalog(driver_class);
+    CREATE INDEX IF NOT EXISTS idx_drvcat_status ON fleet_driver_catalog(approval_status);
+    CREATE INDEX IF NOT EXISTS idx_devdrv_dev ON device_driver_status(device_id);
+    CREATE INDEX IF NOT EXISTS idx_devdrv_drv ON device_driver_status(driver_id);
+    CREATE INDEX IF NOT EXISTS idx_devdrv_status ON device_driver_status(install_status);
   `);
 
   // Schema migrations for existing databases
@@ -3707,6 +3763,117 @@ exit 0`,
       'DISABLED',
       6, 127, 'DISALLOWED', 'DISALLOWED', 'DISALLOWED', 'ALLOWED', 0, 0,
       0, 0, 0, 0,
+      '-3 days', '-3 days'
+    );
+  }
+
+  // Seed Windows Driver & Firmware Update Policies and Catalog
+  const drvCount = db.prepare("SELECT COUNT(*) as c FROM driver_update_policies").get().c;
+  if (drvCount === 0) {
+    const insertDrvPol = db.prepare(`
+      INSERT INTO driver_update_policies (
+        id, name, description, target_group_id, approval_method,
+        automatic_approval_delay_days, allow_optional_drivers, enabled,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, DATETIME('now', ?), DATETIME('now', ?))
+    `);
+
+    insertDrvPol.run(
+      'drv-pol-recommended',
+      'Corporate Fleet Recommended Drivers',
+      'Automatically approves and deploys certified OEM drivers after a 7-day stability testing period.',
+      'grp-all',
+      'AUTOMATIC',
+      7, 1,
+      '-3 days', '-3 days'
+    );
+
+    insertDrvPol.run(
+      'drv-pol-conservative',
+      'Critical Infrastructure Conservative Drivers',
+      'Requires explicit IT administrator approval before installing any driver or firmware package.',
+      'grp-workstations',
+      'MANUAL',
+      14, 0,
+      '-3 days', '-3 days'
+    );
+
+    insertDrvPol.run(
+      'drv-pol-canary',
+      'Fast IT Pilot Driver Canary',
+      'Immediate automatic deployment of latest release drivers with zero day deferral.',
+      'grp-family-laptops',
+      'AUTOMATIC',
+      0, 1,
+      '-3 days', '-3 days'
+    );
+
+    // Seed Driver Catalog
+    const insertDrvCat = db.prepare(`
+      INSERT INTO fleet_driver_catalog (
+        id, driver_name, driver_class, driver_provider, driver_version,
+        driver_date, hardware_id, approval_status, approved_at, approved_by,
+        applicable_devices_count, installed_devices_count, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', ?), DATETIME('now', ?))
+    `);
+
+    insertDrvCat.run(
+      'drv-intel-wifi',
+      'Intel(R) Wi-Fi 6E AX211 160MHz',
+      'NET',
+      'Intel',
+      '23.30.0.6',
+      '2024-02-15',
+      'PCI\\VEN_8086&DEV_7A70',
+      'APPROVED',
+      new Date().toISOString(),
+      'LocalPilot Administrator',
+      3, 3,
+      '-3 days', '-3 days'
+    );
+
+    insertDrvCat.run(
+      'drv-nvidia-display',
+      'NVIDIA GeForce Game Ready Driver',
+      'DISPLAY',
+      'NVIDIA',
+      '552.22',
+      '2024-04-16',
+      'PCI\\VEN_10DE&DEV_2484',
+      'APPROVED',
+      new Date().toISOString(),
+      'LocalPilot Administrator',
+      2, 2,
+      '-3 days', '-3 days'
+    );
+
+    insertDrvCat.run(
+      'drv-realtek-audio',
+      'Realtek High Definition Audio Driver',
+      'MEDIA',
+      'Realtek',
+      '6.0.9652.1',
+      '2024-03-01',
+      'HDAUDIO\\FUNC_01&VEN_10EC',
+      'APPROVED',
+      new Date().toISOString(),
+      'LocalPilot Administrator',
+      3, 3,
+      '-3 days', '-3 days'
+    );
+
+    insertDrvCat.run(
+      'drv-dell-firmware',
+      'Dell System Firmware UEFI Update',
+      'FIRMWARE',
+      'Dell Inc.',
+      '1.21.0',
+      '2024-05-10',
+      'UEFI\\RES_{A5B6C7D8}',
+      'PENDING_REVIEW',
+      null,
+      '',
+      1, 0,
       '-3 days', '-3 days'
     );
   }

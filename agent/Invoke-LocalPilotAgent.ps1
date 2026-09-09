@@ -2914,6 +2914,78 @@ if ($Mode -eq 'Heartbeat') {
                     Write-AgentLog 'WARN' "Windows Hello posture audit encountered non-fatal error: $($_.Exception.Message)"
                 }
             }
+
+            # ── Windows Driver & Firmware Update Profiles (WUfB) Audit ────────
+            if (-not (Get-Variable -Name 'LastDriverAudit' -Scope Script -ErrorAction SilentlyContinue)) {
+                $script:LastDriverAudit = $null
+            }
+            $shouldAuditDrivers = $false
+            if ($null -eq $script:LastDriverAudit) {
+                $shouldAuditDrivers = $true
+            } elseif (($now - $script:LastDriverAudit).TotalSeconds -ge 180) { # 3-minute interval
+                $shouldAuditDrivers = $true
+            }
+
+            if ($shouldAuditDrivers) {
+                $script:LastDriverAudit = $now
+                try {
+                    Write-AgentLog 'INFO' 'Auditing Windows PnP signed drivers & firmware inventory...'
+                    $scannedDrivers = @()
+                    $pnpDrivers = Get-CimInstance Win32_PnPSignedDriver -ErrorAction SilentlyContinue | 
+                        Where-Object { $_.DeviceName -and $_.Manufacturer } | 
+                        Select-Object -First 40
+
+                    if ($pnpDrivers) {
+                        foreach ($d in $pnpDrivers) {
+                            $devClass = 'OTHER'
+                            $rawClass = [string]$d.DeviceClass
+                            if ($rawClass -match 'DISPLAY') { $devClass = 'DISPLAY' }
+                            elseif ($rawClass -match 'NET') { $devClass = 'NET' }
+                            elseif ($rawClass -match 'MEDIA|AUDIO') { $devClass = 'MEDIA' }
+                            elseif ($rawClass -match 'FIRMWARE') { $devClass = 'FIRMWARE' }
+                            elseif ($rawClass -match 'BLUETOOTH') { $devClass = 'BLUETOOTH' }
+                            elseif ($rawClass -match 'SCSI|DISK|HDC') { $devClass = 'STORAGE' }
+                            elseif ($rawClass -match 'SYSTEM') { $devClass = 'SYSTEM' }
+
+                            $drvDateStr = ''
+                            if ($d.DriverDate) {
+                                try {
+                                    $drvDateStr = [Management.ManagementDateTimeConverter]::ToDateTime($d.DriverDate).ToString('yyyy-MM-dd')
+                                } catch {
+                                    $drvDateStr = [string]$d.DriverDate
+                                }
+                            }
+
+                            $scannedDrivers += @{
+                                driver_name     = [string]$d.DeviceName
+                                driver_class    = $devClass
+                                driver_provider = [string]$d.Manufacturer
+                                driver_version  = if ($d.DriverVersion) { [string]$d.DriverVersion } else { '1.0.0.0' }
+                                driver_date     = $drvDateStr
+                                hardware_id     = if ($d.HardWareID) { [string]$d.HardWareID } else { '' }
+                                install_status  = 'INSTALLED'
+                            }
+                        }
+                    }
+
+                    if ($scannedDrivers.Count -gt 0) {
+                        $drvPayload = @{
+                            drivers = $scannedDrivers
+                        }
+
+                        Invoke-RestMethod `
+                            -Uri        "$baseUrl/api/v1/nodes/$deviceId/drivers/inventory" `
+                            -Method     POST `
+                            -Body       ($drvPayload | ConvertTo-Json -Depth 5 -Compress) `
+                            -Headers    $authHeaders `
+                            -TimeoutSec 15 `
+                            -ErrorAction SilentlyContinue | Out-Null
+                        Write-AgentLog 'INFO' "Reported $($scannedDrivers.Count) PnP signed drivers & firmware packages to WUfB catalog"
+                    }
+                } catch {
+                    Write-AgentLog 'WARN' "Driver & firmware audit encountered non-fatal error: $($_.Exception.Message)"
+                }
+            }
         } catch {
             Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
             if (-not $Continuous) { exit 1 }

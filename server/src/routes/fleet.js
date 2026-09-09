@@ -33,6 +33,7 @@ import * as deliveryOptimizationEngine from '../services/deliveryOptimizationEng
 import * as dfciEngine from '../services/dfciEngine.js';
 import * as wipEngine from '../services/wipEngine.js';
 import * as whfbEngine from '../services/whfbEngine.js';
+import * as driverUpdateEngine from '../services/driverUpdateEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -4650,6 +4651,146 @@ try {
       sendJson(res, 200, status);
     } catch (err) {
       sendJson(res, 500, { error: 'DEVICE_WHFB_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // ── Windows Driver & Firmware Updates (WUfB) Routes (255–264) ──
+  // 255. GET /api/v1/fleet/drivers/stats
+  router.get('/api/v1/fleet/drivers/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const stats = driverUpdateEngine.getDriverStats(db);
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'DRIVER_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 256. GET /api/v1/fleet/drivers/policies
+  router.get('/api/v1/fleet/drivers/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const policies = driverUpdateEngine.getDriverPolicies(db);
+      sendJson(res, 200, { policies });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DRIVER_POLICIES_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 257. POST /api/v1/fleet/drivers/policies
+  router.post('/api/v1/fleet/drivers/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const created = driverUpdateEngine.createDriverPolicy(db, req.body);
+      sendJson(res, 201, created);
+    } catch (err) {
+      sendJson(res, 400, { error: 'DRIVER_POLICY_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 258. GET /api/v1/fleet/drivers/policies/:id
+  router.get('/api/v1/fleet/drivers/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const policy = driverUpdateEngine.getDriverPolicy(db, id);
+      if (!policy) {
+        return sendJson(res, 404, { error: 'POLICY_NOT_FOUND', message: `Driver Policy '${id}' does not exist` });
+      }
+      const script = driverUpdateEngine.generateDriverRegistryScript(policy);
+      sendJson(res, 200, { policy, script });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DRIVER_POLICY_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 259. PATCH /api/v1/fleet/drivers/policies/:id
+  router.patch('/api/v1/fleet/drivers/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const updated = driverUpdateEngine.updateDriverPolicy(db, id, req.body);
+      if (!updated) {
+        return sendJson(res, 404, { error: 'POLICY_NOT_FOUND', message: `Driver Policy '${id}' does not exist` });
+      }
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 400, { error: 'DRIVER_POLICY_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 260. DELETE /api/v1/fleet/drivers/policies/:id
+  router.delete('/api/v1/fleet/drivers/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const deleted = driverUpdateEngine.deleteDriverPolicy(db, id);
+      if (!deleted) {
+        return sendJson(res, 404, { error: 'POLICY_NOT_FOUND', message: `Driver Policy '${id}' does not exist` });
+      }
+      sendJson(res, 200, { ok: true, deleted_id: id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DRIVER_POLICY_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 261. GET /api/v1/fleet/drivers/catalog
+  router.get('/api/v1/fleet/drivers/catalog', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const catalog = driverUpdateEngine.getDriverCatalog(db, req.query);
+      sendJson(res, 200, { catalog });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DRIVER_CATALOG_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 262. PATCH /api/v1/fleet/drivers/catalog/:id/approval
+  router.patch('/api/v1/fleet/drivers/catalog/:id/approval', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    const { status, approved_by } = req.body || {};
+    try {
+      const db = getDb();
+      const updated = driverUpdateEngine.setDriverApprovalStatus(db, id, status, approved_by);
+      if (!updated) {
+        return sendJson(res, 404, { error: 'DRIVER_NOT_FOUND', message: `Driver package '${id}' does not exist` });
+      }
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 400, { error: 'DRIVER_APPROVAL_ERROR', message: err.message });
+    }
+  });
+
+  // 263. GET /api/v1/fleet/drivers/inventory
+  router.get('/api/v1/fleet/drivers/inventory', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const overview = driverUpdateEngine.getDriverInventoryOverview(db);
+      sendJson(res, 200, { inventory: overview });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DRIVER_INVENTORY_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 264. GET /api/v1/fleet/devices/:id/drivers
+  router.get('/api/v1/fleet/devices/:id/drivers', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const data = driverUpdateEngine.getDeviceDrivers(db, id);
+      sendJson(res, 200, data);
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_DRIVERS_FETCH_ERROR', message: err.message });
     }
   });
 }

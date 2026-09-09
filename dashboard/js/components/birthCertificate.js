@@ -580,6 +580,17 @@
         </div>
       </div>
 
+      <!-- ── Windows Driver & Firmware Update Profiles (WUfB) Posture ── -->
+      <div class="bc-section" id="bc-drivers-section">
+        <div class="bc-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>⚙️ Driver &amp; Firmware Update Profiles (WUfB)</span>
+          <button class="intune-link-btn" id="btn-bc-view-drivers-tab">View Drivers Blade</button>
+        </div>
+        <div id="bc-drivers-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading Driver &amp; Firmware posture…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -2022,6 +2033,51 @@
         whfbListEl.innerHTML = html;
       }).catch(() => {
         whfbListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Windows Hello telemetry pending audit.</div>';
+      });
+    }
+
+    // Fetch and populate Driver & Firmware Posture
+    const drvListEl = body.querySelector('#bc-drivers-list');
+    if (drvListEl && _currentDevice?.id) {
+      body.querySelector('#btn-bc-view-drivers-tab')?.addEventListener('click', () => {
+        close();
+        if (window.App && typeof window.App.navigate === 'function') {
+          window.App.navigate('drivers');
+        }
+      });
+
+      window.FleetAPI.getDeviceDrivers(_currentDevice.id).then(res => {
+        if (!res || !res.drivers) {
+          drvListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">No driver inventory reported yet.</div>';
+          return;
+        }
+
+        const drivers = res.drivers || [];
+        const policy = res.effective_policy;
+        const pendingCount = drivers.filter(d => d.install_status === 'NEEDS_UPDATE').length;
+        const installedCount = drivers.filter(d => d.install_status === 'INSTALLED').length;
+
+        const html = `
+          <div style="background:var(--bg-secondary);padding:10px 12px;border-radius:6px;border:1px solid var(--border-color);margin-top:4px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <span style="font-weight:600;color:var(--text-primary);display:flex;align-items:center;gap:6px;">
+                <span>⚙️</span> ${policy ? esc(policy.name) : 'Default Driver Policy'}
+              </span>
+              <span class="badge" style="background:${pendingCount > 0 ? 'rgba(245,158,11,0.15)' : 'rgba(16,185,129,0.15)'};color:${pendingCount > 0 ? '#f59e0b' : '#10b981'};font-weight:700;">
+                ${pendingCount > 0 ? '⚠️ ' + pendingCount + ' UPDATES AVAILABLE' : '✅ ALL DRIVERS CURRENT'}
+              </span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;font-size:11px;color:var(--text-muted);">
+              <div>Approval Method: <strong style="color:var(--text-primary);">${policy ? esc(policy.approval_method) : 'AUTOMATIC'}</strong></div>
+              <div>Deferral Delay: <strong style="color:var(--text-primary);">${policy ? policy.automatic_approval_delay_days : 0} days</strong></div>
+              <div>Optional Drivers: <strong style="color:var(--text-primary);">${policy?.allow_optional_drivers ? '✅ Allowed' : '❌ Prohibited'}</strong></div>
+              <div>Tracked Drivers: <strong style="color:var(--text-primary);">${drivers.length} total (${installedCount} installed)</strong></div>
+            </div>
+          </div>
+        `;
+        drvListEl.innerHTML = html;
+      }).catch(() => {
+        drvListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Driver inventory pending audit.</div>';
       });
     }
 

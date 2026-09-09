@@ -1606,6 +1606,63 @@ async function getDeviceWhfb(deviceId) {
   return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/whfb`);
 }
 
+/* ── Windows Driver & Firmware Update Profiles (WUfB) ── */
+async function getDriverStats() {
+  return apiFetch('/api/v1/fleet/drivers/stats');
+}
+
+async function getDriverPolicies() {
+  return apiFetch('/api/v1/fleet/drivers/policies');
+}
+
+async function getDriverPolicy(id) {
+  return apiFetch(`/api/v1/fleet/drivers/policies/${encodeURIComponent(id)}`);
+}
+
+async function createDriverPolicy(data) {
+  return apiFetch('/api/v1/fleet/drivers/policies', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateDriverPolicy(id, data) {
+  return apiFetch(`/api/v1/fleet/drivers/policies/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteDriverPolicy(id) {
+  return apiFetch(`/api/v1/fleet/drivers/policies/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getDriverCatalog(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/drivers/catalog${qStr ? '?' + qStr : ''}`);
+}
+
+async function setDriverApprovalStatus(id, data = {}) {
+  return apiFetch(`/api/v1/fleet/drivers/catalog/${encodeURIComponent(id)}/approval`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function getDriverInventory() {
+  return apiFetch('/api/v1/fleet/drivers/inventory');
+}
+
+async function getDeviceDrivers(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/drivers`);
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -1740,6 +1797,17 @@ window.FleetAPI = {
   getWhfbInventory,
   getWhfbAuditLog,
   getDeviceWhfb,
+  // Windows Driver & Firmware Update Profiles (WUfB)
+  getDriverStats,
+  getDriverPolicies,
+  getDriverPolicy,
+  createDriverPolicy,
+  updateDriverPolicy,
+  deleteDriverPolicy,
+  getDriverCatalog,
+  setDriverApprovalStatus,
+  getDriverInventory,
+  getDeviceDrivers,
   // Proactive Remediations
   getRemediations,
   getRemediationStats,
