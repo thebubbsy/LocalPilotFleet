@@ -2344,7 +2344,147 @@ async function updateSupervisorQuotas(data) {
   });
 }
 
+
+// 38. Enterprise Governance, Granular RBAC & SIEM Forwarder
+async function getRbacStats() {
+  return apiFetch('/api/v1/fleet/rbac/stats');
+}
+
+async function getRbacRoles(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.search) qs.set('search', params.search);
+  if (params.is_built_in !== undefined) qs.set('is_built_in', params.is_built_in);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/rbac/roles${qStr ? '?' + qStr : ''}`);
+}
+
+async function getRbacRole(id) {
+  return apiFetch(`/api/v1/fleet/rbac/roles/${encodeURIComponent(id)}`);
+}
+
+async function createRbacRole(data) {
+  return apiFetch('/api/v1/fleet/rbac/roles', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateRbacRole(id, data) {
+  return apiFetch(`/api/v1/fleet/rbac/roles/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteRbacRole(id) {
+  return apiFetch(`/api/v1/fleet/rbac/roles/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getDualCustodyApprovals(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.status) qs.set('status', params.status);
+  if (params.action_type) qs.set('action_type', params.action_type);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/governance/approvals${qStr ? '?' + qStr : ''}`);
+}
+
+async function getDualCustodyApproval(id) {
+  return apiFetch(`/api/v1/fleet/governance/approvals/${encodeURIComponent(id)}`);
+}
+
+async function requestDualCustodyApproval(data) {
+  return apiFetch('/api/v1/fleet/governance/approvals', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function reviewDualCustodyApproval(id, data) {
+  return apiFetch(`/api/v1/fleet/governance/approvals/${encodeURIComponent(id)}/review`, {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function executeDualCustodyApproval(id) {
+  return apiFetch(`/api/v1/fleet/governance/approvals/${encodeURIComponent(id)}/execute`, {
+    method: 'POST'
+  });
+}
+
+async function getSiemStats() {
+  return apiFetch('/api/v1/fleet/siem/stats');
+}
+
+async function getSiemForwarders(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.destination_type) qs.set('destination_type', params.destination_type);
+  if (params.is_enabled !== undefined) qs.set('is_enabled', params.is_enabled);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/siem/forwarders${qStr ? '?' + qStr : ''}`);
+}
+
+async function getSiemForwarder(id) {
+  return apiFetch(`/api/v1/fleet/siem/forwarders/${encodeURIComponent(id)}`);
+}
+
+async function createSiemForwarder(data) {
+  return apiFetch('/api/v1/fleet/siem/forwarders', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateSiemForwarder(id, data) {
+  return apiFetch(`/api/v1/fleet/siem/forwarders/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteSiemForwarder(id) {
+  return apiFetch(`/api/v1/fleet/siem/forwarders/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function testSiemForwarder(id) {
+  return apiFetch(`/api/v1/fleet/siem/forwarders/${encodeURIComponent(id)}/test`, {
+    method: 'POST'
+  });
+}
+
+async function forwardSiemEvent(data) {
+  return apiFetch('/api/v1/fleet/siem/forward', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
 window.FleetAPI = {
+  // Enterprise Governance, Granular RBAC & SIEM Forwarder
+  getRbacStats,
+  getRbacRoles,
+  getRbacRole,
+  createRbacRole,
+  updateRbacRole,
+  deleteRbacRole,
+  getDualCustodyApprovals,
+  getDualCustodyApproval,
+  requestDualCustodyApproval,
+  reviewDualCustodyApproval,
+  executeDualCustodyApproval,
+  getSiemStats,
+  getSiemForwarders,
+  getSiemForwarder,
+  createSiemForwarder,
+  updateSiemForwarder,
+  deleteSiemForwarder,
+  testSiemForwarder,
+  forwardSiemEvent,
+
   // Agent Architecture & Host Supervisor
   getSupervisorStats,
   getSupervisorNodes,

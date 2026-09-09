@@ -597,14 +597,14 @@
         </div>
       </div>
 
-      <!-- ── Host Service Supervisor & Watchdog Resilience Posture ── -->
-      <div class="bc-section" id="bc-supervisor-section">
+      <!-- ── Enterprise Governance, RBAC & 4-Eyes Posture ── -->
+      <div class="bc-section" id="bc-governance-section">
         <div class="bc-section-title" style="display:flex;justify-content:space-between;align-items:center;">
-          <span>🛡️ Host Service Supervisor &amp; Watchdog Resilience</span>
-          <button class="intune-link-btn" id="btn-bc-view-sup-tab">View Supervisor Blade</button>
+          <span>🏛️ Enterprise Governance &amp; 4-Eyes Dual-Custody</span>
+          <button class="intune-link-btn" id="btn-bc-view-gov-tab">View Governance Blade</button>
         </div>
-        <div id="bc-supervisor-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
-          <span>⏳</span> Loading supervisor &amp; watchdog posture…
+        <div id="bc-governance-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading governance &amp; dual-custody posture…
         </div>
       </div>
 
@@ -2339,42 +2339,39 @@
       });
     }
 
-    // Fetch and populate Host Service Supervisor Posture
-    const supListEl = body.querySelector('#bc-supervisor-list');
-    if (supListEl && _currentDevice?.id) {
-      body.querySelector('#btn-bc-view-sup-tab')?.addEventListener('click', () => {
+    // Fetch and populate Enterprise Governance & 4-Eyes Posture
+    const govListEl = body.querySelector('#bc-governance-list');
+    if (govListEl && _currentDevice?.id) {
+      body.querySelector('#btn-bc-view-gov-tab')?.addEventListener('click', () => {
         close();
         if (window.App && typeof window.App.navigate === 'function') {
-          window.App.navigate('supervisor');
+          window.App.navigate('governance');
         }
       });
 
-      window.FleetAPI.getSupervisorNodes({ device_id: _currentDevice.id }).then(res => {
-        const sups = res.supervisors || [];
-        const sup = sups[0];
-        if (sup) {
-          supListEl.innerHTML = `
+      window.FleetAPI.getDualCustodyApprovals({ status: 'PENDING' }).then(res => {
+        const approvals = res.approvals || [];
+        const deviceApprovals = approvals.filter(a => a.target_id === _currentDevice.id);
+        if (deviceApprovals.length > 0) {
+          govListEl.innerHTML = `
             <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;">
               <div>
-                <span class="badge badge-success" style="font-size:11px;padding:2px 6px;">${sup.service_status}</span>
-                <span style="font-weight:600;margin-left:6px;color:#38bdf8;">${sup.service_name}</span>
+                <span class="badge badge-warning" style="font-size:11px;padding:2px 6px;background:#f59e0b;color:#000;font-weight:700;">4-EYES ACTION PENDING</span>
+                <span style="font-weight:600;margin-left:6px;color:#f43f5e;">${deviceApprovals[0].action_type}</span>
               </div>
-              <span style="color:#10b981;font-size:11px;font-weight:600;">${sup.job_object_active ? 'Job Object Throttled' : 'Unrestricted'}</span>
-            </div>
-            <div style="font-size:11px;color:#94a3b8;margin-top:2px;">
-              Limits: ${sup.cpu_limit_percent}% CPU &bull; ${sup.ram_limit_mb}MB RAM &bull; PIDs: Sup ${sup.supervisor_pid || '--'} / Work ${sup.worker_pid || '--'} / Watch ${sup.watchdog_pid || '--'}
+              <span style="color:#cbd5e1;font-size:11px;">Req: ${deviceApprovals[0].requested_by}</span>
             </div>
           `;
         } else {
-          supListEl.innerHTML = `
+          govListEl.innerHTML = `
             <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;">
-              <span class="badge badge-secondary" style="font-size:11px;padding:2px 6px;">STANDALONE PROCESS</span>
-              <span style="color:#f59e0b;font-size:11px;">Standard PowerShell Task</span>
+              <span class="badge badge-success" style="font-size:11px;padding:2px 6px;">4-EYES PROTECTED</span>
+              <span style="color:#10b981;font-size:11px;">No Pending Destructive Requests &bull; SIEM Export Active</span>
             </div>
           `;
         }
       }).catch(err => {
-        supListEl.innerHTML = `<span style="color:#ef4444;font-size:11px;">Error loading supervisor posture: ${err.message}</span>`;
+        govListEl.innerHTML = `<span style="color:#ef4444;font-size:11px;">Error loading governance posture: ${err.message}</span>`;
       });
     }
 
@@ -2684,8 +2681,8 @@
     }
 
     // Fetch and populate Windows Autopatch
-    const apListEl = body.querySelector('#bc-autopatch-list');
-    if (apListEl && _currentDevice?.id) {
+    const autopatchListEl = body.querySelector('#bc-autopatch-list');
+    if (autopatchListEl && _currentDevice?.id) {
       body.querySelector('#btn-bc-view-autopatch-tab')?.addEventListener('click', () => {
         close();
         if (window.App && typeof window.App.navigate === 'function') {
@@ -2696,7 +2693,7 @@
       window.FleetAPI.getDeviceAutopatch(_currentDevice.id).then(res => {
         const ap = res.autopatch;
         if (!ap) {
-          apListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">No active patch cadence assigned. Workstation managed under standard baseline.</div>';
+          autopatchListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">No active patch cadence assigned. Workstation managed under standard baseline.</div>';
           return;
         }
 
@@ -2722,9 +2719,9 @@
             </div>
           </div>
         `;
-        apListEl.innerHTML = html;
+        autopatchListEl.innerHTML = html;
       }).catch(() => {
-        apListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Workstation ready for automated staged patch cadence.</div>';
+        autopatchListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Workstation ready for automated staged patch cadence.</div>';
       });
     }
 

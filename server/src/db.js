@@ -2196,6 +2196,67 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_crash_dumps_device ON agent_crash_dumps(device_id);
     CREATE INDEX IF NOT EXISTS idx_crash_dumps_crashed_at ON agent_crash_dumps(crashed_at DESC);
 
+    -- 104. RBAC_ROLES — Granular Role-Based Access Control Definitions
+    CREATE TABLE IF NOT EXISTS rbac_roles (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      display_name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      is_built_in INTEGER NOT NULL DEFAULT 0 CHECK(is_built_in IN (0, 1)),
+      permissions_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_rbac_roles_name ON rbac_roles(name);
+    CREATE INDEX IF NOT EXISTS idx_rbac_roles_built_in ON rbac_roles(is_built_in);
+
+    -- 105. DUAL_CUSTODY_APPROVALS — The 4-Eyes Principle for Destructive/High-Impact Operations
+    CREATE TABLE IF NOT EXISTS dual_custody_approvals (
+      id TEXT PRIMARY KEY,
+      action_type TEXT NOT NULL CHECK(action_type IN ('REMOTE_WIPE', 'DEVICE_DELETE', 'BULK_SCRIPT_EXECUTE', 'BITLOCKER_BULK_EXPORT', 'QUARANTINE_FLEET', 'RESET_SECURITY_BASELINE')),
+      target_type TEXT NOT NULL CHECK(target_type IN ('DEVICE', 'DYNAMIC_GROUP', 'FLEET')),
+      target_id TEXT NOT NULL,
+      target_name TEXT DEFAULT '',
+      requested_by TEXT NOT NULL,
+      requested_reason TEXT NOT NULL,
+      request_payload_json TEXT DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'APPROVED', 'REJECTED', 'EXPIRED', 'EXECUTED')),
+      reviewed_by TEXT,
+      reviewed_reason TEXT,
+      reviewed_at TEXT,
+      expires_at TEXT NOT NULL,
+      executed_at TEXT,
+      created_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_dual_custody_status ON dual_custody_approvals(status);
+    CREATE INDEX IF NOT EXISTS idx_dual_custody_action ON dual_custody_approvals(action_type);
+    CREATE INDEX IF NOT EXISTS idx_dual_custody_expires ON dual_custody_approvals(expires_at);
+
+    -- 106. SIEM_AUDIT_FORWARDERS — RFC 5424 Immutable Syslog & SIEM Telemetry Forwarder
+    CREATE TABLE IF NOT EXISTS siem_audit_forwarders (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      destination_type TEXT NOT NULL DEFAULT 'RFC5424_SYSLOG_UDP' CHECK(destination_type IN ('RFC5424_SYSLOG_UDP', 'RFC5424_SYSLOG_TCP', 'SPLUNK_HEC', 'ELASTICSEARCH', 'SENTINEL_REST')),
+      host TEXT NOT NULL,
+      port INTEGER NOT NULL DEFAULT 514,
+      auth_token TEXT DEFAULT '',
+      tls_enabled INTEGER NOT NULL DEFAULT 0 CHECK(tls_enabled IN (0, 1)),
+      facility INTEGER NOT NULL DEFAULT 16,
+      severity_filter TEXT NOT NULL DEFAULT 'ALL' CHECK(severity_filter IN ('ALL', 'WARNING_AND_ABOVE', 'CRITICAL_ONLY')),
+      is_enabled INTEGER NOT NULL DEFAULT 1 CHECK(is_enabled IN (0, 1)),
+      last_forwarded_at TEXT,
+      total_events_forwarded INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT DEFAULT NULL,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_siem_enabled ON siem_audit_forwarders(is_enabled);
+    CREATE INDEX IF NOT EXISTS idx_siem_dest ON siem_audit_forwarders(destination_type);
+
+
 
   `);
 
@@ -5062,7 +5123,95 @@ exit 0`,
     }
   }
 
+  // 38. Seed RBAC Roles, Dual-Custody Approvals & SIEM Forwarders
+  const rbacCount = db.prepare('SELECT COUNT(*) as count FROM rbac_roles').get().count;
+  if (rbacCount === 0) {
+    const insertRole = db.prepare(`
+      INSERT OR IGNORE INTO rbac_roles (
+        id, name, display_name, description, is_built_in, permissions_json
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    insertRole.run(
+      'role-global-admin',
+      'Global Administrator',
+      'Global Administrator',
+      'Unrestricted enterprise authority with all permissions across devices, policies, PKI, and governance.',
+      1,
+      JSON.stringify(['*'])
+    );
+
+    insertRole.run(
+      'role-security-operator',
+      'Security Operator',
+      'Security Operator',
+      'Operational defense role with privileges to manage Defender, BitLocker, quarantine devices, and trigger emergency locks.',
+      1,
+      JSON.stringify([
+        'devices:read', 'devices:lock', 'devices:isolate', 'compliance:read',
+        'security:read', 'security:write', 'alerts:read', 'alerts:manage'
+      ])
+    );
+
+    insertRole.run(
+      'role-helpdesk-operator',
+      'Helpdesk Operator',
+      'Helpdesk Operator',
+      'First-tier support role with device visibility, diagnostics retrieval, non-destructive reboot, and LAPS retrieval.',
+      1,
+      JSON.stringify([
+        'devices:read', 'devices:reboot', 'diagnostics:read', 'laps:read', 'commands:execute_read_only'
+      ])
+    );
+
+    insertRole.run(
+      'role-compliance-auditor',
+      'Compliance Auditor',
+      'Compliance Auditor',
+      'Read-only inspection role for audit trails, compliance baselines, and security reporting.',
+      1,
+      JSON.stringify([
+        'devices:read', 'compliance:read', 'audit:read', 'reports:read', 'siem:read'
+      ])
+    );
+
+    // Seed 1 sample pending dual custody approval
+    db.prepare(`
+      INSERT OR IGNORE INTO dual_custody_approvals (
+        id, action_type, target_type, target_id, target_name, requested_by,
+        requested_reason, request_payload_json, status, expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', '+24 hours'))
+    `).run(
+      'appr-01',
+      'REMOTE_WIPE',
+      'DEVICE',
+      'dev-livingroom-pc',
+      'Family Living Room PC',
+      'operator.bob@localpilot.corp',
+      'Device decommission requested by HR asset retirement ticket #SEC-8921',
+      JSON.stringify({ wipeType: 'FACTORY_RESET', preserveUserData: false }),
+      'PENDING'
+    );
+
+    // Seed 1 active RFC 5424 SIEM forwarder
+    db.prepare(`
+      INSERT OR IGNORE INTO siem_audit_forwarders (
+        id, name, destination_type, host, port, auth_token, tls_enabled, facility,
+        severity_filter, is_enabled, last_forwarded_at, total_events_forwarded
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', '-5 minutes'), ?)
+    `).run(
+      'siem-01',
+      'Primary RFC 5424 Syslog Collector',
+      'RFC5424_SYSLOG_UDP',
+      '10.1.1.50',
+      514,
+      '',
+      0,
+      16,
+      'ALL',
+      1,
+      142
+    );
+  }
+
 }
-
-
-

@@ -1,3 +1,5 @@
+import { rbacEngine } from '../services/rbacEngine.js';
+import { siemForwarderEngine } from '../services/siemForwarderEngine.js';
 import * as supervisorEngine from '../services/supervisorEngine.js';
 import * as realtimePushEngine from '../services/realtimePushEngine.js';
 /**
@@ -6193,6 +6195,225 @@ try {
       res.end(script);
     } catch (err) {
       sendJson(res, 500, { error: 'SUPERVISOR_SCRIPT_ERROR', message: err.message });
+    }
+  });
+
+
+  // 367. GET /api/v1/fleet/rbac/stats
+  router.get('/api/v1/fleet/rbac/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = rbacEngine.getGovernanceStats();
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'RBAC_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 368. GET /api/v1/fleet/rbac/roles
+  router.get('/api/v1/fleet/rbac/roles', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const roles = rbacEngine.getRoles(req.query);
+      sendJson(res, 200, { roles, count: roles.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'RBAC_ROLES_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 369. GET /api/v1/fleet/rbac/roles/:id
+  router.get('/api/v1/fleet/rbac/roles/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const role = rbacEngine.getRoleById(req.params.id);
+      if (!role) {
+        return sendJson(res, 404, { error: 'ROLE_NOT_FOUND', message: `Role '${req.params.id}' does not exist` });
+      }
+      sendJson(res, 200, role);
+    } catch (err) {
+      sendJson(res, 500, { error: 'RBAC_ROLE_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 370. POST /api/v1/fleet/rbac/roles
+  router.post('/api/v1/fleet/rbac/roles', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const created = rbacEngine.createRole(req.body || {});
+      sendJson(res, 201, created);
+    } catch (err) {
+      sendJson(res, 400, { error: 'ROLE_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 371. PATCH /api/v1/fleet/rbac/roles/:id
+  router.patch('/api/v1/fleet/rbac/roles/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const updated = rbacEngine.updateRole(req.params.id, req.body || {});
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 400, { error: 'ROLE_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 372. DELETE /api/v1/fleet/rbac/roles/:id
+  router.delete('/api/v1/fleet/rbac/roles/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const deleted = rbacEngine.deleteRole(req.params.id);
+      sendJson(res, 200, deleted);
+    } catch (err) {
+      sendJson(res, 400, { error: 'ROLE_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 373. GET /api/v1/fleet/governance/approvals
+  router.get('/api/v1/fleet/governance/approvals', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const approvals = rbacEngine.getDualCustodyApprovals(req.query);
+      sendJson(res, 200, { approvals, count: approvals.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'APPROVALS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 374. GET /api/v1/fleet/governance/approvals/:id
+  router.get('/api/v1/fleet/governance/approvals/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const approval = rbacEngine.getApprovalById(req.params.id);
+      if (!approval) {
+        return sendJson(res, 404, { error: 'APPROVAL_NOT_FOUND', message: `Approval '${req.params.id}' does not exist` });
+      }
+      sendJson(res, 200, approval);
+    } catch (err) {
+      sendJson(res, 500, { error: 'APPROVAL_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 375. POST /api/v1/fleet/governance/approvals
+  router.post('/api/v1/fleet/governance/approvals', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const created = rbacEngine.requestDualCustodyApproval(req.body || {});
+      sendJson(res, 201, created);
+    } catch (err) {
+      sendJson(res, 400, { error: 'APPROVAL_REQUEST_ERROR', message: err.message });
+    }
+  });
+
+  // 376. POST /api/v1/fleet/governance/approvals/:id/review
+  router.post('/api/v1/fleet/governance/approvals/:id/review', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const reviewed = rbacEngine.reviewDualCustodyApproval(req.params.id, req.body || {});
+      sendJson(res, 200, reviewed);
+    } catch (err) {
+      sendJson(res, 400, { error: 'APPROVAL_REVIEW_ERROR', message: err.message });
+    }
+  });
+
+  // 377. POST /api/v1/fleet/governance/approvals/:id/execute
+  router.post('/api/v1/fleet/governance/approvals/:id/execute', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const executed = rbacEngine.executeDualCustodyApproval(req.params.id);
+      sendJson(res, 200, { success: true, approval: executed });
+    } catch (err) {
+      sendJson(res, 400, { error: 'APPROVAL_EXECUTE_ERROR', message: err.message });
+    }
+  });
+
+  // 378. GET /api/v1/fleet/siem/stats
+  router.get('/api/v1/fleet/siem/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = siemForwarderEngine.getSiemStats();
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'SIEM_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 379. GET /api/v1/fleet/siem/forwarders
+  router.get('/api/v1/fleet/siem/forwarders', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const forwarders = siemForwarderEngine.getForwarders(req.query);
+      sendJson(res, 200, { forwarders, count: forwarders.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'SIEM_FORWARDERS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 380. GET /api/v1/fleet/siem/forwarders/:id
+  router.get('/api/v1/fleet/siem/forwarders/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const forwarder = siemForwarderEngine.getForwarderById(req.params.id);
+      if (!forwarder) {
+        return sendJson(res, 404, { error: 'FORWARDER_NOT_FOUND', message: `Forwarder '${req.params.id}' does not exist` });
+      }
+      sendJson(res, 200, forwarder);
+    } catch (err) {
+      sendJson(res, 500, { error: 'SIEM_FORWARDER_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 381. POST /api/v1/fleet/siem/forwarders
+  router.post('/api/v1/fleet/siem/forwarders', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const created = siemForwarderEngine.createForwarder(req.body || {});
+      sendJson(res, 201, created);
+    } catch (err) {
+      sendJson(res, 400, { error: 'SIEM_FORWARDER_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 382. PATCH /api/v1/fleet/siem/forwarders/:id
+  router.patch('/api/v1/fleet/siem/forwarders/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const updated = siemForwarderEngine.updateForwarder(req.params.id, req.body || {});
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 400, { error: 'SIEM_FORWARDER_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 383. DELETE /api/v1/fleet/siem/forwarders/:id
+  router.delete('/api/v1/fleet/siem/forwarders/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const deleted = siemForwarderEngine.deleteForwarder(req.params.id);
+      sendJson(res, 200, deleted);
+    } catch (err) {
+      sendJson(res, 400, { error: 'SIEM_FORWARDER_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 384. POST /api/v1/fleet/siem/forwarders/:id/test
+  router.post('/api/v1/fleet/siem/forwarders/:id/test', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const result = siemForwarderEngine.testForwarderConnection(req.params.id);
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'SIEM_TEST_ERROR', message: err.message });
+    }
+  });
+
+  // 385. POST /api/v1/fleet/siem/forward
+  router.post('/api/v1/fleet/siem/forward', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const result = siemForwarderEngine.forwardSecurityEvent(req.body?.event || req.body || {}, req.body?.forwarder_id);
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'SIEM_FORWARD_ERROR', message: err.message });
     }
   });
 

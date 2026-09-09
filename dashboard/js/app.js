@@ -191,8 +191,8 @@ const App = {
       case 'supervisor':
         if (window.SupervisorTable) window.SupervisorTable.render();
         break;
-      case 'supervisor':
-        if (window.SupervisorTable) window.SupervisorTable.render();
+      case 'governance':
+        if (window.GovernanceRbacTable) window.GovernanceRbacTable.render();
         break;
       case 'settings':
         this.renderSettings();
