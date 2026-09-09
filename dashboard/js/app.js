@@ -146,6 +146,9 @@ const App = {
       case 'kiosk':
         if (window.KioskTable) window.KioskTable.init();
         break;
+      case 'storage':
+        if (window.StorageAccessTable) window.StorageAccessTable.init();
+        break;
       case 'settings':
         this.renderSettings();
         break;

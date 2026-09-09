@@ -1343,6 +1343,58 @@ async function getDeviceKiosk(deviceId) {
   return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/kiosk`);
 }
 
+/* ── Removable Storage Access Control & USB Peripheral Governance ── */
+async function getStorageStats() {
+  return apiFetch('/api/v1/fleet/storage-access/stats');
+}
+
+async function getStoragePolicies(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/storage-access/policies${qStr ? '?' + qStr : ''}`);
+}
+
+async function getStoragePolicy(id) {
+  return apiFetch(`/api/v1/fleet/storage-access/policies/${encodeURIComponent(id)}`);
+}
+
+async function createStoragePolicy(data) {
+  return apiFetch('/api/v1/fleet/storage-access/policies', { method: 'POST', body: JSON.stringify(data) });
+}
+
+async function updateStoragePolicy(id, data) {
+  return apiFetch(`/api/v1/fleet/storage-access/policies/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(data) });
+}
+
+async function deleteStoragePolicy(id) {
+  return apiFetch(`/api/v1/fleet/storage-access/policies/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+async function getStorageInventory(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/storage-access/inventory${qStr ? '?' + qStr : ''}`);
+}
+
+async function getStorageEvents(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/storage-access/events${qStr ? '?' + qStr : ''}`);
+}
+
+async function getDeviceStorage(deviceId) {
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/storage-access`);
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -1427,6 +1479,16 @@ window.FleetAPI = {
   deleteKioskProfile,
   getKioskInventory,
   getDeviceKiosk,
+  // Removable Storage Access Control & USB Peripheral Governance
+  getStorageStats,
+  getStoragePolicies,
+  getStoragePolicy,
+  createStoragePolicy,
+  updateStoragePolicy,
+  deleteStoragePolicy,
+  getStorageInventory,
+  getStorageEvents,
+  getDeviceStorage,
   // Proactive Remediations
   getRemediations,
   getRemediationStats,

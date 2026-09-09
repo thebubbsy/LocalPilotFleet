@@ -1170,6 +1170,54 @@ export function initDb(dbOrPath, options = {}) {
       FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
       FOREIGN KEY(profile_id) REFERENCES kiosk_profiles(id) ON DELETE SET NULL
     );
+
+    -- 61. STORAGE_ACCESS_POLICIES — Removable Storage Access Control & USB Peripheral Governance
+    CREATE TABLE IF NOT EXISTS storage_access_policies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      target_group_id TEXT DEFAULT 'grp-all',
+      removable_disk_access TEXT NOT NULL DEFAULT 'ALLOW_ALL' CHECK(removable_disk_access IN ('ALLOW_ALL', 'READ_ONLY', 'DENY_ALL', 'DENY_UNENCRYPTED')),
+      require_bitlocker_to_go INTEGER DEFAULT 1 CHECK(require_bitlocker_to_go IN (0, 1)),
+      block_wpd_devices INTEGER DEFAULT 0 CHECK(block_wpd_devices IN (0, 1)),
+      block_bluetooth INTEGER DEFAULT 0 CHECK(block_bluetooth IN (0, 1)),
+      allowed_hardware_ids_json TEXT DEFAULT '[]',
+      audit_only INTEGER DEFAULT 0 CHECK(audit_only IN (0, 1)),
+      enabled INTEGER DEFAULT 1 CHECK(enabled IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(target_group_id) REFERENCES dynamic_groups(id) ON DELETE SET DEFAULT
+    );
+
+    -- 62. DEVICE_REMOVABLE_STORAGE_STATUS — Workstation connected USB drives & BitLocker To Go posture
+    CREATE TABLE IF NOT EXISTS device_removable_storage_status (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL UNIQUE,
+      policy_id TEXT,
+      connected_removable_drives_json TEXT DEFAULT '[]',
+      active_usb_devices_json TEXT DEFAULT '[]',
+      write_access_denied INTEGER DEFAULT 0 CHECK(write_access_denied IN (0, 1)),
+      compliance_status TEXT DEFAULT 'COMPLIANT' CHECK(compliance_status IN ('COMPLIANT', 'NON_COMPLIANT', 'UNENCRYPTED_USB_DETECTED', 'BLOCKED_DEVICE_DETECTED')),
+      last_audit_at TEXT DEFAULT (DATETIME('now')),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(policy_id) REFERENCES storage_access_policies(id) ON DELETE SET NULL
+    );
+
+    -- 63. REMOVABLE_STORAGE_EVENTS — USB Drive Insertion, Block, & Write Denied Audit Ledger
+    CREATE TABLE IF NOT EXISTS removable_storage_events (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      event_type TEXT NOT NULL CHECK(event_type IN ('DRIVE_INSERTED', 'DRIVE_REMOVED', 'WRITE_BLOCKED', 'UNENCRYPTED_DRIVE_INSERTED')),
+      drive_letter TEXT DEFAULT '',
+      volume_name TEXT DEFAULT '',
+      hardware_id TEXT DEFAULT '',
+      is_encrypted INTEGER DEFAULT 0 CHECK(is_encrypted IN (0, 1)),
+      action_taken TEXT NOT NULL DEFAULT 'ALLOWED' CHECK(action_taken IN ('ALLOWED', 'ENFORCED_READ_ONLY', 'BLOCKED')),
+      timestamp TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
   `);
 
   // Indexes
@@ -1332,6 +1380,13 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_kioskprof_enabled ON kiosk_profiles(enabled);
     CREATE INDEX IF NOT EXISTS idx_devkiosk_device ON device_kiosk_status(device_id);
     CREATE INDEX IF NOT EXISTS idx_devkiosk_status ON device_kiosk_status(lockdown_status);
+
+    CREATE INDEX IF NOT EXISTS idx_storpol_target ON storage_access_policies(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_storpol_enabled ON storage_access_policies(enabled);
+    CREATE INDEX IF NOT EXISTS idx_devstor_device ON device_removable_storage_status(device_id);
+    CREATE INDEX IF NOT EXISTS idx_devstor_comp ON device_removable_storage_status(compliance_status);
+    CREATE INDEX IF NOT EXISTS idx_storevt_device ON removable_storage_events(device_id);
+    CREATE INDEX IF NOT EXISTS idx_storevt_time ON removable_storage_events(timestamp DESC);
   `);
 
   // Schema migrations for existing databases
@@ -3101,6 +3156,55 @@ exit 0`,
       '-3 days', '-3 days'
     );
   }
+
+  // 23. Removable Storage Access Control & USB Peripheral Governance
+  const storagePolCount = db.prepare('SELECT COUNT(*) as count FROM storage_access_policies').get().count;
+  if (storagePolCount === 0) {
+    const insertStorPol = db.prepare(`
+      INSERT OR IGNORE INTO storage_access_policies (
+        id, name, description, target_group_id,
+        removable_disk_access, require_bitlocker_to_go, block_wpd_devices,
+        block_bluetooth, allowed_hardware_ids_json, audit_only,
+        enabled, created_at, updated_at
+      ) VALUES (
+        ?, ?, ?, ?,
+        ?, ?, ?,
+        ?, ?, ?,
+        1, DATETIME('now', ?), DATETIME('now', ?)
+      )
+    `);
+
+    insertStorPol.run(
+      'stor-corp-bitlocker-to-go',
+      'Corporate Zero-Trust Removable Storage Policy',
+      'Denies write access to unencrypted USB storage drives. Requires BitLocker To Go encryption for data egress prevention.',
+      'grp-all',
+      'DENY_UNENCRYPTED', 1, 0,
+      0, '[]', 0,
+      '-3 days', '-3 days'
+    );
+
+    insertStorPol.run(
+      'stor-strict-airgap-lockdown',
+      'Air-Gap High-Security USB & Peripheral Lockdown',
+      'Completely denies all removable storage devices, blocks WPD smartphones (MTP), and prohibits Bluetooth file transfer.',
+      'grp-all',
+      'DENY_ALL', 1, 1,
+      1, '[]', 0,
+      '-3 days', '-3 days'
+    );
+
+    insertStorPol.run(
+      'stor-dev-permissive-audit',
+      'Developer & IT Admin Permissive USB Logging',
+      'Permits all removable USB storage and peripherals while logging device insertions, serial numbers, and volume labels.',
+      'grp-all',
+      'ALLOW_ALL', 0, 0,
+      0, '[]', 1,
+      '-3 days', '-3 days'
+    );
+  }
 }
+
 
 

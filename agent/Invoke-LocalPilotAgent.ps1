@@ -2364,6 +2364,112 @@ if ($Mode -eq 'Heartbeat') {
                     Write-AgentLog 'WARN' "Kiosk posture audit encountered non-fatal error: $($_.Exception.Message)"
                 }
             }
+
+            # ── Removable Storage & USB Peripheral Governance Audit ──────────
+            if (-not (Get-Variable -Name 'LastStorageAccessAudit' -Scope Script -ErrorAction SilentlyContinue)) {
+                $script:LastStorageAccessAudit = $null
+            }
+            $now = Get-Date
+            $shouldAuditStorage = $false
+            if ($null -eq $script:LastStorageAccessAudit) {
+                $shouldAuditStorage = $true
+            } elseif (($now - $script:LastStorageAccessAudit).TotalSeconds -ge 180) { # 3-minute interval
+                $shouldAuditStorage = $true
+            }
+
+            if ($shouldAuditStorage) {
+                $script:LastStorageAccessAudit = $now
+                try {
+                    $removableDrives = @()
+                    $usbDevices = @()
+                    $writeDenied = $false
+
+                    # 1. Inspect Removable Disks & BitLocker Status
+                    try {
+                        $disks = Get-Disk -ErrorAction SilentlyContinue | Where-Object { $_.BusType -eq 'USB' -or $_.MediaType -eq 'Removable' }
+                        if ($disks) {
+                            foreach ($d in $disks) {
+                                $parts = Get-Partition -DiskNumber $d.Number -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter }
+                                foreach ($p in $parts) {
+                                    $dl = "$($p.DriveLetter):"
+                                    $isEnc = $false
+                                    $vol = Get-Volume -DriveLetter $p.DriveLetter -ErrorAction SilentlyContinue
+                                    $volName = if ($vol -and $vol.FileSystemLabel) { $vol.FileSystemLabel } else { 'Removable Disk' }
+
+                                    try {
+                                        $blStatus = Get-BitLockerVolume -MountPoint $dl -ErrorAction SilentlyContinue
+                                        if ($blStatus -and ($blStatus.VolumeStatus -eq 'FullyEncrypted' -or $blStatus.ProtectionStatus -eq 'On')) {
+                                            $isEnc = $true
+                                        }
+                                    } catch {}
+
+                                    $removableDrives += @{
+                                        drive_letter  = $dl
+                                        volume_name   = $volName
+                                        friendly_name = $d.FriendlyName
+                                        size_bytes    = $p.Size
+                                        is_encrypted  = $isEnc
+                                    }
+                                }
+                            }
+                        }
+                    } catch {}
+
+                    # 2. Inspect Active USB Hardware Devices
+                    try {
+                        $pnpDevs = Get-PnpDevice -Class 'DiskDrive', 'WPD', 'USB' -Status 'OK' -ErrorAction SilentlyContinue
+                        if ($pnpDevs) {
+                            foreach ($dev in $pnpDevs) {
+                                if ($dev.InstanceId -like 'USB*') {
+                                    $usbDevices += @{
+                                        instance_id   = $dev.InstanceId
+                                        friendly_name = $dev.FriendlyName
+                                        class         = $dev.Class
+                                    }
+                                }
+                            }
+                        }
+                    } catch {}
+
+                    # 3. Check if Write Access is currently Denied in Registry
+                    try {
+                        $fveReg = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\FVE' -Name 'RDVDenyWriteAccess' -ErrorAction SilentlyContinue
+                        if ($fveReg -and [int]$fveReg.RDVDenyWriteAccess -eq 1) {
+                            $writeDenied = $true
+                        }
+                    } catch {}
+
+                    # 4. Check if active policy requires BitLocker To Go
+                    $compliance = 'COMPLIANT'
+                    if ($removableDrives.Count -gt 0) {
+                        $unencrypted = $removableDrives | Where-Object { -not $_.is_encrypted }
+                        if ($unencrypted.Count -gt 0) {
+                            $compliance = 'UNENCRYPTED_USB_DETECTED'
+                        }
+                    }
+                    if ($writeDenied) {
+                        $compliance = 'WRITE_DENIED_ENFORCED'
+                    }
+
+                    $storagePayload = @{
+                        connected_removable_drives = $removableDrives
+                        active_usb_devices         = $usbDevices
+                        write_access_denied        = $writeDenied
+                        compliance_status          = $compliance
+                    }
+
+                    Invoke-RestMethod `
+                        -Uri        "$baseUrl/api/v1/nodes/$deviceId/storage-status" `
+                        -Method     POST `
+                        -Body       ($storagePayload | ConvertTo-Json -Depth 5 -Compress) `
+                        -Headers    $authHeaders `
+                        -TimeoutSec 10 `
+                        -ErrorAction SilentlyContinue | Out-Null
+                    Write-AgentLog 'INFO' "Reported Removable Storage & USB posture (Drives: $($removableDrives.Count), USB Peripherals: $($usbDevices.Count), WriteBlocked: $writeDenied, Compliance: $compliance)"
+                } catch {
+                    Write-AgentLog 'WARN' "Storage access posture audit encountered non-fatal error: $($_.Exception.Message)"
+                }
+            }
         } catch {
             Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
             if (-not $Continuous) { exit 1 }

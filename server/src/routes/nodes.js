@@ -29,6 +29,7 @@ import * as messagesEngine from '../services/messagesEngine.js';
 import * as certificateEngine from '../services/certificateEngine.js';
 import * as networkEngine from '../services/networkEngine.js';
 import * as kioskEngine from '../services/kioskEngine.js';
+import * as storageAccessEngine from '../services/storageAccessEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -357,7 +358,8 @@ export function registerNodeRoutes(router) {
         pending_messages: messagesEngine.getPendingMessagesForDevice(db, deviceId),
         certificate_profiles: certificateEngine.getEffectiveProfilesForDevice(db, deviceId),
         network_profiles: networkEngine.getEffectiveProfilesForDevice(db, deviceId),
-        kiosk_profile: kioskEngine.getEffectiveKioskProfileForDevice(db, deviceId)
+        kiosk_profile: kioskEngine.getEffectiveKioskProfileForDevice(db, deviceId),
+        storage_access_policy: storageAccessEngine.getEffectivePolicyForDevice(db, deviceId)
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -1421,6 +1423,45 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { device_id: id, profile });
     } catch (err) {
       sendJson(res, 500, { error: 'KIOSK_PROFILE_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 47. POST /api/v1/nodes/:id/storage-status (Agent reports removable drives & BitLocker To Go posture)
+  router.post('/api/v1/nodes/:id/storage-status', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const result = storageAccessEngine.saveDeviceStorageStatus(db, id, req.body || {});
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'STORAGE_STATUS_REPORT_ERROR', message: err.message });
+    }
+  });
+
+  // 48. POST /api/v1/nodes/:id/storage-event (Agent logs USB drive insertion, removal, or block event)
+  router.post('/api/v1/nodes/:id/storage-event', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const result = storageAccessEngine.recordStorageEvent(db, id, req.body || {});
+      sendJson(res, 201, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'STORAGE_EVENT_REPORT_ERROR', message: err.message });
+    }
+  });
+
+  // 49. GET /api/v1/nodes/:id/storage-policy (Agent fetches assigned removable storage policy)
+  router.get('/api/v1/nodes/:id/storage-policy', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const policy = storageAccessEngine.getEffectivePolicyForDevice(db, id);
+      sendJson(res, 200, { device_id: id, policy });
+    } catch (err) {
+      sendJson(res, 500, { error: 'STORAGE_POLICY_FETCH_ERROR', message: err.message });
     }
   });
 }

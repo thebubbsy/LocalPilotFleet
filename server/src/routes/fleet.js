@@ -28,6 +28,7 @@ import * as messagesEngine from '../services/messagesEngine.js';
 import * as certificateEngine from '../services/certificateEngine.js';
 import * as networkEngine from '../services/networkEngine.js';
 import * as kioskEngine from '../services/kioskEngine.js';
+import * as storageAccessEngine from '../services/storageAccessEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -4010,6 +4011,132 @@ try {
       sendJson(res, 200, status);
     } catch (err) {
       sendJson(res, 500, { error: 'DEVICE_KIOSK_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  /* ── 23. Removable Storage Access Control & USB Device Governance ── */
+
+  // 210. GET /api/v1/fleet/storage-access/stats
+  router.get('/api/v1/fleet/storage-access/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const stats = storageAccessEngine.getStorageStats(db);
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'STORAGE_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 211. GET /api/v1/fleet/storage-access/policies
+  router.get('/api/v1/fleet/storage-access/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const policies = storageAccessEngine.getAllPolicies(db);
+      sendJson(res, 200, { policies });
+    } catch (err) {
+      sendJson(res, 500, { error: 'STORAGE_POLICIES_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 212. POST /api/v1/fleet/storage-access/policies
+  router.post('/api/v1/fleet/storage-access/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const created = storageAccessEngine.createPolicy(db, req.body || {});
+      sendJson(res, 201, created);
+    } catch (err) {
+      sendJson(res, 400, { error: 'STORAGE_POLICY_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 213. GET /api/v1/fleet/storage-access/inventory
+  router.get('/api/v1/fleet/storage-access/inventory', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const inventory = storageAccessEngine.getFleetStorageInventory(db, req.query || {});
+      sendJson(res, 200, { inventory });
+    } catch (err) {
+      sendJson(res, 500, { error: 'STORAGE_INVENTORY_ERROR', message: err.message });
+    }
+  });
+
+  // 214. GET /api/v1/fleet/storage-access/events
+  router.get('/api/v1/fleet/storage-access/events', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const events = storageAccessEngine.getStorageEvents(db, req.query || {});
+      sendJson(res, 200, { events });
+    } catch (err) {
+      sendJson(res, 500, { error: 'STORAGE_EVENTS_ERROR', message: err.message });
+    }
+  });
+
+  // 215. GET /api/v1/fleet/storage-access/policies/:id
+  router.get('/api/v1/fleet/storage-access/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const policy = storageAccessEngine.getPolicyById(db, id);
+      if (!policy) {
+        sendJson(res, 404, { error: 'POLICY_NOT_FOUND', message: 'Storage policy not found' });
+        return;
+      }
+      sendJson(res, 200, policy);
+    } catch (err) {
+      sendJson(res, 500, { error: 'STORAGE_POLICY_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 216. PATCH /api/v1/fleet/storage-access/policies/:id
+  router.patch('/api/v1/fleet/storage-access/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const updated = storageAccessEngine.updatePolicy(db, id, req.body || {});
+      if (!updated) {
+        sendJson(res, 404, { error: 'POLICY_NOT_FOUND', message: 'Storage policy not found' });
+        return;
+      }
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 400, { error: 'STORAGE_POLICY_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 217. DELETE /api/v1/fleet/storage-access/policies/:id
+  router.delete('/api/v1/fleet/storage-access/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const deleted = storageAccessEngine.deletePolicy(db, id);
+      if (!deleted) {
+        sendJson(res, 404, { error: 'POLICY_NOT_FOUND', message: 'Storage policy not found' });
+        return;
+      }
+      sendJson(res, 200, { success: true, id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'STORAGE_POLICY_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 218. GET /api/v1/fleet/devices/:id/storage-access
+  router.get('/api/v1/fleet/devices/:id/storage-access', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const status = storageAccessEngine.getDeviceStorageStatus(db, id);
+      sendJson(res, 200, status);
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_STORAGE_FETCH_ERROR', message: err.message });
     }
   });
 }

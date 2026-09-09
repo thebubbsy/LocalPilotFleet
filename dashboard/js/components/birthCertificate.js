@@ -525,6 +525,17 @@
         </div>
       </div>
 
+      <!-- ── Removable Storage & USB Peripheral Posture ── -->
+      <div class="bc-section" id="bc-storage-section">
+        <div class="bc-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>💾 Removable Storage &amp; USB Posture</span>
+          <button class="intune-link-btn" id="btn-bc-view-storage-tab">View Storage Blade</button>
+        </div>
+        <div id="bc-storage-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading Removable Storage &amp; USB posture…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -1682,6 +1693,73 @@
         kioskListEl.innerHTML = html;
       }).catch(() => {
         kioskListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Kiosk telemetry pending audit.</div>';
+      });
+    }
+
+    // Fetch and populate Removable Storage & USB Posture
+    const storageListEl = body.querySelector('#bc-storage-list');
+    if (storageListEl && _currentDevice?.id) {
+      body.querySelector('#btn-bc-view-storage-tab')?.addEventListener('click', () => {
+        close();
+        if (window.App && typeof window.App.navigate === 'function') {
+          window.App.navigate('storage');
+        }
+      });
+
+      window.FleetAPI.getDeviceStorage(_currentDevice.id).then(res => {
+        if (!res) {
+          storageListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">No removable storage posture found.</div>';
+          return;
+        }
+
+        const status = res.status;
+        const policy = res.effective_policy;
+        let drives = [];
+        try {
+          drives = typeof status?.connected_removable_drives_json === 'string' ? JSON.parse(status.connected_removable_drives_json) : (status?.connected_removable_drives_json || []);
+        } catch(e) {}
+
+        const isCompliant = status?.compliance_status === 'COMPLIANT';
+        const isDenied = status?.write_access_denied;
+        const statusColor = isCompliant ? '#10b981' : (status?.compliance_status === 'UNENCRYPTED_USB_DETECTED' ? '#ef4444' : '#60a5fa');
+
+        let html = `
+          <div style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:12px;display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span style="font-size:13px;font-weight:600;color:var(--text-primary);">
+                  ${drives.length > 0 ? `💾 ${drives.length} Removable Drive(s)` : '💾 No USB Drives Attached'}
+                </span>
+                <span class="badge" style="background:${statusColor}22;color:${statusColor};font-size:10px;font-weight:600;">
+                  ${esc(status?.compliance_status || 'NOT_AUDITED')}
+                </span>
+              </div>
+              <span style="font-size:11px;color:var(--text-muted);">
+                ${isDenied ? '🔒 Read-Only Enforced' : '📖 Read/Write Enabled'}
+              </span>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px;color:var(--text-muted);">
+              <div>Active Policy: <strong style="color:var(--text-primary);">${esc(policy ? policy.name : 'None')}</strong></div>
+              <div>BitLocker To Go: <strong style="color:var(--text-primary);">${policy?.require_bitlocker_to_go ? 'Required' : 'Optional'}</strong></div>
+            </div>
+
+            ${drives.length > 0 ? `
+              <div style="border-top:1px solid #334155;padding-top:6px;font-size:11px;">
+                <div style="color:var(--text-muted);margin-bottom:4px;">Connected Volumes:</div>
+                ${drives.map(d => `
+                  <div style="display:flex;justify-content:space-between;padding:2px 0;">
+                    <span><strong style="color:var(--text-primary);">${esc(d.drive_letter || 'USB')}:</strong> ${esc(d.friendly_name || d.volume_name || 'Removable')}</span>
+                    <span>${d.is_encrypted ? '<span style="color:var(--accent-green);">🔒 BitLocker</span>' : '<span style="color:var(--accent-red);">⚠️ Plaintext</span>'}</span>
+                  </div>
+                `).join('')}
+              </div>
+            ` : ''}
+          </div>
+        `;
+        storageListEl.innerHTML = html;
+      }).catch(() => {
+        storageListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Removable storage telemetry pending audit.</div>';
       });
     }
 
