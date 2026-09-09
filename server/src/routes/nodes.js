@@ -26,6 +26,7 @@ import * as scriptsEngine from '../services/scriptsEngine.js';
 import * as asrEngine from '../services/asrEngine.js';
 import * as analyticsEngine from '../services/analyticsEngine.js';
 import * as messagesEngine from '../services/messagesEngine.js';
+import * as certificateEngine from '../services/certificateEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
@@ -351,7 +352,8 @@ export function registerNodeRoutes(router) {
         },
         assigned_scripts: scriptsEngine.getAssignedScriptsForDevice(db, deviceId),
         assigned_asr_policy: asrEngine.getAssignedASRPolicyForDevice(db, deviceId),
-        pending_messages: messagesEngine.getPendingMessagesForDevice(db, deviceId)
+        pending_messages: messagesEngine.getPendingMessagesForDevice(db, deviceId),
+        certificate_profiles: certificateEngine.getEffectiveProfilesForDevice(db, deviceId)
       });
     } catch (err) {
       sendJson(res, 500, { error: 'HEARTBEAT_ERROR', message: err.message });
@@ -1335,6 +1337,34 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, result);
     } catch (err) {
       sendJson(res, 400, { error: 'MESSAGE_ACK_ERROR', message: err.message });
+    }
+  });
+
+  // 41. POST /api/v1/nodes/:id/certificates (Agent reports discovered / installed certificates)
+  router.post('/api/v1/nodes/:id/certificates', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    const body = req.body || {};
+    const certList = Array.isArray(body) ? body : (body.certificates || []);
+    try {
+      const db = getDb();
+      const result = certificateEngine.saveDeviceCertificates(db, id, certList);
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'CERTIFICATES_REPORT_ERROR', message: err.message });
+    }
+  });
+
+  // 42. GET /api/v1/nodes/:id/certificate-profiles (Agent fetches assigned certificate profiles)
+  router.get('/api/v1/nodes/:id/certificate-profiles', (req, res) => {
+    if (!requireFleetKeyOrNodeToken(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const profiles = certificateEngine.getEffectiveProfilesForDevice(db, id);
+      sendJson(res, 200, { device_id: id, profiles });
+    } catch (err) {
+      sendJson(res, 500, { error: 'CERTIFICATE_PROFILES_FETCH_ERROR', message: err.message });
     }
   });
 }

@@ -137,6 +137,9 @@ const App = {
       case 'messages':
         if (window.MessagesTable) window.MessagesTable.init();
         break;
+      case 'certificates':
+        if (window.CertificateTable) window.CertificateTable.init();
+        break;
       case 'settings':
         this.renderSettings();
         break;

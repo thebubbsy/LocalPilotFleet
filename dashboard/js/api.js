@@ -1209,6 +1209,54 @@ async function dispatchDeviceToast(deviceId, data) {
   return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/toast`, { method: 'POST', body: JSON.stringify(data) });
 }
 
+/* ── Certificate Management & SCEP/PKCS Profiles ─────────────────── */
+async function getCertificateStats() {
+  return apiFetch('/api/v1/fleet/certificates/stats');
+}
+
+async function getCertificateProfiles(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/certificates/profiles${qStr ? '?' + qStr : ''}`);
+}
+
+async function getCertificateProfile(id) {
+  return apiFetch(`/api/v1/fleet/certificates/profiles/${encodeURIComponent(id)}`);
+}
+
+async function createCertificateProfile(data) {
+  return apiFetch('/api/v1/fleet/certificates/profiles', { method: 'POST', body: JSON.stringify(data) });
+}
+
+async function updateCertificateProfile(id, data) {
+  return apiFetch(`/api/v1/fleet/certificates/profiles/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(data) });
+}
+
+async function deleteCertificateProfile(id) {
+  return apiFetch(`/api/v1/fleet/certificates/profiles/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+async function getCertificateInventory(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/certificates/inventory${qStr ? '?' + qStr : ''}`);
+}
+
+async function getDeviceCertificates(deviceId, params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/devices/${encodeURIComponent(deviceId)}/certificates${qStr ? '?' + qStr : ''}`);
+}
+
 /* ── Exports ──────────────────────────────────────────────────────────
    Attach everything to window.FleetAPI for consumption by other modules
    ──────────────────────────────────────────────────────────────────── */
@@ -1266,6 +1314,15 @@ window.FleetAPI = {
   deleteMessage,
   getMessageDeliveries,
   dispatchDeviceToast,
+  // Certificates & SCEP / PKCS
+  getCertificateStats,
+  getCertificateProfiles,
+  getCertificateProfile,
+  createCertificateProfile,
+  updateCertificateProfile,
+  deleteCertificateProfile,
+  getCertificateInventory,
+  getDeviceCertificates,
   // Proactive Remediations
   getRemediations,
   getRemediationStats,

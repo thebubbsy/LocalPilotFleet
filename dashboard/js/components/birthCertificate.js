@@ -492,6 +492,17 @@
         </div>
       </div>
 
+      <!-- ── Certificates & SCEP Posture ── -->
+      <div class="bc-section" id="bc-certificates-section">
+        <div class="bc-section-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>📜 Certificates &amp; SCEP Posture</span>
+          <button class="intune-link-btn" id="btn-bc-view-certificates-tab">View Certificates</button>
+        </div>
+        <div id="bc-certificates-list" style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+          <span>⏳</span> Loading installed certificates…
+        </div>
+      </div>
+
       <!-- ── Recent Events ── -->
       ${(d.security_events || []).length > 0 ? `
         <div class="bc-section">
@@ -1483,6 +1494,53 @@
         analyticsListEl.innerHTML = html;
       }).catch(err => {
         analyticsListEl.innerHTML = `<div style="color:var(--text-muted);font-size:12px;">Analytics telemetry pending heartbeat sync.</div>`;
+      });
+    }
+
+    // Fetch and populate Certificates & SCEP Posture
+    const certsListEl = body.querySelector('#bc-certificates-list');
+    if (certsListEl && _currentDevice?.id) {
+      body.querySelector('#btn-bc-view-certificates-tab')?.addEventListener('click', () => {
+        close();
+        if (window.App && typeof window.App.navigate === 'function') {
+          window.App.navigate('certificates');
+        }
+      });
+
+      window.FleetAPI.getDeviceCertificates(_currentDevice.id).then(res => {
+        const certs = res.certificates || [];
+        if (certs.length === 0) {
+          certsListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">No certificates reported from workstation store yet.</div>';
+          return;
+        }
+
+        const valid = certs.filter(c => c.status === 'VALID').length;
+        const expiring = certs.filter(c => c.status === 'EXPIRING_SOON').length;
+        const expired = certs.filter(c => c.status === 'EXPIRED').length;
+
+        let html = `
+          <div style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:12px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <span style="font-size:13px;font-weight:600;color:var(--text-primary);">${certs.length} Certificates Installed</span>
+              <div style="display:flex;gap:6px;">
+                <span class="badge" style="background:rgba(16,185,129,0.15);color:#10B981;font-size:11px;">${valid} Valid</span>
+                ${expiring > 0 ? `<span class="badge" style="background:rgba(245,158,11,0.15);color:#F59E0B;font-size:11px;">${expiring} Expiring</span>` : ''}
+                ${expired > 0 ? `<span class="badge" style="background:rgba(239,68,68,0.15);color:#EF4444;font-size:11px;">${expired} Expired</span>` : ''}
+              </div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:4px;max-height:120px;overflow-y:auto;">
+              ${certs.slice(0, 4).map(c => `
+                <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);border-bottom:1px solid rgba(255,255,255,0.04);padding:2px 0;">
+                  <span style="font-weight:500;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:240px;">${esc(c.subject)}</span>
+                  <span>${c.status === 'EXPIRED' ? '🚨 Expired' : (c.status === 'EXPIRING_SOON' ? `⚠️ ${c.days_to_expiry}d` : `✔ ${c.days_to_expiry}d`)}</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `;
+        certsListEl.innerHTML = html;
+      }).catch(() => {
+        certsListEl.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Certificate store telemetry pending.</div>';
       });
     }
 

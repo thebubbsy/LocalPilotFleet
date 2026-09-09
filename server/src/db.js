@@ -1034,6 +1034,49 @@ export function initDb(dbOrPath, options = {}) {
       FOREIGN KEY(message_id) REFERENCES organizational_messages(id) ON DELETE CASCADE,
       FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
     );
+
+    -- 55. CERTIFICATE_PROFILES — Trusted Root, Intermediate, SCEP & PKCS profiles
+    CREATE TABLE IF NOT EXISTS certificate_profiles (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      certificate_type TEXT NOT NULL CHECK(certificate_type IN ('TRUSTED_ROOT', 'INTERMEDIATE_CA', 'SCEP', 'PKCS')),
+      target_store TEXT NOT NULL CHECK(target_store IN ('LOCAL_MACHINE_ROOT', 'LOCAL_MACHINE_CA', 'LOCAL_MACHINE_MY', 'CURRENT_USER_MY')),
+      target_group_id TEXT DEFAULT 'grp-all',
+      certificate_data_base64 TEXT DEFAULT '',
+      thumbprint TEXT DEFAULT '',
+      subject_name TEXT DEFAULT '',
+      validity_period_days INTEGER DEFAULT 365,
+      key_storage_provider TEXT DEFAULT 'RSA' CHECK(key_storage_provider IN ('RSA', 'ECDSA', 'MS_SOFTWARE_KSP')),
+      key_size INTEGER DEFAULT 2048,
+      scep_server_url TEXT DEFAULT '',
+      renewal_threshold_pct INTEGER DEFAULT 20,
+      enabled INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    -- 56. DEVICE_CERTIFICATES — Workstation installed certificate inventory & audit
+    CREATE TABLE IF NOT EXISTS device_certificates (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      profile_id TEXT,
+      thumbprint TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      issuer TEXT NOT NULL,
+      store_location TEXT NOT NULL CHECK(store_location IN ('LOCAL_MACHINE', 'CURRENT_USER')),
+      store_name TEXT NOT NULL,
+      not_before TEXT,
+      not_after TEXT,
+      days_to_expiry INTEGER DEFAULT 0,
+      has_private_key INTEGER DEFAULT 0,
+      status TEXT NOT NULL CHECK(status IN ('VALID', 'EXPIRING_SOON', 'EXPIRED', 'REVOKED')),
+      last_scanned_at TEXT DEFAULT (DATETIME('now')),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(profile_id) REFERENCES certificate_profiles(id) ON DELETE SET NULL
+    );
   `);
 
   // Indexes
@@ -1176,6 +1219,14 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_dmd_device ON device_message_deliveries(device_id);
     CREATE INDEX IF NOT EXISTS idx_dmd_msg ON device_message_deliveries(message_id);
     CREATE INDEX IF NOT EXISTS idx_dmd_status ON device_message_deliveries(status);
+
+    CREATE INDEX IF NOT EXISTS idx_certprof_type ON certificate_profiles(certificate_type);
+    CREATE INDEX IF NOT EXISTS idx_certprof_target ON certificate_profiles(target_group_id);
+    CREATE INDEX IF NOT EXISTS idx_certprof_enabled ON certificate_profiles(enabled);
+    CREATE INDEX IF NOT EXISTS idx_devcert_device ON device_certificates(device_id);
+    CREATE INDEX IF NOT EXISTS idx_devcert_thumb ON device_certificates(thumbprint);
+    CREATE INDEX IF NOT EXISTS idx_devcert_status ON device_certificates(status);
+    CREATE INDEX IF NOT EXISTS idx_devcert_expiry ON device_certificates(days_to_expiry ASC);
   `);
 
   // Schema migrations for existing databases
@@ -2776,6 +2827,57 @@ exit 0`,
       'Ensure real-time anti-malware protection and endpoint firewall remain enabled to prevent automated quarantine.',
       'MODAL', 'CRITICAL', 'grp-all', 'windowsdefender:', 'Open Defender', 'DAILY',
       '-2 days', '-2 days'
+    );
+  }
+
+  // 20. SCEP & PKCS Certificate Profiles
+  const certProfCount = db.prepare('SELECT COUNT(*) as count FROM certificate_profiles').get().count;
+  if (certProfCount === 0) {
+    const insertCertProf = db.prepare(`
+      INSERT OR IGNORE INTO certificate_profiles (
+        id, name, description, certificate_type, target_store, target_group_id,
+        certificate_data_base64, thumbprint, subject_name, validity_period_days,
+        key_storage_provider, key_size, scep_server_url, renewal_threshold_pct,
+        enabled, created_at, updated_at
+      ) VALUES (
+        ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        1, DATETIME('now', ?), DATETIME('now', ?)
+      )
+    `);
+
+    insertCertProf.run(
+      'cert-enterprise-root-ca',
+      'LocalPilot Fleet Zero-Trust Root CA',
+      'Enterprise root certification authority certificate for internal TLS trust, device authentication, and zero-trust VPN validation.',
+      'TRUSTED_ROOT', 'LOCAL_MACHINE_ROOT', 'grp-all',
+      'MIICXDCCAcWgAwIBAgIQX5b...LocalPilotRootCA', 'A1B2C3D4E5F60718293A4B5C6D7E8F9012345678',
+      'CN=LocalPilot Fleet Enterprise Root CA, O=LocalPilot Security, C=US', 3650,
+      'RSA', 4096, '', 20,
+      '-3 days', '-3 days'
+    );
+
+    insertCertProf.run(
+      'cert-scep-workstation-auth',
+      'Workstation SCEP Client Authentication Profile',
+      'Automated SCEP certificate enrollment profile for 802.1X corporate network authentication and Wi-Fi access.',
+      'SCEP', 'LOCAL_MACHINE_MY', 'grp-all',
+      '', '',
+      'CN={{DeviceName}}, OU=Workstations, O=LocalPilot Fleet', 365,
+      'RSA', 2048, 'https://ca.localpilot.internal/certsrv/mscep/mscep.dll', 20,
+      '-3 days', '-3 days'
+    );
+
+    insertCertProf.run(
+      'cert-intermediate-tls-chain',
+      'LocalPilot Internal Services Intermediate CA',
+      'Subordinate CA certificate chain for internal services, HTTPS proxies, and local cloud endpoints.',
+      'INTERMEDIATE_CA', 'LOCAL_MACHINE_CA', 'grp-all',
+      'MIICXDCCAcWgAwIBAgIQY6c...LocalPilotSubCA', 'F0E1D2C3B4A5968778695A4B3C2D1E0F12345678',
+      'CN=LocalPilot Issuing SubCA 01, O=LocalPilot Security, C=US', 1825,
+      'RSA', 4096, '', 20,
+      '-3 days', '-3 days'
     );
   }
 }

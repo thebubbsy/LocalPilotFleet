@@ -25,6 +25,7 @@ import * as scriptsEngine from '../services/scriptsEngine.js';
 import * as asrEngine from '../services/asrEngine.js';
 import * as analyticsEngine from '../services/analyticsEngine.js';
 import * as messagesEngine from '../services/messagesEngine.js';
+import * as certificateEngine from '../services/certificateEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerFleetRoutes(router) {
@@ -3666,6 +3667,112 @@ try {
     } catch (err) {
       const status = err.message && err.message.includes('not found') ? 404 : 400;
       sendJson(res, status, { error: 'TOAST_DISPATCH_ERROR', message: err.message });
+    }
+  });
+
+  // 186. GET /api/v1/fleet/certificates/stats
+  router.get('/api/v1/fleet/certificates/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const stats = certificateEngine.getCertificateStats(db);
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'CERTIFICATE_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 187. GET /api/v1/fleet/certificates/profiles
+  router.get('/api/v1/fleet/certificates/profiles', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const profiles = certificateEngine.getCertificateProfiles(db, req.query || {});
+      sendJson(res, 200, { profiles });
+    } catch (err) {
+      sendJson(res, 500, { error: 'CERTIFICATE_PROFILES_ERROR', message: err.message });
+    }
+  });
+
+  // 188. POST /api/v1/fleet/certificates/profiles
+  router.post('/api/v1/fleet/certificates/profiles', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const created = certificateEngine.createCertificateProfile(db, req.body || {});
+      sendJson(res, 201, created);
+    } catch (err) {
+      sendJson(res, 400, { error: 'CERTIFICATE_PROFILE_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 189. GET /api/v1/fleet/certificates/inventory
+  router.get('/api/v1/fleet/certificates/inventory', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const inventory = certificateEngine.getCertificateInventory(db, req.query || {});
+      sendJson(res, 200, { certificates: inventory });
+    } catch (err) {
+      sendJson(res, 500, { error: 'CERTIFICATE_INVENTORY_ERROR', message: err.message });
+    }
+  });
+
+  // 190. GET /api/v1/fleet/certificates/profiles/:id
+  router.get('/api/v1/fleet/certificates/profiles/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const profile = certificateEngine.getCertificateProfile(db, id);
+      if (!profile) {
+        sendJson(res, 404, { error: 'PROFILE_NOT_FOUND', message: 'Certificate profile not found' });
+        return;
+      }
+      sendJson(res, 200, profile);
+    } catch (err) {
+      sendJson(res, 500, { error: 'CERTIFICATE_PROFILE_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 191. PATCH /api/v1/fleet/certificates/profiles/:id
+  router.patch('/api/v1/fleet/certificates/profiles/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const updated = certificateEngine.updateCertificateProfile(db, id, req.body || {});
+      sendJson(res, 200, updated);
+    } catch (err) {
+      const status = err.message && err.message.includes('not found') ? 404 : 400;
+      sendJson(res, status, { error: 'CERTIFICATE_PROFILE_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 192. DELETE /api/v1/fleet/certificates/profiles/:id
+  router.delete('/api/v1/fleet/certificates/profiles/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const deleted = certificateEngine.deleteCertificateProfile(db, id);
+      sendJson(res, 200, deleted);
+    } catch (err) {
+      const status = err.message && err.message.includes('not found') ? 404 : 500;
+      sendJson(res, status, { error: 'CERTIFICATE_PROFILE_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 193. GET /api/v1/fleet/devices/:id/certificates
+  router.get('/api/v1/fleet/devices/:id/certificates', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { id } = req.params;
+    try {
+      const db = getDb();
+      const certs = certificateEngine.getDeviceCertificates(db, id, req.query || {});
+      sendJson(res, 200, { device_id: id, certificates: certs });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DEVICE_CERTIFICATES_FETCH_ERROR', message: err.message });
     }
   });
 }

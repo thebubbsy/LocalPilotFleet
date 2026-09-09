@@ -2106,6 +2106,67 @@ if ($Mode -eq 'Heartbeat') {
                     Write-AgentLog 'WARN' "Endpoint Analytics harvesting encountered non-fatal error: $($_.Exception.Message)"
                 }
             }
+
+            # ── Intune Certificate Store Audit & Posture Telemetry ───────────
+            if (-not (Get-Variable -Name 'LastCertStoreAudit' -Scope Script -ErrorAction SilentlyContinue)) {
+                $script:LastCertStoreAudit = $null
+            }
+            $now = Get-Date
+            $shouldAuditCerts = $false
+            if ($null -eq $script:LastCertStoreAudit -or ($now - $script:LastCertStoreAudit).TotalSeconds -ge 300) {
+                $shouldAuditCerts = $true
+            }
+
+            if ($shouldAuditCerts) {
+                $script:LastCertStoreAudit = $now
+                try {
+                    $scannedCerts = @()
+                    $storesToScan = @(
+                        @{ Location = 'LOCAL_MACHINE'; Name = 'Root' },
+                        @{ Location = 'LOCAL_MACHINE'; Name = 'CA' },
+                        @{ Location = 'LOCAL_MACHINE'; Name = 'My' },
+                        @{ Location = 'CURRENT_USER';  Name = 'My' }
+                    )
+
+                    foreach ($st in $storesToScan) {
+                        try {
+                            $certPath = if ($st.Location -eq 'LOCAL_MACHINE') { "Cert:\LocalMachine\$($st.Name)" } else { "Cert:\CurrentUser\$($st.Name)" }
+                            if (Test-Path $certPath) {
+                                $rawCerts = Get-ChildItem -Path $certPath -ErrorAction SilentlyContinue
+                                foreach ($c in $rawCerts) {
+                                    if (-not $c.Thumbprint) { continue }
+                                    $hasKey = try { if ($c.HasPrivateKey) { 1 } else { 0 } } catch { 0 }
+                                    $scannedCerts += @{
+                                        thumbprint      = $c.Thumbprint
+                                        subject         = if ($c.Subject) { $c.Subject } else { $c.Issuer }
+                                        issuer          = if ($c.Issuer) { $c.Issuer } else { 'Unknown' }
+                                        store_location  = $st.Location
+                                        store_name      = $st.Name
+                                        not_before      = if ($c.NotBefore) { $c.NotBefore.ToString('o') } else { $null }
+                                        not_after       = if ($c.NotAfter) { $c.NotAfter.ToString('o') } else { $null }
+                                        has_private_key = $hasKey
+                                    }
+                                }
+                            }
+                        } catch {}
+                    }
+
+                    if ($scannedCerts.Count -gt 0) {
+                        # Take top 50 to keep payload compact and fast
+                        $trimmedCerts = if ($scannedCerts.Count -gt 50) { $scannedCerts[0..49] } else { $scannedCerts }
+                        Invoke-RestMethod `
+                            -Uri        "$baseUrl/api/v1/nodes/$deviceId/certificates" `
+                            -Method     POST `
+                            -Body       (@{ certificates = $trimmedCerts } | ConvertTo-Json -Compress -Depth 5) `
+                            -Headers    $authHeaders `
+                            -TimeoutSec 10 `
+                            -ErrorAction SilentlyContinue | Out-Null
+                        Write-AgentLog 'INFO' "Reported $($trimmedCerts.Count) workstation certificates from local store"
+                    }
+                } catch {
+                    Write-AgentLog 'WARN' "Certificate store audit encountered non-fatal error: $($_.Exception.Message)"
+                }
+            }
         } catch {
             Write-AgentLog 'ERROR' "Heartbeat failed: $($_.Exception.Message)"
             if (-not $Continuous) { exit 1 }
