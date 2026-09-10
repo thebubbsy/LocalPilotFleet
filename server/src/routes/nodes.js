@@ -1,3 +1,4 @@
+import { ExploitProtectionEngine } from '../services/exploitProtectionEngine.js';
 import { CisBenchmarkEngine } from '../services/cisBenchmarkEngine.js';
 import { DlpEngine } from '../services/dlpEngine.js';
 import { IdentityThreatEngine } from '../services/identityThreatEngine.js';
@@ -2641,4 +2642,55 @@ export function registerNodeRoutes(router) {
       sendJson(res, 400, { error: "NODE_CIS_REQUEST_REMEDIATION_ERROR", message: err.message });
     }
   });
+
+  // =========================================================================
+  // ITERATION 59: Windows Exploit Protection & Process Mitigation Node Routes
+  // =========================================================================
+
+  // 653. GET /api/v1/nodes/:id/exploit-protection/policy — Node agent pulls assigned exploit protection policy
+  router.get('/api/v1/nodes/:id/exploit-protection/policy', (req, res) => {
+    try {
+      const policies = ExploitProtectionEngine.getPolicies(getDb(), { status: 'ACTIVE' });
+      const policy = policies[0] || null;
+      if (!policy) {
+        sendJson(res, 404, { error: "NO_ACTIVE_POLICY", message: "No active exploit protection policy found" });
+        return;
+      }
+      const fullPolicy = ExploitProtectionEngine.getPolicyById(getDb(), policy.id);
+      sendJson(res, 200, { success: true, policy: fullPolicy });
+    } catch (err) {
+      sendJson(res, 500, { error: "NODE_EXPLOIT_POLICY_ERROR", message: err.message });
+    }
+  });
+
+  // 654. POST /api/v1/nodes/:id/exploit-protection/report-audit — Node agent reports local mitigation compliance audit
+  router.post('/api/v1/nodes/:id/exploit-protection/report-audit', (req, res) => {
+    const { id } = req.params;
+    try {
+      const audit = ExploitProtectionEngine.recordEndpointAudit(getDb(), {
+        device_id: id,
+        ...(req.body || {})
+      });
+      sendJson(res, 201, { success: true, audit });
+    } catch (err) {
+      sendJson(res, 400, { error: "NODE_EXPLOIT_AUDIT_REPORT_ERROR", message: err.message });
+    }
+  });
+
+  // 655. GET /api/v1/nodes/:id/exploit-protection/remediate-script — Node agent pulls PowerShell remediation script
+  router.get('/api/v1/nodes/:id/exploit-protection/remediate-script', (req, res) => {
+    try {
+      const policies = ExploitProtectionEngine.getPolicies(getDb(), { status: 'ACTIVE' });
+      const policyId = req.query?.policy_id || policies[0]?.id;
+      if (!policyId) {
+        sendJson(res, 404, { error: "NO_POLICY_AVAILABLE", message: "No exploit policy available" });
+        return;
+      }
+      const script = ExploitProtectionEngine.generatePowerShellDeployment(getDb(), policyId);
+      sendJson(res, 200, { success: true, script });
+    } catch (err) {
+      sendJson(res, 500, { error: "NODE_EXPLOIT_SCRIPT_ERROR", message: err.message });
+    }
+  });
+
 }

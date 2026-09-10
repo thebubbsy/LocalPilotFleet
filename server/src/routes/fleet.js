@@ -1,3 +1,4 @@
+import { ExploitProtectionEngine } from '../services/exploitProtectionEngine.js';
 import { CisBenchmarkEngine } from '../services/cisBenchmarkEngine.js';
 import { DlpEngine } from '../services/dlpEngine.js';
 import { IdentityThreatEngine } from '../services/identityThreatEngine.js';
@@ -9585,4 +9586,173 @@ try {
       sendJson(res, 400, { error: "CIS_APPLY_REMEDIATION_ERROR", message: err.message });
     }
   });
+
+  // =========================================================================
+  // ITERATION 59: Windows Exploit Protection & Process Mitigation Engine
+  // =========================================================================
+
+  // 641. GET /api/v1/fleet/exploit-protection/stats — Fleet-wide exploit mitigation statistics
+  router.get('/api/v1/fleet/exploit-protection/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = ExploitProtectionEngine.getExploitStats(getDb());
+      sendJson(res, 200, { success: true, stats });
+    } catch (err) {
+      sendJson(res, 500, { error: "EXPLOIT_STATS_ERROR", message: err.message });
+    }
+  });
+
+  // 642. GET /api/v1/fleet/exploit-protection/policies — Retrieve exploit mitigation policies
+  router.get('/api/v1/fleet/exploit-protection/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policies = ExploitProtectionEngine.getPolicies(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, policies, count: policies.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "EXPLOIT_POLICIES_ERROR", message: err.message });
+    }
+  });
+
+  // 643. GET /api/v1/fleet/exploit-protection/policies/:id — Retrieve single policy with app mitigations
+  router.get('/api/v1/fleet/exploit-protection/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policy = ExploitProtectionEngine.getPolicyById(getDb(), req.params.id);
+      if (!policy) {
+        sendJson(res, 404, { error: "POLICY_NOT_FOUND", message: "Policy not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, policy });
+    } catch (err) {
+      sendJson(res, 500, { error: "EXPLOIT_POLICY_GET_ERROR", message: err.message });
+    }
+  });
+
+  // 644. POST /api/v1/fleet/exploit-protection/policies — Create exploit mitigation policy
+  router.post('/api/v1/fleet/exploit-protection/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.name) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "Policy name is required" });
+        return;
+      }
+      const policy = ExploitProtectionEngine.createPolicy(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, policy });
+    } catch (err) {
+      sendJson(res, 400, { error: "EXPLOIT_POLICY_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 645. PUT /api/v1/fleet/exploit-protection/policies/:id — Update exploit mitigation policy
+  router.put('/api/v1/fleet/exploit-protection/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policy = ExploitProtectionEngine.updatePolicy(getDb(), req.params.id, req.body || {});
+      if (!policy) {
+        sendJson(res, 404, { error: "POLICY_NOT_FOUND", message: "Policy not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, policy });
+    } catch (err) {
+      sendJson(res, 400, { error: "EXPLOIT_POLICY_UPDATE_ERROR", message: err.message });
+    }
+  });
+
+  // 646. DELETE /api/v1/fleet/exploit-protection/policies/:id — Delete policy and cascading mitigations
+  router.delete('/api/v1/fleet/exploit-protection/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const deleted = ExploitProtectionEngine.deletePolicy(getDb(), req.params.id);
+      if (!deleted) {
+        sendJson(res, 404, { error: "POLICY_NOT_FOUND", message: "Policy not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, deleted: true });
+    } catch (err) {
+      sendJson(res, 500, { error: "EXPLOIT_POLICY_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 647. GET /api/v1/fleet/exploit-protection/mitigations — Retrieve application mitigation rules
+  router.get('/api/v1/fleet/exploit-protection/mitigations', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const mitigations = ExploitProtectionEngine.getAppMitigations(getDb(), req.query?.policy_id || null);
+      sendJson(res, 200, { success: true, mitigations, count: mitigations.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "EXPLOIT_APP_MITIGATIONS_ERROR", message: err.message });
+    }
+  });
+
+  // 648. POST /api/v1/fleet/exploit-protection/mitigations — Add application mitigation rule
+  router.post('/api/v1/fleet/exploit-protection/mitigations', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.policy_id || !req.body?.executable_name) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "policy_id and executable_name are required" });
+        return;
+      }
+      const mitigation = ExploitProtectionEngine.addAppMitigation(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, mitigation });
+    } catch (err) {
+      sendJson(res, 400, { error: "EXPLOIT_APP_MITIGATION_ADD_ERROR", message: err.message });
+    }
+  });
+
+  // 649. DELETE /api/v1/fleet/exploit-protection/mitigations/:id — Delete application mitigation rule
+  router.delete('/api/v1/fleet/exploit-protection/mitigations/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const deleted = ExploitProtectionEngine.deleteAppMitigation(getDb(), req.params.id);
+      if (!deleted) {
+        sendJson(res, 404, { error: "MITIGATION_NOT_FOUND", message: "Mitigation rule not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, deleted: true });
+    } catch (err) {
+      sendJson(res, 500, { error: "EXPLOIT_APP_MITIGATION_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 650. GET /api/v1/fleet/exploit-protection/audits — Retrieve endpoint mitigation compliance scorecards
+  router.get('/api/v1/fleet/exploit-protection/audits', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const audits = ExploitProtectionEngine.getEndpointAudits(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, audits, count: audits.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "EXPLOIT_AUDITS_ERROR", message: err.message });
+    }
+  });
+
+  // 651. POST /api/v1/fleet/exploit-protection/audits — Ingest endpoint compliance evaluation scorecard
+  router.post('/api/v1/fleet/exploit-protection/audits', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.device_id || !req.body?.policy_id) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "device_id and policy_id are required" });
+        return;
+      }
+      const audit = ExploitProtectionEngine.recordEndpointAudit(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, audit });
+    } catch (err) {
+      sendJson(res, 400, { error: "EXPLOIT_AUDIT_RECORD_ERROR", message: err.message });
+    }
+  });
+
+  // 652. GET /api/v1/fleet/exploit-protection/script/:policyId — Generate PowerShell deployment script
+  router.get('/api/v1/fleet/exploit-protection/script/:policyId', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const script = ExploitProtectionEngine.generatePowerShellDeployment(getDb(), req.params.policyId);
+      if (!script) {
+        sendJson(res, 404, { error: "POLICY_NOT_FOUND", message: "Policy not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, script });
+    } catch (err) {
+      sendJson(res, 500, { error: "EXPLOIT_SCRIPT_GENERATE_ERROR", message: err.message });
+    }
+  });
+
 }

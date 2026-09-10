@@ -238,6 +238,11 @@ const App = {
           window.CisBenchmarkTable.render();
         }
         break;
+      case 'exploit':
+        if (window.ExploitProtectionTable && typeof window.ExploitProtectionTable.render === 'function') {
+          window.ExploitProtectionTable.render();
+        }
+        break;
       case 'itdr':
         if (window.IdentityThreatTable) window.IdentityThreatTable.render();
         break;

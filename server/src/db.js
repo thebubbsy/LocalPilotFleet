@@ -3418,6 +3418,74 @@ export function initDb(dbOrPath, options = {}) {
     );
 
     CREATE INDEX IF NOT EXISTS idx_crrs_rule ON cis_rule_remediation_scripts(rule_id);
+    -- =========================================================================
+    -- ITERATION 59: Windows Exploit Protection & Process Mitigation Engine (Exploit Guard)
+    -- =========================================================================
+    -- Table 166: exploit_mitigation_policies
+    CREATE TABLE IF NOT EXISTS exploit_mitigation_policies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      target_group TEXT NOT NULL DEFAULT 'All Corporate Endpoints',
+      system_dep INTEGER NOT NULL DEFAULT 1 CHECK(system_dep IN (0, 1)),
+      system_aslr_bottom_up INTEGER NOT NULL DEFAULT 1 CHECK(system_aslr_bottom_up IN (0, 1)),
+      system_aslr_force_relocate INTEGER NOT NULL DEFAULT 1 CHECK(system_aslr_force_relocate IN (0, 1)),
+      system_aslr_high_entropy INTEGER NOT NULL DEFAULT 1 CHECK(system_aslr_high_entropy IN (0, 1)),
+      system_sehop INTEGER NOT NULL DEFAULT 1 CHECK(system_sehop IN (0, 1)),
+      system_cfg INTEGER NOT NULL DEFAULT 1 CHECK(system_cfg IN (0, 1)),
+      status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE', 'AUDIT_ONLY', 'DISABLED')),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_emp_status ON exploit_mitigation_policies(status);
+    CREATE INDEX IF NOT EXISTS idx_emp_target ON exploit_mitigation_policies(target_group);
+
+    -- Table 167: exploit_app_mitigations
+    CREATE TABLE IF NOT EXISTS exploit_app_mitigations (
+      id TEXT PRIMARY KEY,
+      policy_id TEXT NOT NULL,
+      executable_name TEXT NOT NULL,
+      disallow_child_process_creation INTEGER NOT NULL DEFAULT 1 CHECK(disallow_child_process_creation IN (0, 1)),
+      block_remote_image_loads INTEGER NOT NULL DEFAULT 1 CHECK(block_remote_image_loads IN (0, 1)),
+      block_low_integrity_images INTEGER NOT NULL DEFAULT 1 CHECK(block_low_integrity_images IN (0, 1)),
+      arbitrary_code_guard INTEGER NOT NULL DEFAULT 0 CHECK(arbitrary_code_guard IN (0, 1)),
+      code_integrity_guard INTEGER NOT NULL DEFAULT 0 CHECK(code_integrity_guard IN (0, 1)),
+      export_address_filter INTEGER NOT NULL DEFAULT 1 CHECK(export_address_filter IN (0, 1)),
+      import_address_filter INTEGER NOT NULL DEFAULT 1 CHECK(import_address_filter IN (0, 1)),
+      strict_handle_checks INTEGER NOT NULL DEFAULT 1 CHECK(strict_handle_checks IN (0, 1)),
+      disable_win32k_system_calls INTEGER NOT NULL DEFAULT 0 CHECK(disable_win32k_system_calls IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(policy_id) REFERENCES exploit_mitigation_policies(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_eam_policy ON exploit_app_mitigations(policy_id);
+    CREATE INDEX IF NOT EXISTS idx_eam_executable ON exploit_app_mitigations(executable_name);
+
+    -- Table 168: exploit_endpoint_audits
+    CREATE TABLE IF NOT EXISTS exploit_endpoint_audits (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      hostname TEXT NOT NULL,
+      policy_id TEXT NOT NULL,
+      policy_name TEXT NOT NULL,
+      system_mitigations_compliant INTEGER NOT NULL DEFAULT 1 CHECK(system_mitigations_compliant IN (0, 1)),
+      apps_evaluated_count INTEGER NOT NULL DEFAULT 0,
+      apps_compliant_count INTEGER NOT NULL DEFAULT 0,
+      apps_drifted_count INTEGER NOT NULL DEFAULT 0,
+      compliance_score_percent REAL NOT NULL DEFAULT 100.0,
+      drift_detected INTEGER NOT NULL DEFAULT 0 CHECK(drift_detected IN (0, 1)),
+      findings_json TEXT NOT NULL DEFAULT '{}',
+      last_evaluated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(policy_id) REFERENCES exploit_mitigation_policies(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_eea_device ON exploit_endpoint_audits(device_id);
+    CREATE INDEX IF NOT EXISTS idx_eea_policy ON exploit_endpoint_audits(policy_id);
+    CREATE INDEX IF NOT EXISTS idx_eea_drift ON exploit_endpoint_audits(drift_detected);
+
 
   `);
 
@@ -8172,6 +8240,75 @@ exit 0`,
       'if (!(Test-Path "HKLM:\\Software\\Policies\\Microsoft\\Windows NT\\DNSClient")) { New-Item -Path "HKLM:\\Software\\Policies\\Microsoft\\Windows NT\\DNSClient" -Force }; Set-ItemProperty -Path "HKLM:\\Software\\Policies\\Microsoft\\Windows NT\\DNSClient" -Name "EnableMulticast" -Value 0 -Type DWord -Force',
       'Set-ItemProperty -Path "HKLM:\\Software\\Policies\\Microsoft\\Windows NT\\DNSClient" -Name "EnableMulticast" -Value 1 -Type DWord -Force',
       0
+    );
+  }
+
+  // Iteration 59: Windows Exploit Protection & Process Mitigation Seeds
+  const empCount = db.prepare('SELECT COUNT(*) as count FROM exploit_mitigation_policies').get().count;
+  if (empCount === 0) {
+    const devTarget = db.prepare('SELECT id, hostname FROM devices LIMIT 1').get() || { id: 'dev-01', hostname: 'DESKTOP-CORP-01' };
+
+    const insertEmp = db.prepare(`
+      INSERT OR IGNORE INTO exploit_mitigation_policies (
+        id, name, description, target_group, system_dep, system_aslr_bottom_up, system_aslr_force_relocate,
+        system_aslr_high_entropy, system_sehop, system_cfg, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertEmp.run(
+      'emp-01',
+      'Enterprise Standard Exploit Guard Baseline',
+      'Hardens core memory protections, enforces DEP, High-Entropy ASLR, SEHOP, and CFG across the fleet.',
+      'All Corporate Endpoints',
+      1, 1, 1, 1, 1, 1, 'ACTIVE'
+    );
+
+    insertEmp.run(
+      'emp-02',
+      'High-Security Developer & Admin Baseline',
+      'Strict exploit protections with Arbitrary Code Guard and Code Integrity Guard restrictions for privileged bastion hosts.',
+      'Developer Workstations',
+      1, 1, 1, 1, 1, 1, 'ACTIVE'
+    );
+
+    const insertEam = db.prepare(`
+      INSERT OR IGNORE INTO exploit_app_mitigations (
+        id, policy_id, executable_name, disallow_child_process_creation, block_remote_image_loads,
+        block_low_integrity_images, arbitrary_code_guard, code_integrity_guard, export_address_filter,
+        import_address_filter, strict_handle_checks, disable_win32k_system_calls
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertEam.run('eam-01', 'emp-01', 'powershell.exe', 1, 1, 1, 0, 0, 1, 1, 1, 0);
+    insertEam.run('eam-02', 'emp-01', 'cmd.exe', 1, 1, 1, 0, 0, 1, 1, 1, 0);
+    insertEam.run('eam-03', 'emp-01', 'winword.exe', 1, 1, 1, 0, 0, 1, 1, 1, 1);
+    insertEam.run('eam-04', 'emp-01', 'excel.exe', 1, 1, 1, 0, 0, 1, 1, 1, 1);
+    insertEam.run('eam-05', 'emp-01', 'chrome.exe', 0, 1, 1, 1, 0, 1, 1, 1, 1);
+
+    const insertEea = db.prepare(`
+      INSERT OR IGNORE INTO exploit_endpoint_audits (
+        id, device_id, hostname, policy_id, policy_name, system_mitigations_compliant,
+        apps_evaluated_count, apps_compliant_count, apps_drifted_count, compliance_score_percent,
+        drift_detected, findings_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertEea.run(
+      'eea-01',
+      devTarget.id,
+      devTarget.hostname,
+      'emp-01',
+      'Enterprise Standard Exploit Guard Baseline',
+      1,
+      5,
+      4,
+      1,
+      80.0,
+      1,
+      JSON.stringify({
+        drifted_apps: ['powershell.exe'],
+        drift_reasons: ['powershell.exe: disallow_child_process_creation not enforced in registry']
+      })
     );
   }
 
