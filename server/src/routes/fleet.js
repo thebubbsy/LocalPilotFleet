@@ -1,3 +1,4 @@
+import { SandboxDetonationEngine } from '../services/sandboxDetonationEngine.js';
 import { ThreatHuntingEngine } from '../services/threatHuntingEngine.js';
 import { DeviceHealthAttestationEngine } from '../services/deviceHealthAttestationEngine.js';
 import { incidentResponseEngine, IncidentResponseEngine } from '../services/incidentResponseEngine.js';
@@ -7632,7 +7633,149 @@ try {
     }
   });
 
+  // 478. GET /api/v1/fleet/sandbox/stats
+  router.get('/api/v1/fleet/sandbox/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = SandboxDetonationEngine.getDetonationStats(getDb());
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'SANDBOX_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 479. GET /api/v1/fleet/sandbox/jobs
+  router.get('/api/v1/fleet/sandbox/jobs', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const jobs = SandboxDetonationEngine.getDetonationJobs(getDb(), req.query || {});
+      sendJson(res, 200, { jobs, count: jobs.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'SANDBOX_JOBS_ERROR', message: err.message });
+    }
+  });
+
+  // 480. POST /api/v1/fleet/sandbox/jobs
+  router.post('/api/v1/fleet/sandbox/jobs', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.sample_name || !req.body?.sample_sha256) {
+        sendJson(res, 400, { error: 'MISSING_FIELDS', message: 'sample_name and sample_sha256 are required' });
+        return;
+      }
+      const job = SandboxDetonationEngine.submitDetonationJob(getDb(), req.body);
+      sendJson(res, 201, { success: true, job });
+    } catch (err) {
+      sendJson(res, 400, { error: 'SANDBOX_SUBMIT_ERROR', message: err.message });
+    }
+  });
+
+  // 481. GET /api/v1/fleet/sandbox/jobs/:id
+  router.get('/api/v1/fleet/sandbox/jobs/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const job = SandboxDetonationEngine.getDetonationJobById(getDb(), req.params.id);
+      if (!job) {
+        sendJson(res, 404, { error: 'JOB_NOT_FOUND', message: 'Detonation job not found' });
+        return;
+      }
+      sendJson(res, 200, job);
+    } catch (err) {
+      sendJson(res, 500, { error: 'JOB_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 482. POST /api/v1/fleet/sandbox/jobs/:id/results
+  router.post('/api/v1/fleet/sandbox/jobs/:id/results', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const job = SandboxDetonationEngine.ingestDetonationResult(getDb(), req.params.id, req.body || {});
+      if (!job) {
+        sendJson(res, 404, { error: 'JOB_NOT_FOUND', message: 'Detonation job not found' });
+        return;
+      }
+      sendJson(res, 200, { success: true, job });
+    } catch (err) {
+      sendJson(res, 500, { error: 'RESULT_INGEST_ERROR', message: err.message });
+    }
+  });
+
+  // 483. POST /api/v1/fleet/sandbox/jobs/:id/cancel
+  router.post('/api/v1/fleet/sandbox/jobs/:id/cancel', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const ok = SandboxDetonationEngine.cancelDetonationJob(getDb(), req.params.id);
+      if (!ok) {
+        sendJson(res, 404, { error: 'JOB_NOT_FOUND', message: 'Detonation job not found' });
+        return;
+      }
+      sendJson(res, 200, { success: true, message: 'Detonation job cancelled' });
+    } catch (err) {
+      sendJson(res, 500, { error: 'JOB_CANCEL_ERROR', message: err.message });
+    }
+  });
+
+  // 484. DELETE /api/v1/fleet/sandbox/jobs/:id
+  router.delete('/api/v1/fleet/sandbox/jobs/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const ok = SandboxDetonationEngine.deleteDetonationJob(getDb(), req.params.id);
+      if (!ok) {
+        sendJson(res, 404, { error: 'JOB_NOT_FOUND', message: 'Detonation job not found' });
+        return;
+      }
+      sendJson(res, 200, { success: true, message: 'Detonation job deleted' });
+    } catch (err) {
+      sendJson(res, 500, { error: 'JOB_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 485. GET /api/v1/fleet/sandbox/jobs/:id/graph
+  router.get('/api/v1/fleet/sandbox/jobs/:id/graph', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const graph = SandboxDetonationEngine.getProcessLineageGraph(getDb(), { detonation_id: req.params.id });
+      sendJson(res, 200, graph);
+    } catch (err) {
+      sendJson(res, 500, { error: 'GRAPH_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 486. GET /api/v1/fleet/sandbox/events
+  router.get('/api/v1/fleet/sandbox/events', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const events = SandboxDetonationEngine.getBehavioralEvents(getDb(), req.query || {});
+      sendJson(res, 200, { events, count: events.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'EVENTS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 487. POST /api/v1/fleet/sandbox/events
+  router.post('/api/v1/fleet/sandbox/events', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const event = SandboxDetonationEngine.logBehavioralEvent(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, event });
+    } catch (err) {
+      sendJson(res, 400, { error: 'EVENT_LOG_ERROR', message: err.message });
+    }
+  });
+
+  // 488. GET /api/v1/fleet/sandbox/jobs/:id/script
+  router.get('/api/v1/fleet/sandbox/jobs/:id/script', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const scriptPayload = SandboxDetonationEngine.generateDetonationScript(getDb(), req.params.id);
+      if (!scriptPayload) {
+        sendJson(res, 404, { error: 'JOB_NOT_FOUND', message: 'Detonation job not found' });
+        return;
+      }
+      sendJson(res, 200, scriptPayload);
+    } catch (err) {
+      sendJson(res, 500, { error: 'SCRIPT_GEN_ERROR', message: err.message });
+    }
+  });
+
 }
-
-export default registerFleetRoutes;
-

@@ -218,6 +218,9 @@ const App = {
       case 'threat-hunting':
         if (window.ThreatHuntingTable) window.ThreatHuntingTable.render();
         break;
+      case 'sandbox-detonation':
+        if (window.SandboxDetonationTable) window.SandboxDetonationTable.render();
+        break;
       case 'settings':
         this.renderSettings();
         break;
