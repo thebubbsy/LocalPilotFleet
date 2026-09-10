@@ -1,3 +1,4 @@
+import { DlpEngine } from '../services/dlpEngine.js';
 import { IdentityThreatEngine } from '../services/identityThreatEngine.js';
 import { VulnerabilityManagementEngine } from '../services/vulnerabilityManagementEngine.js';
 import { ThreatIntelEngine } from '../services/threatIntelEngine.js';
@@ -9265,6 +9266,162 @@ try {
       sendJson(res, 200, { success: true, account });
     } catch (err) {
       sendJson(res, 400, { error: "ITDR_ASSESS_ERROR", message: err.message });
+    }
+  });
+
+  // 611. GET /api/v1/fleet/dlp/stats — Fleet-wide DLP discovery and exfiltration statistics
+  router.get('/api/v1/fleet/dlp/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = DlpEngine.getDlpStats(getDb());
+      sendJson(res, 200, { success: true, stats });
+    } catch (err) {
+      sendJson(res, 500, { error: "DLP_STATS_ERROR", message: err.message });
+    }
+  });
+
+  // 612. GET /api/v1/fleet/dlp/rules — Retrieve DLP classification rules
+  router.get('/api/v1/fleet/dlp/rules', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const rules = DlpEngine.getRules(getDb(), req.query || {});
+      sendJson(res, 200, { rules, count: rules.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "DLP_RULES_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 613. GET /api/v1/fleet/dlp/rules/:id — Retrieve single classification rule
+  router.get('/api/v1/fleet/dlp/rules/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const rule = DlpEngine.getRuleById(getDb(), req.params.id);
+      if (!rule) {
+        sendJson(res, 404, { error: "RULE_NOT_FOUND", message: "Classification rule not found" });
+        return;
+      }
+      sendJson(res, 200, { rule });
+    } catch (err) {
+      sendJson(res, 500, { error: "DLP_RULE_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 614. POST /api/v1/fleet/dlp/rules — Author new DLP classification rule
+  router.post('/api/v1/fleet/dlp/rules', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.rule_name || !req.body?.pattern_regex) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "rule_name and pattern_regex are required" });
+        return;
+      }
+      const rule = DlpEngine.createRule(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, rule });
+    } catch (err) {
+      sendJson(res, 400, { error: "DLP_RULE_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 615. PUT /api/v1/fleet/dlp/rules/:id — Update classification rule
+  router.put('/api/v1/fleet/dlp/rules/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const updated = DlpEngine.updateRule(getDb(), req.params.id, req.body || {});
+      if (!updated) {
+        sendJson(res, 404, { error: "RULE_NOT_FOUND", message: "Rule not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, rule: updated });
+    } catch (err) {
+      sendJson(res, 400, { error: "DLP_RULE_UPDATE_ERROR", message: err.message });
+    }
+  });
+
+  // 616. DELETE /api/v1/fleet/dlp/rules/:id — Delete classification rule
+  router.delete('/api/v1/fleet/dlp/rules/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const success = DlpEngine.deleteRule(getDb(), req.params.id);
+      sendJson(res, 200, { success });
+    } catch (err) {
+      sendJson(res, 500, { error: "DLP_RULE_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 617. GET /api/v1/fleet/dlp/findings — Retrieve file scan exposures
+  router.get('/api/v1/fleet/dlp/findings', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const findings = DlpEngine.getScanFindings(getDb(), req.query || {});
+      sendJson(res, 200, { findings, count: findings.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "DLP_FINDINGS_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 618. POST /api/v1/fleet/dlp/findings — Record a sensitive file finding
+  router.post('/api/v1/fleet/dlp/findings', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.device_id || !req.body?.file_path) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "device_id and file_path are required" });
+        return;
+      }
+      const finding = DlpEngine.recordScanFinding(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, finding });
+    } catch (err) {
+      sendJson(res, 400, { error: "DLP_FINDING_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 619. PUT /api/v1/fleet/dlp/findings/:id — Update finding remediation status
+  router.put('/api/v1/fleet/dlp/findings/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.status) {
+        sendJson(res, 400, { error: "MISSING_STATUS", message: "status is required" });
+        return;
+      }
+      const updated = DlpEngine.updateFindingStatus(getDb(), req.params.id, req.body.status, req.body.notes);
+      sendJson(res, 200, { success: true, finding: updated });
+    } catch (err) {
+      sendJson(res, 400, { error: "DLP_FINDING_UPDATE_ERROR", message: err.message });
+    }
+  });
+
+  // 620. GET /api/v1/fleet/dlp/incidents — Retrieve exfiltration incidents
+  router.get('/api/v1/fleet/dlp/incidents', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const incidents = DlpEngine.getExfiltrationIncidents(getDb(), req.query || {});
+      sendJson(res, 200, { incidents, count: incidents.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "DLP_INCIDENTS_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 621. POST /api/v1/fleet/dlp/incidents — Ingest exfiltration incident telemetry
+  router.post('/api/v1/fleet/dlp/incidents', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.device_id || !req.body?.channel || !req.body?.file_or_data_name) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "device_id, channel, and file_or_data_name are required" });
+        return;
+      }
+      const incident = DlpEngine.logExfiltrationIncident(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, incident });
+    } catch (err) {
+      sendJson(res, 400, { error: "DLP_INCIDENT_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 622. POST /api/v1/fleet/dlp/scan-text — Scan plain text payload against active DLP rules
+  router.post('/api/v1/fleet/dlp/scan-text', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const result = DlpEngine.scanContent(getDb(), req.body?.text || '');
+      sendJson(res, 200, { success: true, ...result });
+    } catch (err) {
+      sendJson(res, 400, { error: "DLP_SCAN_TEXT_ERROR", message: err.message });
     }
   });
 }

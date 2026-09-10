@@ -1,3 +1,4 @@
+import { DlpEngine } from '../services/dlpEngine.js';
 import { IdentityThreatEngine } from '../services/identityThreatEngine.js';
 import { VulnerabilityManagementEngine } from '../services/vulnerabilityManagementEngine.js';
 import { ThreatIntelEngine } from '../services/threatIntelEngine.js';
@@ -2552,6 +2553,52 @@ export function registerNodeRoutes(router) {
       sendJson(res, 201, { success: true, detection });
     } catch (err) {
       sendJson(res, 400, { error: "NODE_CREDENTIAL_THEFT_REPORT_ERROR", message: err.message });
+    }
+  });
+
+  // 623. GET /api/v1/nodes/:id/dlp/rules — Node agent pulls active rules for local interceptors
+  router.get('/api/v1/nodes/:id/dlp/rules', (req, res) => {
+    try {
+      const rules = DlpEngine.getRules(getDb(), { is_enabled: 1 });
+      sendJson(res, 200, { rules, count: rules.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "NODE_DLP_RULES_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 624. POST /api/v1/nodes/:id/dlp/report-finding — Node agent reports discovered sensitive file
+  router.post('/api/v1/nodes/:id/dlp/report-finding', (req, res) => {
+    const { id } = req.params;
+    try {
+      if (!req.body?.file_path) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "file_path is required" });
+        return;
+      }
+      const finding = DlpEngine.recordScanFinding(getDb(), {
+        device_id: id,
+        ...(req.body || {})
+      });
+      sendJson(res, 201, { success: true, finding });
+    } catch (err) {
+      sendJson(res, 400, { error: "NODE_DLP_FINDING_REPORT_ERROR", message: err.message });
+    }
+  });
+
+  // 625. POST /api/v1/nodes/:id/dlp/report-exfiltration — Node agent reports blocked exfiltration attempt
+  router.post('/api/v1/nodes/:id/dlp/report-exfiltration', (req, res) => {
+    const { id } = req.params;
+    try {
+      if (!req.body?.channel || !req.body?.file_or_data_name) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "channel and file_or_data_name are required" });
+        return;
+      }
+      const incident = DlpEngine.logExfiltrationIncident(getDb(), {
+        device_id: id,
+        ...(req.body || {})
+      });
+      sendJson(res, 201, { success: true, incident });
+    } catch (err) {
+      sendJson(res, 400, { error: "NODE_DLP_EXFILTRATION_REPORT_ERROR", message: err.message });
     }
   });
 }

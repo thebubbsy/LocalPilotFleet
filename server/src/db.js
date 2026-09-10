@@ -3300,6 +3300,67 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_iars_name ON identity_account_risk_scores(account_name);
     CREATE INDEX IF NOT EXISTS idx_iars_level ON identity_account_risk_scores(risk_level);
     CREATE INDEX IF NOT EXISTS idx_iars_status ON identity_account_risk_scores(containment_status);
+    -- =========================================================================
+    -- ITERATION 57: Data Loss Prevention & Sensitive Information Defense Engine (DLP)
+    -- =========================================================================
+    -- Table 160: dlp_classification_rules
+    CREATE TABLE IF NOT EXISTS dlp_classification_rules (
+      id TEXT PRIMARY KEY,
+      rule_name TEXT NOT NULL UNIQUE,
+      category TEXT NOT NULL CHECK(category IN ('FINANCIAL_PCI', 'PERSONAL_PII', 'SECRETS_CREDENTIALS', 'HEALTH_HIPAA', 'INTELLECTUAL_PROPERTY', 'CUSTOM_REGEX')),
+      severity TEXT NOT NULL DEFAULT 'HIGH' CHECK(severity IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+      pattern_regex TEXT NOT NULL,
+      confidence_threshold REAL NOT NULL DEFAULT 80.0,
+      enforcement_action TEXT NOT NULL DEFAULT 'BLOCK' CHECK(enforcement_action IN ('AUDIT_ONLY', 'BLOCK', 'ENCRYPT', 'QUARANTINE_FILE')),
+      is_enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_dcr_category ON dlp_classification_rules(category);
+    CREATE INDEX IF NOT EXISTS idx_dcr_severity ON dlp_classification_rules(severity);
+
+    -- Table 161: dlp_file_scan_findings
+    CREATE TABLE IF NOT EXISTS dlp_file_scan_findings (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      hostname TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      file_size_bytes INTEGER NOT NULL DEFAULT 0,
+      classification_rule_id TEXT NOT NULL,
+      rule_name TEXT NOT NULL,
+      match_count INTEGER NOT NULL DEFAULT 1,
+      sensitivity_severity TEXT NOT NULL DEFAULT 'HIGH' CHECK(sensitivity_severity IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+      remediation_status TEXT NOT NULL DEFAULT 'UNENCRYPTED_EXPOSURE' CHECK(remediation_status IN ('UNENCRYPTED_EXPOSURE', 'SECURED_ENCRYPTED', 'FILE_QUARANTINED', 'EXCEPTION_APPROVED')),
+      detected_at TEXT DEFAULT (DATETIME('now')),
+      remediated_at TEXT,
+      FOREIGN KEY(classification_rule_id) REFERENCES dlp_classification_rules(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_dfsf_device ON dlp_file_scan_findings(device_id);
+    CREATE INDEX IF NOT EXISTS idx_dfsf_rule ON dlp_file_scan_findings(classification_rule_id);
+    CREATE INDEX IF NOT EXISTS idx_dfsf_status ON dlp_file_scan_findings(remediation_status);
+
+    -- Table 162: dlp_exfiltration_incidents
+    CREATE TABLE IF NOT EXISTS dlp_exfiltration_incidents (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      hostname TEXT NOT NULL,
+      user_account TEXT NOT NULL,
+      channel TEXT NOT NULL CHECK(channel IN ('REMOVABLE_USB', 'CLIPBOARD_PASTE', 'BROWSER_UPLOAD', 'NETWORK_SHARE', 'PRINTER_SPOOL')),
+      file_or_data_name TEXT NOT NULL,
+      rule_id TEXT,
+      rule_name TEXT NOT NULL,
+      severity TEXT NOT NULL DEFAULT 'CRITICAL' CHECK(severity IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+      action_taken TEXT NOT NULL CHECK(action_taken IN ('BLOCKED', 'AUDITED', 'USER_JUSTIFIED', 'QUARANTINED')),
+      user_justification TEXT,
+      intercepted_at TEXT DEFAULT (DATETIME('now')),
+      raw_event_json TEXT NOT NULL DEFAULT '{}'
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_dei_device ON dlp_exfiltration_incidents(device_id);
+    CREATE INDEX IF NOT EXISTS idx_dei_channel ON dlp_exfiltration_incidents(channel);
+    CREATE INDEX IF NOT EXISTS idx_dei_action ON dlp_exfiltration_incidents(action_taken);
 
   `);
 
@@ -7821,6 +7882,127 @@ exit 0`,
       0
     );
   }
+
+  // Iteration 57: Data Loss Prevention & Exfiltration Guardrails Seeds
+  const dlpCount = db.prepare('SELECT COUNT(*) as count FROM dlp_classification_rules').get().count;
+  if (dlpCount === 0) {
+    const devTarget = db.prepare('SELECT id, hostname FROM devices LIMIT 1').get() || { id: 'dev-01', hostname: 'DESKTOP-CORP-01' };
+
+    const insertDcr = db.prepare(`
+      INSERT OR IGNORE INTO dlp_classification_rules (
+        id, rule_name, category, severity, pattern_regex, confidence_threshold, enforcement_action, is_enabled
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+    `);
+
+    insertDcr.run(
+      'dcr-01',
+      'PCI-DSS Credit Card Numbers (Visa/Mastercard/Amex)',
+      'FINANCIAL_PCI',
+      'CRITICAL',
+      '\\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\\b',
+      95.0,
+      'BLOCK'
+    );
+
+    insertDcr.run(
+      'dcr-02',
+      'US Social Security Numbers (SSN)',
+      'PERSONAL_PII',
+      'HIGH',
+      '\\b[0-9]{3}-[0-9]{2}-[0-9]{4}\\b',
+      90.0,
+      'BLOCK'
+    );
+
+    insertDcr.run(
+      'dcr-03',
+      'RSA & EC Private Key PEM Headers',
+      'SECRETS_CREDENTIALS',
+      'CRITICAL',
+      '-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----',
+      99.0,
+      'BLOCK'
+    );
+
+    insertDcr.run(
+      'dcr-04',
+      'AWS Cloud Access Key & Secret Pattern',
+      'SECRETS_CREDENTIALS',
+      'CRITICAL',
+      '(?:AKIA|ABIA|ACCA|ASIA)[0-9A-Z]{16}',
+      92.0,
+      'BLOCK'
+    );
+
+    const insertDfsf = db.prepare(`
+      INSERT OR IGNORE INTO dlp_file_scan_findings (
+        id, device_id, hostname, file_path, file_size_bytes,
+        classification_rule_id, rule_name, match_count, sensitivity_severity, remediation_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertDfsf.run(
+      'dfsf-01',
+      devTarget.id,
+      devTarget.hostname,
+      'C:\\Users\\Admin\\Desktop\\customer_billing_export.csv',
+      1048576,
+      'dcr-01',
+      'PCI-DSS Credit Card Numbers (Visa/Mastercard/Amex)',
+      45,
+      'CRITICAL',
+      'UNENCRYPTED_EXPOSURE'
+    );
+
+    insertDfsf.run(
+      'dfsf-02',
+      devTarget.id,
+      devTarget.hostname,
+      'C:\\Users\\Admin\\.ssh\\id_rsa_backup',
+      3243,
+      'dcr-03',
+      'RSA & EC Private Key PEM Headers',
+      1,
+      'CRITICAL',
+      'UNENCRYPTED_EXPOSURE'
+    );
+
+    const insertDei = db.prepare(`
+      INSERT OR IGNORE INTO dlp_exfiltration_incidents (
+        id, device_id, hostname, user_account, channel, file_or_data_name,
+        rule_id, rule_name, severity, action_taken, raw_event_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertDei.run(
+      'dei-01',
+      devTarget.id,
+      devTarget.hostname,
+      'jdoe',
+      'REMOVABLE_USB',
+      'E:\\Confidential\\customer_billing_export.csv',
+      'dcr-01',
+      'PCI-DSS Credit Card Numbers (Visa/Mastercard/Amex)',
+      'CRITICAL',
+      'BLOCKED',
+      JSON.stringify({ usb_vendor: 'SanDisk Ultra', serial_number: 'SDUSB-884219', bytes_intercepted: 1048576 })
+    );
+
+    insertDei.run(
+      'dei-02',
+      devTarget.id,
+      devTarget.hostname,
+      'alice',
+      'CLIPBOARD_PASTE',
+      'Clipboard Paste -> Discord.exe',
+      'dcr-04',
+      'AWS Cloud Access Key & Secret Pattern',
+      'CRITICAL',
+      'BLOCKED',
+      JSON.stringify({ destination_window: 'Discord', matched_content_preview: 'AKIAIOSFODNN7EXAMPLE' })
+    );
+  }
+
 
 
 }
