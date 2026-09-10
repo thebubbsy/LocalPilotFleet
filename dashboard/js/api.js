@@ -2465,6 +2465,95 @@ async function forwardSiemEvent(data) {
 
 
 
+
+// 41. Multi-Tenancy (MSP Organizations, Sites & Collections) & Database HA
+async function getMultiTenancyStats() {
+  return apiFetch('/api/v1/fleet/tenancy/stats');
+}
+
+async function getOrganizations(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.is_active !== undefined) qs.set('is_active', params.is_active);
+  if (params.license_tier) qs.set('license_tier', params.license_tier);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/tenancy/organizations${qStr ? '?' + qStr : ''}`);
+}
+
+async function getOrganization(id) {
+  return apiFetch(`/api/v1/fleet/tenancy/organizations/${encodeURIComponent(id)}`);
+}
+
+async function createOrganization(data) {
+  return apiFetch('/api/v1/fleet/tenancy/organizations', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateOrganization(id, data) {
+  return apiFetch(`/api/v1/fleet/tenancy/organizations/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteOrganization(id) {
+  return apiFetch(`/api/v1/fleet/tenancy/organizations/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getSites(orgId) {
+  const qs = new URLSearchParams();
+  if (orgId) qs.set('org_id', orgId);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/tenancy/sites${qStr ? '?' + qStr : ''}`);
+}
+
+async function createSite(data) {
+  return apiFetch('/api/v1/fleet/tenancy/sites', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateSite(id, data) {
+  return apiFetch(`/api/v1/fleet/tenancy/sites/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteSite(id) {
+  return apiFetch(`/api/v1/fleet/tenancy/sites/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getScopedCollections(orgId) {
+  const qs = new URLSearchParams();
+  if (orgId) qs.set('org_id', orgId);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/tenancy/collections${qStr ? '?' + qStr : ''}`);
+}
+
+async function createScopedCollection(data) {
+  return apiFetch('/api/v1/fleet/tenancy/collections', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function deleteScopedCollection(id) {
+  return apiFetch(`/api/v1/fleet/tenancy/collections/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getDatabaseHealth() {
+  return apiFetch('/api/v1/fleet/tenancy/database-health');
+}
+
 // 40. Content Distribution, BITS, P2P LAN Mesh & Hardware TPM mTLS
 async function getContentDistributionStats() {
   return apiFetch('/api/v1/fleet/content-distribution/stats');
@@ -2603,6 +2692,22 @@ async function dispatchNativeRemoteWipe(data) {
 }
 
 window.FleetAPI = {
+  // Multi-Tenancy (MSP Organizations, Sites & Collections) & Database HA
+  getMultiTenancyStats,
+  getOrganizations,
+  getOrganization,
+  createOrganization,
+  updateOrganization,
+  deleteOrganization,
+  getSites,
+  createSite,
+  updateSite,
+  deleteSite,
+  getScopedCollections,
+  createScopedCollection,
+  deleteScopedCollection,
+  getDatabaseHealth,
+
   // Content Distribution, BITS, P2P LAN Mesh & Hardware TPM mTLS
   getContentDistributionStats,
   getBitsJobs,

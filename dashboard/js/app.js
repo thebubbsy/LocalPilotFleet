@@ -200,6 +200,9 @@ const App = {
       case 'content-distribution':
         if (window.ContentDistributionTable) window.ContentDistributionTable.render();
         break;
+      case 'tenancy':
+        if (window.MultiTenancyTable) window.MultiTenancyTable.render();
+        break;
       case 'settings':
         this.renderSettings();
         break;

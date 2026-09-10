@@ -2377,6 +2377,55 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_mtls_thumbprint ON device_mtls_certificates(cert_thumbprint);
     CREATE INDEX IF NOT EXISTS idx_mtls_status ON device_mtls_certificates(revocation_status);
 
+    -- 113. MULTITENANT_ORGANIZATIONS — MSP Organizations & Tenant Scopes
+    CREATE TABLE IF NOT EXISTS multitenant_organizations (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL UNIQUE,
+      domain TEXT,
+      license_tier TEXT NOT NULL DEFAULT 'ENTERPRISE' CHECK(license_tier IN ('COMMUNITY', 'PROFESSIONAL', 'ENTERPRISE')),
+      max_devices INTEGER NOT NULL DEFAULT 500,
+      is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_org_slug ON multitenant_organizations(slug);
+    CREATE INDEX IF NOT EXISTS idx_org_active ON multitenant_organizations(is_active);
+
+    -- 114. ORGANIZATION_SITES — Physical / Logical Branch Offices & Subnet Scopes
+    CREATE TABLE IF NOT EXISTS organization_sites (
+      id TEXT PRIMARY KEY,
+      org_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      city TEXT,
+      country TEXT DEFAULT 'US',
+      subnet_cidrs_json TEXT NOT NULL DEFAULT '[]',
+      bandwidth_cap_mbps INTEGER NOT NULL DEFAULT 1000,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(org_id) REFERENCES multitenant_organizations(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_site_org ON organization_sites(org_id);
+
+    -- 115. SCOPED_DEVICE_COLLECTIONS — Tenant-Scoped Collections & Boundary Ensembles
+    CREATE TABLE IF NOT EXISTS scoped_device_collections (
+      id TEXT PRIMARY KEY,
+      org_id TEXT NOT NULL,
+      site_id TEXT,
+      name TEXT NOT NULL,
+      description TEXT,
+      is_dynamic INTEGER NOT NULL DEFAULT 0 CHECK(is_dynamic IN (0, 1)),
+      membership_rule TEXT,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(org_id) REFERENCES multitenant_organizations(id) ON DELETE CASCADE,
+      FOREIGN KEY(site_id) REFERENCES organization_sites(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sdc_org ON scoped_device_collections(org_id);
+    CREATE INDEX IF NOT EXISTS idx_sdc_site ON scoped_device_collections(site_id);
+
+
 
 
 
@@ -5502,5 +5551,37 @@ exit 0`,
     );
   }
 
+
+
+  // 41. Seed Multi-Tenancy MSP Organizations, Sites & Scoped Collections
+  const orgCount = db.prepare('SELECT COUNT(*) as count FROM multitenant_organizations').get().count;
+  if (orgCount === 0) {
+    const insertOrg = db.prepare(`
+      INSERT OR IGNORE INTO multitenant_organizations (
+        id, name, slug, domain, license_tier, max_devices, is_active
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertOrg.run('org-default', 'LocalPilot Primary Enterprise', 'default', 'localpilot.internal', 'ENTERPRISE', 1000, 1);
+    insertOrg.run('org-contoso-msp', 'Contoso Global Managed Client', 'contoso-corp', 'contoso.com', 'ENTERPRISE', 500, 1);
+
+    const insertSite = db.prepare(`
+      INSERT OR IGNORE INTO organization_sites (
+        id, org_id, name, city, country, subnet_cidrs_json, bandwidth_cap_mbps
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertSite.run('site-hq', 'org-default', 'Sydney Headquarters (HQ)', 'Sydney', 'AU', JSON.stringify(['192.168.1.0/24', '10.0.0.0/16']), 1000);
+    insertSite.run('site-melbourne', 'org-default', 'Melbourne Engineering Campus', 'Melbourne', 'AU', JSON.stringify(['192.168.20.0/24']), 500);
+
+    const insertCol = db.prepare(`
+      INSERT OR IGNORE INTO scoped_device_collections (
+        id, org_id, site_id, name, description, is_dynamic, membership_rule
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertCol.run('col-hq-workstations', 'org-default', 'site-hq', 'HQ Executive & Dev Workstations', 'Core workstations at headquarters campus', 0, null);
+    insertCol.run('col-field-laptops', 'org-default', 'site-melbourne', 'Roaming Field Laptops', 'Remote laptops assigned to field technicians', 1, 'device.chassis_type == "Laptop"');
+  }
 
 }

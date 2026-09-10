@@ -1,3 +1,4 @@
+import { multiTenancyEngine } from '../services/multiTenancyEngine.js';
 import { contentDistributionEngine } from '../services/contentDistributionEngine.js';
 import { mdmCspEngine } from '../services/mdmCspEngine.js';
 import { rbacEngine } from '../services/rbacEngine.js';
@@ -6697,6 +6698,165 @@ try {
       sendJson(res, 200, verification);
     } catch (err) {
       sendJson(res, 400, { error: 'MTLS_VERIFY_ERROR', message: err.message });
+    }
+  });
+
+
+  // ── Dimension 6: Multi-Tenancy (MSP Organizations, Sites & Collections) & Database HA (408–421) ──
+  // 408. GET /api/v1/fleet/tenancy/stats
+  router.get('/api/v1/fleet/tenancy/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = multiTenancyEngine.getMultiTenancyStats();
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'TENANCY_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 409. GET /api/v1/fleet/tenancy/organizations
+  router.get('/api/v1/fleet/tenancy/organizations', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const orgs = multiTenancyEngine.getOrganizations(req.query || {});
+      sendJson(res, 200, { organizations: orgs, count: orgs.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'ORGS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 410. GET /api/v1/fleet/tenancy/organizations/:id
+  router.get('/api/v1/fleet/tenancy/organizations/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const org = multiTenancyEngine.getOrganizationById(req.params.id);
+      if (!org) {
+        return sendJson(res, 404, { error: 'ORG_NOT_FOUND', message: `Organization '${req.params.id}' not found` });
+      }
+      sendJson(res, 200, org);
+    } catch (err) {
+      sendJson(res, 500, { error: 'ORG_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 411. POST /api/v1/fleet/tenancy/organizations
+  router.post('/api/v1/fleet/tenancy/organizations', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const org = multiTenancyEngine.createOrganization(req.body || {});
+      sendJson(res, 201, org);
+    } catch (err) {
+      sendJson(res, 400, { error: 'ORG_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 412. PATCH /api/v1/fleet/tenancy/organizations/:id
+  router.patch('/api/v1/fleet/tenancy/organizations/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const updated = multiTenancyEngine.updateOrganization(req.params.id, req.body || {});
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 400, { error: 'ORG_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 413. DELETE /api/v1/fleet/tenancy/organizations/:id
+  router.delete('/api/v1/fleet/tenancy/organizations/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const result = multiTenancyEngine.deleteOrganization(req.params.id);
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'ORG_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 414. GET /api/v1/fleet/tenancy/sites
+  router.get('/api/v1/fleet/tenancy/sites', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const sites = multiTenancyEngine.getSites(req.query?.org_id);
+      sendJson(res, 200, { sites, count: sites.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'SITES_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 415. POST /api/v1/fleet/tenancy/sites
+  router.post('/api/v1/fleet/tenancy/sites', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const site = multiTenancyEngine.createSite(req.body || {});
+      sendJson(res, 201, site);
+    } catch (err) {
+      sendJson(res, 400, { error: 'SITE_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 416. PATCH /api/v1/fleet/tenancy/sites/:id
+  router.patch('/api/v1/fleet/tenancy/sites/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const updated = multiTenancyEngine.updateSite(req.params.id, req.body || {});
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 400, { error: 'SITE_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 417. DELETE /api/v1/fleet/tenancy/sites/:id
+  router.delete('/api/v1/fleet/tenancy/sites/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const result = multiTenancyEngine.deleteSite(req.params.id);
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'SITE_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 418. GET /api/v1/fleet/tenancy/collections
+  router.get('/api/v1/fleet/tenancy/collections', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const collections = multiTenancyEngine.getScopedCollections(req.query?.org_id);
+      sendJson(res, 200, { collections, count: collections.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'COLLECTIONS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 419. POST /api/v1/fleet/tenancy/collections
+  router.post('/api/v1/fleet/tenancy/collections', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const col = multiTenancyEngine.createScopedCollection(req.body || {});
+      sendJson(res, 201, col);
+    } catch (err) {
+      sendJson(res, 400, { error: 'COLLECTION_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 420. DELETE /api/v1/fleet/tenancy/collections/:id
+  router.delete('/api/v1/fleet/tenancy/collections/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const result = multiTenancyEngine.deleteScopedCollection(req.params.id);
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'COLLECTION_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 421. GET /api/v1/fleet/tenancy/database-health
+  router.get('/api/v1/fleet/tenancy/database-health', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const health = multiTenancyEngine.getDatabaseHealth();
+      sendJson(res, 200, health);
+    } catch (err) {
+      sendJson(res, 500, { error: 'DB_HEALTH_ERROR', message: err.message });
     }
   });
 
