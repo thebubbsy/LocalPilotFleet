@@ -1,3 +1,4 @@
+import { PeripheralControlEngine } from '../services/peripheralControlEngine.js';
 import { WebProtectionEngine } from '../services/webProtectionEngine.js';
 import { SandboxDetonationEngine } from '../services/sandboxDetonationEngine.js';
 import { ThreatHuntingEngine } from '../services/threatHuntingEngine.js';
@@ -7936,4 +7937,167 @@ try {
     }
   });
 
+
+  // --- Iteration 49: USB & Peripheral Device Control Endpoints (501-512) ---
+
+  // 501. GET /api/v1/fleet/peripheral-control/stats
+  router.get('/api/v1/fleet/peripheral-control/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = PeripheralControlEngine.getPeripheralControlStats(getDb());
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: "STATS_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 502. GET /api/v1/fleet/peripheral-control/policies
+  router.get('/api/v1/fleet/peripheral-control/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policies = PeripheralControlEngine.getPolicies(getDb());
+      sendJson(res, 200, policies);
+    } catch (err) {
+      sendJson(res, 500, { error: "POLICIES_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 503. POST /api/v1/fleet/peripheral-control/policies
+  router.post('/api/v1/fleet/peripheral-control/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.name) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "Policy name is required" });
+        return;
+      }
+      const policy = PeripheralControlEngine.createPolicy(getDb(), req.body);
+      sendJson(res, 201, { success: true, policy });
+    } catch (err) {
+      sendJson(res, 400, { error: "POLICY_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 504. GET /api/v1/fleet/peripheral-control/policies/:id
+  router.get('/api/v1/fleet/peripheral-control/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policy = PeripheralControlEngine.getPolicyById(getDb(), req.params.id);
+      if (!policy) {
+        sendJson(res, 404, { error: "POLICY_NOT_FOUND", message: "Policy not found" });
+        return;
+      }
+      sendJson(res, 200, policy);
+    } catch (err) {
+      sendJson(res, 500, { error: "POLICY_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 505. PATCH /api/v1/fleet/peripheral-control/policies/:id
+  router.patch('/api/v1/fleet/peripheral-control/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const updated = PeripheralControlEngine.updatePolicy(getDb(), req.params.id, req.body || {});
+      if (!updated) {
+        sendJson(res, 404, { error: "POLICY_NOT_FOUND", message: "Policy not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, policy: updated });
+    } catch (err) {
+      sendJson(res, 400, { error: "POLICY_UPDATE_ERROR", message: err.message });
+    }
+  });
+
+  // 506. DELETE /api/v1/fleet/peripheral-control/policies/:id
+  router.delete('/api/v1/fleet/peripheral-control/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const ok = PeripheralControlEngine.deletePolicy(getDb(), req.params.id);
+      if (!ok) {
+        sendJson(res, 404, { error: "POLICY_NOT_FOUND", message: "Policy not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, message: "Policy deleted" });
+    } catch (err) {
+      sendJson(res, 500, { error: "POLICY_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 507. GET /api/v1/fleet/peripheral-control/exceptions
+  router.get('/api/v1/fleet/peripheral-control/exceptions', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const exceptions = PeripheralControlEngine.getExceptions(getDb(), req.query?.policy_id);
+      sendJson(res, 200, exceptions);
+    } catch (err) {
+      sendJson(res, 500, { error: "EXCEPTIONS_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 508. POST /api/v1/fleet/peripheral-control/exceptions
+  router.post('/api/v1/fleet/peripheral-control/exceptions', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.friendly_name) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "friendly_name is required" });
+        return;
+      }
+      const exception = PeripheralControlEngine.createException(getDb(), req.body);
+      sendJson(res, 201, { success: true, exception });
+    } catch (err) {
+      sendJson(res, 400, { error: "EXCEPTION_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 509. DELETE /api/v1/fleet/peripheral-control/exceptions/:id
+  router.delete('/api/v1/fleet/peripheral-control/exceptions/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const ok = PeripheralControlEngine.deleteException(getDb(), req.params.id);
+      if (!ok) {
+        sendJson(res, 404, { error: "EXCEPTION_NOT_FOUND", message: "Exception not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, message: "Exception deleted" });
+    } catch (err) {
+      sendJson(res, 500, { error: "EXCEPTION_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 510. GET /api/v1/fleet/peripheral-control/events
+  router.get('/api/v1/fleet/peripheral-control/events', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const events = PeripheralControlEngine.getPeripheralEvents(getDb(), req.query || {});
+      sendJson(res, 200, { events, count: events.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "EVENTS_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 511. POST /api/v1/fleet/peripheral-control/events
+  router.post('/api/v1/fleet/peripheral-control/events', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.device_id || !req.body?.event_type) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "device_id and event_type are required" });
+        return;
+      }
+      const event = PeripheralControlEngine.logPeripheralEvent(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, event });
+    } catch (err) {
+      sendJson(res, 400, { error: "EVENT_LOG_ERROR", message: err.message });
+    }
+  });
+
+  // 512. GET /api/v1/fleet/peripheral-control/script/:deviceId
+  router.get('/api/v1/fleet/peripheral-control/script/:deviceId', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const script = PeripheralControlEngine.generatePeripheralControlScript(getDb(), req.params.deviceId);
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end(script);
+    } catch (err) {
+      sendJson(res, 500, { error: "SCRIPT_GEN_ERROR", message: err.message });
+    }
+  });
 }

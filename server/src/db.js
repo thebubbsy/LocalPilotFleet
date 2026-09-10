@@ -2820,6 +2820,67 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_wpae_device ON web_protection_audit_events(device_id);
     CREATE INDEX IF NOT EXISTS idx_wpae_type ON web_protection_audit_events(event_type);
     CREATE INDEX IF NOT EXISTS idx_wpae_time ON web_protection_audit_events(timestamp DESC);
+    -- 136. USB_DEVICE_CONTROL_POLICIES — Removable Storage & Peripheral Device Control Baselines
+    CREATE TABLE IF NOT EXISTS usb_device_control_policies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      target_scope TEXT NOT NULL DEFAULT 'ALL_FLEET' CHECK(target_scope IN ('ALL_FLEET', 'DYNAMIC_GROUP', 'ORGANIZATION')),
+      target_id TEXT,
+      removable_storage_access TEXT NOT NULL DEFAULT 'READ_ONLY' CHECK(removable_storage_access IN ('ALLOW', 'READ_ONLY', 'BLOCK')),
+      bluetooth_mode TEXT NOT NULL DEFAULT 'RESTRICTED' CHECK(bluetooth_mode IN ('ALLOWED', 'RESTRICTED', 'DISABLED')),
+      printer_protection_mode TEXT NOT NULL DEFAULT 'AUDIT' CHECK(printer_protection_mode IN ('ALLOW', 'AUDIT', 'BLOCK')),
+      audit_level TEXT NOT NULL DEFAULT 'DETAILED' CHECK(audit_level IN ('MINIMAL', 'STANDARD', 'DETAILED')),
+      is_enabled INTEGER NOT NULL DEFAULT 1 CHECK(is_enabled IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_udcp_enabled ON usb_device_control_policies(is_enabled);
+    CREATE INDEX IF NOT EXISTS idx_udcp_storage ON usb_device_control_policies(removable_storage_access);
+
+    -- 137. USB_DEVICE_EXCEPTIONS — Hardware Whitelist & Vendor/Product/Serial Exceptions
+    CREATE TABLE IF NOT EXISTS usb_device_exceptions (
+      id TEXT PRIMARY KEY,
+      policy_id TEXT,
+      friendly_name TEXT NOT NULL,
+      vendor_id TEXT,
+      product_id TEXT,
+      serial_number TEXT,
+      device_interface_id TEXT,
+      action TEXT NOT NULL DEFAULT 'ALLOW' CHECK(action IN ('ALLOW', 'AUDIT_ONLY', 'BLOCK')),
+      is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(policy_id) REFERENCES usb_device_control_policies(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ude_vid_pid ON usb_device_exceptions(vendor_id, product_id);
+    CREATE INDEX IF NOT EXISTS idx_ude_serial ON usb_device_exceptions(serial_number);
+    CREATE INDEX IF NOT EXISTS idx_ude_policy ON usb_device_exceptions(policy_id);
+
+    -- 138. PERIPHERAL_AUDIT_EVENTS — Forensic USB/Peripheral Connect & Write Interception Stream
+    CREATE TABLE IF NOT EXISTS peripheral_audit_events (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      hostname TEXT NOT NULL,
+      username TEXT NOT NULL DEFAULT 'System',
+      event_type TEXT NOT NULL CHECK(event_type IN ('USB_ATTACH', 'USB_DETACH', 'WRITE_BLOCKED', 'READ_ONLY_ENFORCED', 'BLUETOOTH_RESTRICTED', 'PRINT_AUDITED')),
+      device_name TEXT NOT NULL,
+      hardware_id TEXT,
+      serial_number TEXT,
+      action_taken TEXT NOT NULL DEFAULT 'BLOCKED' CHECK(action_taken IN ('ALLOWED', 'BLOCKED', 'AUDITED')),
+      process_name TEXT NOT NULL DEFAULT 'explorer.exe',
+      file_path TEXT,
+      details TEXT,
+      severity TEXT NOT NULL DEFAULT 'MEDIUM' CHECK(severity IN ('INFO', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+      timestamp TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_pae_device ON peripheral_audit_events(device_id);
+    CREATE INDEX IF NOT EXISTS idx_pae_type ON peripheral_audit_events(event_type);
+    CREATE INDEX IF NOT EXISTS idx_pae_action ON peripheral_audit_events(action_taken);
+    CREATE INDEX IF NOT EXISTS idx_pae_time ON peripheral_audit_events(timestamp DESC);
   `);
 
   // Schema migrations for existing databases
@@ -6490,6 +6551,128 @@ exit 0`,
         'BLOCKED',
         'chrome.exe',
         'MEDIUM'
+      );
+    }
+  }
+  // 49. Seed USB & Peripheral Device Control Policies and Exceptions
+  const usbCount = db.prepare('SELECT COUNT(*) as count FROM usb_device_control_policies').get().count;
+  if (usbCount === 0) {
+    const insertUsbPolicy = db.prepare(`
+      INSERT OR IGNORE INTO usb_device_control_policies (
+        id, name, description, target_scope, target_id, removable_storage_access,
+        bluetooth_mode, printer_protection_mode, audit_level, is_enabled
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertUsbPolicy.run(
+      'usb-pol-corp-baseline',
+      'Corporate Strict Removable Storage Baseline',
+      'Enforces Read-Only on unauthorized USB flash drives and audits all external file transfer operations.',
+      'ALL_FLEET',
+      null,
+      'READ_ONLY',
+      'RESTRICTED',
+      'AUDIT',
+      'DETAILED',
+      1
+    );
+
+    insertUsbPolicy.run(
+      'usb-pol-airgap',
+      'High Security Airgap Zero-Trust USB Policy',
+      'Completely blocks all removable mass storage and disables unauthorized Bluetooth adapters.',
+      'DYNAMIC_GROUP',
+      'grp-high-security',
+      'BLOCK',
+      'DISABLED',
+      'BLOCK',
+      'DETAILED',
+      1
+    );
+
+    const insertUsbException = db.prepare(`
+      INSERT OR IGNORE INTO usb_device_exceptions (
+        id, policy_id, friendly_name, vendor_id, product_id, serial_number, device_interface_id, action, is_active
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertUsbException.run(
+      'usb-exc-sandisk-it',
+      'usb-pol-corp-baseline',
+      'IT Department BitLocker Encrypted SanDisk USB',
+      '0781',
+      '5583',
+      'SD-IT-88410294',
+      null,
+      'ALLOW',
+      1
+    );
+
+    insertUsbException.run(
+      'usb-exc-yubikey',
+      'usb-pol-corp-baseline',
+      'Corporate Hardware Security Key (YubiKey 5)',
+      '1050',
+      '0407',
+      null,
+      null,
+      'ALLOW',
+      1
+    );
+
+    insertUsbException.run(
+      'usb-exc-blocked-unbranded',
+      'usb-pol-corp-baseline',
+      'Untrusted Cloned Mass Storage Flash Drive',
+      '058f',
+      '6387',
+      null,
+      null,
+      'BLOCK',
+      1
+    );
+
+    const sampleDevice = db.prepare("SELECT id, hostname FROM devices WHERE hostname = 'DESKTOP-R0H12DJ' LIMIT 1").get()
+      || db.prepare("SELECT id, hostname FROM devices LIMIT 1").get();
+
+    if (sampleDevice) {
+      const insertPae = db.prepare(`
+        INSERT OR IGNORE INTO peripheral_audit_events (
+          id, device_id, hostname, username, event_type, device_name, hardware_id,
+          serial_number, action_taken, process_name, file_path, details, severity, timestamp
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', '-15 minutes'))
+      `);
+
+      insertPae.run(
+        'pae-01',
+        sampleDevice.id,
+        sampleDevice.hostname,
+        'Tony',
+        'WRITE_BLOCKED',
+        'SanDisk Cruzer Glide USB Device',
+        'USB\\VID_0781&PID_5567',
+        '4C530001280922119102',
+        'BLOCKED',
+        'explorer.exe',
+        'E:\\payroll_2026_confidential.xlsx',
+        JSON.stringify({ reason: 'Removable storage write denied by corporate policy', capacity_mb: 16000 }),
+        'HIGH'
+      );
+
+      insertPae.run(
+        'pae-02',
+        sampleDevice.id,
+        sampleDevice.hostname,
+        'Tony',
+        'USB_ATTACH',
+        'Kingston DataTraveler 3.0',
+        'USB\\VID_0951&PID_1666',
+        '001CC0EC34F3BC11A9380029',
+        'AUDITED',
+        'System',
+        null,
+        JSON.stringify({ bus: 'USB 3.0', capacity_mb: 32000, volume_guid: '{694b8e5c-0000-0000-0000-100000000000}' }),
+        'INFO'
       );
     }
   }

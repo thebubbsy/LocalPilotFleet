@@ -224,6 +224,9 @@ const App = {
       case 'web-protection':
         if (window.WebProtectionTable) window.WebProtectionTable.render();
         break;
+      case 'peripheral-control':
+        if (window.PeripheralControlTable) window.PeripheralControlTable.render();
+        break;
       case 'settings':
         this.renderSettings();
         break;

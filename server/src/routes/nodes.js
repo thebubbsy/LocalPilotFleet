@@ -1,3 +1,4 @@
+import { PeripheralControlEngine } from '../services/peripheralControlEngine.js';
 import { WebProtectionEngine } from '../services/webProtectionEngine.js';
 import { SandboxDetonationEngine } from '../services/sandboxDetonationEngine.js';
 import { ThreatHuntingEngine } from '../services/threatHuntingEngine.js';
@@ -2342,4 +2343,18 @@ export function registerNodeRoutes(router) {
     }
   });
 
+
+  // POST /api/v1/nodes/:id/peripheral-control/events — Node agent logs USB/peripheral event
+  router.post('/api/v1/nodes/:id/peripheral-control/events', (req, res) => {
+    const { id } = req.params;
+    try {
+      const event = PeripheralControlEngine.logPeripheralEvent(getDb(), {
+        device_id: id,
+        ...(req.body || {})
+      });
+      sendJson(res, 201, { success: true, event });
+    } catch (err) {
+      sendJson(res, 400, { error: 'NODE_PERIPHERAL_EVENT_ERROR', message: err.message });
+    }
+  });
 }
