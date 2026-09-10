@@ -1,4 +1,5 @@
 import { contentDistributionEngine } from '../services/contentDistributionEngine.js';
+import { VaultSecretsEngine } from '../services/vaultSecretsEngine.js';
 import { mdmCspEngine } from '../services/mdmCspEngine.js';
 import * as supervisorEngine from '../services/supervisorEngine.js';
 import * as realtimePushEngine from '../services/realtimePushEngine.js';
@@ -49,6 +50,21 @@ import * as pkiSigningEngine from '../services/pkiSigningEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
+
+  // POST /api/v1/nodes/:id/vault/escrow — Workstation DPAPI-NG / BitLocker / LAPS credential escrow
+  router.post('/api/v1/nodes/:id/vault/escrow', (req, res) => {
+    const { id } = req.params;
+    try {
+      const engine = new VaultSecretsEngine(getDb());
+      const stored = engine.storeSecret({
+        ...req.body,
+        device_id: id
+      }, `NodeAgent:${id}`);
+      sendJson(res, 201, { success: true, secret_id: stored.secret_id });
+    } catch (err) {
+      sendJson(res, 400, { error: 'VAULT_ESCROW_ERROR', message: err.message });
+    }
+  });
   // 1. POST /api/v1/nodes/enroll
   router.post('/api/v1/nodes/enroll', async (req, res) => {
     if (!requireFleetKey(req, res)) return;

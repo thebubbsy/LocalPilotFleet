@@ -2425,6 +2425,46 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_sdc_org ON scoped_device_collections(org_id);
     CREATE INDEX IF NOT EXISTS idx_sdc_site ON scoped_device_collections(site_id);
 
+    -- 116. ENTERPRISE_VAULT_SECRETS — Hardware / DPAPI-NG / AES-256-GCM Escrow Vault
+    CREATE TABLE IF NOT EXISTS enterprise_vault_secrets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      secret_id TEXT NOT NULL UNIQUE,
+      secret_name TEXT NOT NULL,
+      secret_scope TEXT NOT NULL CHECK(secret_scope IN ('BITLOCKER_RECOVERY_KEY', 'LAPS_PASSWORD', 'MTLS_PRIVATE_KEY', 'API_BEARER_TOKEN', 'WIFI_PRESHARED_KEY')),
+      device_id TEXT,
+      encrypted_payload_b64 TEXT NOT NULL,
+      encryption_scheme TEXT NOT NULL DEFAULT 'AES_256_GCM_ENVELOPE_HSM' CHECK(encryption_scheme IN ('AES_256_GCM_ENVELOPE_HSM', 'DPAPI_NG_LOCAL_MACHINE', 'RSA_4096_PKI')),
+      key_descriptor TEXT,
+      auth_tag_hex TEXT,
+      iv_hex TEXT,
+      rotation_interval_days INTEGER NOT NULL DEFAULT 30,
+      last_rotated_at TEXT DEFAULT (DATETIME('now')),
+      expires_at TEXT,
+      is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_vault_secret_id ON enterprise_vault_secrets(secret_id);
+    CREATE INDEX IF NOT EXISTS idx_vault_device ON enterprise_vault_secrets(device_id);
+    CREATE INDEX IF NOT EXISTS idx_vault_scope ON enterprise_vault_secrets(secret_scope);
+
+    -- 117. VAULT_ACCESS_AUDITS — Non-Repudiation Audit Ledger for Hardware Vault
+    CREATE TABLE IF NOT EXISTS vault_access_audits (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      secret_id TEXT NOT NULL,
+      action TEXT NOT NULL CHECK(action IN ('STORE', 'RETRIEVE_ENCRYPTED', 'DECRYPT_AUTHORIZED', 'ROTATED', 'REVOKED', 'ACCESS_DENIED')),
+      actor TEXT NOT NULL,
+      caller_ip TEXT DEFAULT '127.0.0.1',
+      dual_custody_ref_id TEXT,
+      status TEXT NOT NULL CHECK(status IN ('SUCCESS', 'DENIED_UNAUTHORIZED', 'DENIED_TAMPER')),
+      details_json TEXT DEFAULT '{}',
+      created_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_vault_audit_secret ON vault_access_audits(secret_id);
+    CREATE INDEX IF NOT EXISTS idx_vault_audit_created ON vault_access_audits(created_at);
+
 
 
 
@@ -5582,6 +5622,45 @@ exit 0`,
 
     insertCol.run('col-hq-workstations', 'org-default', 'site-hq', 'HQ Executive & Dev Workstations', 'Core workstations at headquarters campus', 0, null);
     insertCol.run('col-field-laptops', 'org-default', 'site-melbourne', 'Roaming Field Laptops', 'Remote laptops assigned to field technicians', 1, 'device.chassis_type == "Laptop"');
+  }
+
+  // 42. Seed Enterprise Vault Secrets & DPAPI-NG / HSM Credentials
+  const vaultCount = db.prepare('SELECT COUNT(*) as count FROM enterprise_vault_secrets').get().count;
+  if (vaultCount === 0) {
+    const insertVault = db.prepare(`
+      INSERT OR IGNORE INTO enterprise_vault_secrets (
+        secret_id, secret_name, secret_scope, device_id, encrypted_payload_b64,
+        encryption_scheme, key_descriptor, auth_tag_hex, iv_hex, rotation_interval_days
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    // Seed encrypted BitLocker recovery key for DESKTOP-R0H12DJ
+    insertVault.run(
+      'sec-bitlocker-r0h12dj',
+      'BitLocker Recovery Key (DESKTOP-R0H12DJ)',
+      'BITLOCKER_RECOVERY_KEY',
+      'DESKTOP-R0H12DJ',
+      'lveRBTgu0LX4AhRdSCao6VzRb1zTsW0ozoGVJNW/QvWpf2BpzGxI47jj4Fl3x8PfZdmHMdDaWQ==',
+      'AES_256_GCM_ENVELOPE_HSM',
+      'HSM-KMS-ROOT-KEY-2026',
+      '9b41236e1a998d0c1b069c277053899d',
+      'bf5db0aa5addc301bbf79d07',
+      90
+    );
+
+    // Seed encrypted LAPS Local Administrator Password
+    insertVault.run(
+      'sec-laps-admin-r0h12dj',
+      'LAPS Local Administrator Password (DESKTOP-R0H12DJ)',
+      'LAPS_PASSWORD',
+      'DESKTOP-R0H12DJ',
+      'mK9vL3xP8zQ1w4n7==',
+      'DPAPI_NG_LOCAL_MACHINE',
+      'SID:S-1-5-21-3623811015-3361044348-30300820-1013',
+      'f0e1d2c3b4a5968778695a4b3c2d1e0f',
+      'abcdef1234567890abcdef12',
+      30
+    );
   }
 
 }

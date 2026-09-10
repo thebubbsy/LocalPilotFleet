@@ -7,4 +7,5 @@ data/
 *.db
 !server/data/fleet.db
 .agents/
-
+agent/src/**/bin/
+agent/src/**/obj/

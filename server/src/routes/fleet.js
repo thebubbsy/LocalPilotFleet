@@ -1,4 +1,6 @@
 import { multiTenancyEngine } from '../services/multiTenancyEngine.js';
+import { VaultSecretsEngine } from '../services/vaultSecretsEngine.js';
+import { openApiSpecEngine } from '../services/openApiSpecEngine.js';
 import { contentDistributionEngine } from '../services/contentDistributionEngine.js';
 import { mdmCspEngine } from '../services/mdmCspEngine.js';
 import { rbacEngine } from '../services/rbacEngine.js';
@@ -6857,6 +6859,155 @@ try {
       sendJson(res, 200, health);
     } catch (err) {
       sendJson(res, 500, { error: 'DB_HEALTH_ERROR', message: err.message });
+    }
+  });
+
+  // ══════════════════════════════════════════════════════════════════
+  // ENTERPRISE SECRETS VAULT & DPAPI-NG / HSM CREDENTIAL ESCROW (422–430)
+  // ══════════════════════════════════════════════════════════════════
+
+  // 422. GET /api/v1/fleet/vault/stats
+  router.get('/api/v1/fleet/vault/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new VaultSecretsEngine(getDb());
+      sendJson(res, 200, engine.getVaultStats());
+    } catch (err) {
+      sendJson(res, 500, { error: 'VAULT_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 423. GET /api/v1/fleet/vault/secrets
+  router.get('/api/v1/fleet/vault/secrets', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new VaultSecretsEngine(getDb());
+      const secrets = engine.getSecrets(req.query || {});
+      sendJson(res, 200, { secrets, count: secrets.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'VAULT_SECRETS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 424. GET /api/v1/fleet/vault/secrets/:id
+  router.get('/api/v1/fleet/vault/secrets/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new VaultSecretsEngine(getDb());
+      const secret = engine.getSecretById(req.params.id);
+      if (!secret) {
+        sendJson(res, 404, { error: 'SECRET_NOT_FOUND', message: 'Vault secret not found' });
+        return;
+      }
+      sendJson(res, 200, secret);
+    } catch (err) {
+      sendJson(res, 500, { error: 'VAULT_SECRET_GET_ERROR', message: err.message });
+    }
+  });
+
+  // 425. POST /api/v1/fleet/vault/secrets
+  router.post('/api/v1/fleet/vault/secrets', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new VaultSecretsEngine(getDb());
+      const stored = engine.storeSecret(req.body || {}, req.headers['x-actor'] || 'FleetAdmin');
+      sendJson(res, 201, stored);
+    } catch (err) {
+      sendJson(res, 400, { error: 'VAULT_STORE_ERROR', message: err.message });
+    }
+  });
+
+  // 426. POST /api/v1/fleet/vault/secrets/:id/decrypt
+  router.post('/api/v1/fleet/vault/secrets/:id/decrypt', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { dual_custody_ref_id } = req.body || {};
+    const actor = req.headers['x-actor'] || 'FleetAdmin';
+    try {
+      const engine = new VaultSecretsEngine(getDb());
+      const decrypted = engine.decryptSecret(req.params.id, actor, dual_custody_ref_id);
+      sendJson(res, 200, decrypted);
+    } catch (err) {
+      const status = err.message.includes('DUAL_CUSTODY_REQUIRED') ? 403 : 400;
+      sendJson(res, status, { error: 'VAULT_DECRYPT_ERROR', message: err.message });
+    }
+  });
+
+  // 427. POST /api/v1/fleet/vault/secrets/:id/rotate
+  router.post('/api/v1/fleet/vault/secrets/:id/rotate', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    const { new_plaintext } = req.body || {};
+    if (!new_plaintext) {
+      sendJson(res, 400, { error: 'MISSING_PAYLOAD', message: 'Missing new_plaintext for rotation' });
+      return;
+    }
+    try {
+      const engine = new VaultSecretsEngine(getDb());
+      const rotated = engine.rotateSecret(req.params.id, new_plaintext, req.headers['x-actor'] || 'FleetAdmin');
+      sendJson(res, 200, rotated);
+    } catch (err) {
+      sendJson(res, 400, { error: 'VAULT_ROTATE_ERROR', message: err.message });
+    }
+  });
+
+  // 428. DELETE /api/v1/fleet/vault/secrets/:id
+  router.delete('/api/v1/fleet/vault/secrets/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new VaultSecretsEngine(getDb());
+      const deleted = engine.deleteSecret(req.params.id, req.headers['x-actor'] || 'FleetAdmin');
+      sendJson(res, 200, { success: deleted, secret_id: req.params.id });
+    } catch (err) {
+      sendJson(res, 400, { error: 'VAULT_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 429. GET /api/v1/fleet/vault/audits
+  router.get('/api/v1/fleet/vault/audits', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new VaultSecretsEngine(getDb());
+      const audits = engine.getVaultAudits(parseInt(req.query?.limit || '50', 10));
+      sendJson(res, 200, { audits, count: audits.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'VAULT_AUDITS_ERROR', message: err.message });
+    }
+  });
+
+  // 430. GET /api/v1/fleet/vault/powershell-snippet
+  router.get('/api/v1/fleet/vault/powershell-snippet', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new VaultSecretsEngine(getDb());
+      const script = engine.generateDpapiPowerShellSnippet(req.query?.scope || 'BITLOCKER_RECOVERY_KEY');
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end(script);
+    } catch (err) {
+      sendJson(res, 500, { error: 'SNIPPET_ERROR', message: err.message });
+    }
+  });
+
+  // ══════════════════════════════════════════════════════════════════
+  // OPENAPI 3.0 SPECIFICATION & INTERACTIVE SWAGGER UI DOCS (431–432)
+  // ══════════════════════════════════════════════════════════════════
+
+  // 431. GET /api/v1/openapi.json
+  router.get('/api/v1/openapi.json', (req, res) => {
+    try {
+      const spec = openApiSpecEngine.getOpenApiSpec();
+      sendJson(res, 200, spec);
+    } catch (err) {
+      sendJson(res, 500, { error: 'OPENAPI_SPEC_ERROR', message: err.message });
+    }
+  });
+
+  // 432. GET /api/v1/docs
+  router.get('/api/v1/docs', (req, res) => {
+    try {
+      const html = openApiSpecEngine.generateSwaggerHtml();
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(html);
+    } catch (err) {
+      sendJson(res, 500, { error: 'DOCS_ERROR', message: err.message });
     }
   });
 
