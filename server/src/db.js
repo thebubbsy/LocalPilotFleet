@@ -3114,6 +3114,69 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_itm_incident ON incident_timeline_milestones(incident_id);
     CREATE INDEX IF NOT EXISTS idx_itm_phase ON incident_timeline_milestones(phase_name);
     CREATE INDEX IF NOT EXISTS idx_itm_time ON incident_timeline_milestones(occurred_at ASC);
+  
+    -- 151. THREAT_INTEL_FEED_SOURCES — External STIX/TAXII, AbuseIPDB, OTX Feeds (Iteration 54)
+    CREATE TABLE IF NOT EXISTS threat_intel_feed_sources (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      feed_url TEXT NOT NULL,
+      feed_format TEXT NOT NULL DEFAULT 'STIX_TAXII_21' CHECK(feed_format IN ('STIX_TAXII_21', 'MISP_JSON', 'CSV_INDICATORS', 'ABUSE_IPDB', 'URLHAUS_JSON', 'CUSTOM_API')),
+      poll_interval_hours INTEGER NOT NULL DEFAULT 6,
+      auth_token_secret_key TEXT,
+      confidence_weight INTEGER NOT NULL DEFAULT 80 CHECK(confidence_weight >= 0 AND confidence_weight <= 100),
+      default_action TEXT NOT NULL DEFAULT 'ALERT' CHECK(default_action IN ('ALERT', 'BLOCK', 'ISOLATE_HOST', 'AUDIT')),
+      indicator_count INTEGER NOT NULL DEFAULT 0,
+      last_sync_status TEXT DEFAULT 'NEVER_SYNCED' CHECK(last_sync_status IN ('NEVER_SYNCED', 'SYNCING', 'SUCCESS', 'FAILED')),
+      last_sync_time TEXT,
+      is_enabled INTEGER NOT NULL DEFAULT 1 CHECK(is_enabled IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tifs_enabled ON threat_intel_feed_sources(is_enabled);
+    CREATE INDEX IF NOT EXISTS idx_tifs_format ON threat_intel_feed_sources(feed_format);
+
+    -- 152. THREAT_INTEL_INDICATORS_CACHE — High-Speed Threat IOC Cache (Iteration 54)
+    CREATE TABLE IF NOT EXISTS threat_intel_indicators_cache (
+      id TEXT PRIMARY KEY,
+      feed_id TEXT,
+      indicator_type TEXT NOT NULL CHECK(indicator_type IN ('IPV4_ADDRESS', 'DOMAIN_FQDN', 'URL', 'SHA256_HASH', 'MD5_HASH', 'CIDR_SUBNET')),
+      indicator_value TEXT NOT NULL,
+      threat_type TEXT NOT NULL DEFAULT 'MALWARE' CHECK(threat_type IN ('MALWARE', 'RANSOMWARE', 'C2_BEACON', 'PHISHING', 'BOTNET', 'EXPLOIT_KIT', 'SUSPICIOUS_PROXY')),
+      confidence_score INTEGER NOT NULL DEFAULT 85 CHECK(confidence_score >= 0 AND confidence_score <= 100),
+      severity TEXT NOT NULL DEFAULT 'HIGH' CHECK(severity IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+      description TEXT,
+      mitre_techniques TEXT,
+      is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+      expires_at TEXT,
+      first_seen TEXT DEFAULT (DATETIME('now')),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(feed_id) REFERENCES threat_intel_feed_sources(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tiic_val ON threat_intel_indicators_cache(indicator_value);
+    CREATE INDEX IF NOT EXISTS idx_tiic_type ON threat_intel_indicators_cache(indicator_type);
+    CREATE INDEX IF NOT EXISTS idx_tiic_active ON threat_intel_indicators_cache(is_active);
+
+    -- 153. THREAT_INTEL_MATCH_EVENTS — Real-Time Forensic Indicator Interceptions (Iteration 54)
+    CREATE TABLE IF NOT EXISTS threat_intel_match_events (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      hostname TEXT NOT NULL,
+      indicator_id TEXT,
+      indicator_type TEXT NOT NULL,
+      matched_value TEXT NOT NULL,
+      source_context TEXT,
+      action_taken TEXT NOT NULL DEFAULT 'BLOCKED' CHECK(action_taken IN ('BLOCKED', 'ALERTED', 'QUARANTINED', 'MONITORED')),
+      severity TEXT NOT NULL DEFAULT 'HIGH' CHECK(severity IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+      timestamp TEXT DEFAULT (DATETIME('now')),
+      details TEXT,
+      FOREIGN KEY(indicator_id) REFERENCES threat_intel_indicators_cache(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_time_device ON threat_intel_match_events(device_id);
+    CREATE INDEX IF NOT EXISTS idx_time_val ON threat_intel_match_events(matched_value);
+    CREATE INDEX IF NOT EXISTS idx_time_timestamp ON threat_intel_match_events(timestamp DESC);
   `);
 
   // Schema migrations for existing databases
@@ -7357,6 +7420,59 @@ exit 0`,
   }
 
 
+
+
+  // 54. Seed Threat Intelligence Feeds & Cached Indicators (Iteration 54)
+  const tiCount = db.prepare('SELECT COUNT(*) as count FROM threat_intel_feed_sources').get().count;
+  if (tiCount === 0) {
+    const insertTifs = db.prepare(`
+      INSERT OR IGNORE INTO threat_intel_feed_sources (
+        id, name, feed_url, feed_format, poll_interval_hours,
+        confidence_weight, default_action, indicator_count,
+        last_sync_status, last_sync_time, is_enabled
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', '-1 hour'), 1)
+    `);
+
+    insertTifs.run('tif-alienvault', 'AlienVault OTX High-Confidence C2 Pulses', 'https://otx.alienvault.com/api/v1/pulses/subscribed', 'STIX_TAXII_21', 6, 90, 'BLOCK', 1450, 'SUCCESS');
+    insertTifs.run('tif-abuseipdb', 'AbuseIPDB Verified Blacklist (Confidence > 95%)', 'https://api.abuseipdb.com/api/v2/blacklist', 'ABUSE_IPDB', 4, 95, 'BLOCK', 850, 'SUCCESS');
+    insertTifs.run('tif-urlhaus', 'URLhaus Malicious Payload Distribution Feed', 'https://urlhaus.abuse.ch/downloads/json/recent/', 'URLHAUS_JSON', 2, 88, 'BLOCK', 420, 'SUCCESS');
+
+    const insertTiic = db.prepare(`
+      INSERT OR IGNORE INTO threat_intel_indicators_cache (
+        id, feed_id, indicator_type, indicator_value, threat_type,
+        confidence_score, severity, description, mitre_techniques, is_active
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+    `);
+
+    insertTiic.run('tiic-01', 'tif-abuseipdb', 'IPV4_ADDRESS', '198.51.100.99', 'C2_BEACON', 98, 'CRITICAL', 'Active Cobalt Strike command-and-control listener', 'T1071.001,T1573');
+    insertTiic.run('tiic-02', 'tif-urlhaus', 'DOMAIN_FQDN', 'updates-cdn-auth.com', 'PHISHING', 92, 'HIGH', 'Credential harvesting gateway impersonating SSO portal', 'T1566.002');
+    insertTiic.run('tiic-03', 'tif-alienvault', 'SHA256_HASH', 'a35b88c7d91e4f501867c2934098492083419082340918230914820934812093', 'MALWARE', 99, 'CRITICAL', 'Known Mimikatz credential dumping utility artifact', 'T1003.001');
+
+    const devTarget = db.prepare("SELECT id, hostname FROM devices WHERE hostname = 'DESKTOP-R0H12DJ' LIMIT 1").get()
+      || db.prepare("SELECT id, hostname FROM devices LIMIT 1").get();
+
+    if (devTarget) {
+      const insertTime = db.prepare(`
+        INSERT OR IGNORE INTO threat_intel_match_events (
+          id, device_id, hostname, indicator_id, indicator_type,
+          matched_value, source_context, action_taken, severity, timestamp, details
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', '-20 minutes'), ?)
+      `);
+
+      insertTime.run(
+        'time-01',
+        devTarget.id,
+        devTarget.hostname,
+        'tiic-01',
+        'IPV4_ADDRESS',
+        '198.51.100.99',
+        'TCP outbound: curl.exe -> 198.51.100.99:443',
+        'BLOCKED',
+        'CRITICAL',
+        'Outbound connection to Cobalt Strike C2 dropped by LocalPilot Threat Intel Filter'
+      );
+    }
+  }
 
 }
 

@@ -1,3 +1,4 @@
+import { ThreatIntelEngine } from '../services/threatIntelEngine.js';
 import { IncidentCorrelationEngine } from '../services/incidentCorrelationEngine.js';
 import { LiveResponseEngine } from '../services/liveResponseEngine.js';
 import { NetworkIsolationEngine } from '../services/networkIsolationEngine.js';
@@ -2440,6 +2441,34 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { success: true, result });
     } catch (err) {
       sendJson(res, 400, { error: "NODE_CORRELATION_TRIGGER_ERROR", message: err.message });
+    }
+  });
+
+  // 579. GET /api/v1/nodes/:id/threat-intel/indicators — Node agent pulls active IOC blocklist
+  router.get('/api/v1/nodes/:id/threat-intel/indicators', (req, res) => {
+    try {
+      const indicators = ThreatIntelEngine.getIndicators(getDb(), { is_active: 1, limit: 200 });
+      sendJson(res, 200, { indicators, count: indicators.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "NODE_INDICATORS_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 580. POST /api/v1/nodes/:id/threat-intel/matches — Node agent reports live indicator hit
+  router.post('/api/v1/nodes/:id/threat-intel/matches', (req, res) => {
+    const { id } = req.params;
+    try {
+      if (!req.body?.indicator_type || !req.body?.matched_value) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "indicator_type and matched_value are required" });
+        return;
+      }
+      const event = ThreatIntelEngine.logMatchEvent(getDb(), {
+        device_id: id,
+        ...(req.body || {})
+      });
+      sendJson(res, 201, { success: true, event });
+    } catch (err) {
+      sendJson(res, 400, { error: "NODE_MATCH_LOG_ERROR", message: err.message });
     }
   });
 }

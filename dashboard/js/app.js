@@ -230,6 +230,9 @@ const App = {
       case 'tamper-protection':
         if (window.TamperProtectionTable) window.TamperProtectionTable.render();
         break;
+      case 'threat-intel':
+        if (window.ThreatIntelTable) window.ThreatIntelTable.render();
+        break;
       case 'incident-correlation':
         if (window.IncidentCorrelationTable) window.IncidentCorrelationTable.render();
         break;

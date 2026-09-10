@@ -1,3 +1,4 @@
+import { ThreatIntelEngine } from '../services/threatIntelEngine.js';
 import { IncidentCorrelationEngine } from '../services/incidentCorrelationEngine.js';
 import { LiveResponseEngine } from '../services/liveResponseEngine.js';
 import { NetworkIsolationEngine } from '../services/networkIsolationEngine.js';
@@ -8783,6 +8784,164 @@ try {
       sendJson(res, 200, result);
     } catch (err) {
       sendJson(res, 400, { error: "CORRELATION_ERROR", message: err.message });
+    }
+  });
+
+  // 567. GET /api/v1/fleet/threat-intel/stats
+  router.get('/api/v1/fleet/threat-intel/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = ThreatIntelEngine.getThreatIntelStats(getDb());
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: "THREAT_INTEL_STATS_ERROR", message: err.message });
+    }
+  });
+
+  // 568. GET /api/v1/fleet/threat-intel/feeds
+  router.get('/api/v1/fleet/threat-intel/feeds', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const feeds = ThreatIntelEngine.getFeedSources(getDb(), req.query || {});
+      sendJson(res, 200, { feeds, count: feeds.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "FEEDS_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 569. POST /api/v1/fleet/threat-intel/feeds
+  router.post('/api/v1/fleet/threat-intel/feeds', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.name || !req.body?.feed_url) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "name and feed_url are required" });
+        return;
+      }
+      const feed = ThreatIntelEngine.createFeedSource(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, feed });
+    } catch (err) {
+      sendJson(res, 400, { error: "FEED_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 570. GET /api/v1/fleet/threat-intel/feeds/:id
+  router.get('/api/v1/fleet/threat-intel/feeds/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const feed = ThreatIntelEngine.getFeedSourceById(getDb(), req.params.id);
+      if (!feed) {
+        sendJson(res, 404, { error: "FEED_NOT_FOUND", message: "Feed source not found" });
+        return;
+      }
+      sendJson(res, 200, feed);
+    } catch (err) {
+      sendJson(res, 500, { error: "FEED_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 571. DELETE /api/v1/fleet/threat-intel/feeds/:id
+  router.delete('/api/v1/fleet/threat-intel/feeds/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const success = ThreatIntelEngine.deleteFeedSource(getDb(), req.params.id);
+      sendJson(res, 200, { success });
+    } catch (err) {
+      sendJson(res, 500, { error: "FEED_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 572. POST /api/v1/fleet/threat-intel/feeds/:id/sync
+  router.post('/api/v1/fleet/threat-intel/feeds/:id/sync', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const feed = ThreatIntelEngine.syncFeedSource(getDb(), req.params.id);
+      sendJson(res, 200, { success: true, feed });
+    } catch (err) {
+      sendJson(res, 400, { error: "FEED_SYNC_ERROR", message: err.message });
+    }
+  });
+
+  // 573. GET /api/v1/fleet/threat-intel/indicators
+  router.get('/api/v1/fleet/threat-intel/indicators', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const indicators = ThreatIntelEngine.getIndicators(getDb(), req.query || {});
+      sendJson(res, 200, { indicators, count: indicators.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "INDICATORS_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 574. POST /api/v1/fleet/threat-intel/indicators
+  router.post('/api/v1/fleet/threat-intel/indicators', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.indicator_type || !req.body?.indicator_value) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "indicator_type and indicator_value are required" });
+        return;
+      }
+      const indicator = ThreatIntelEngine.createIndicator(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, indicator });
+    } catch (err) {
+      sendJson(res, 400, { error: "INDICATOR_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 575. POST /api/v1/fleet/threat-intel/indicators/match
+  router.post('/api/v1/fleet/threat-intel/indicators/match', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.indicator_type || !req.body?.indicator_value || !req.body?.device_id) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "indicator_type, indicator_value, and device_id are required" });
+        return;
+      }
+      const result = ThreatIntelEngine.checkIndicatorMatch(getDb(), {
+        indicatorType: req.body.indicator_type,
+        indicatorValue: req.body.indicator_value,
+        deviceId: req.body.device_id,
+        context: req.body.context,
+        actionTaken: req.body.action_taken || 'BLOCKED'
+      });
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: "MATCH_CHECK_ERROR", message: err.message });
+    }
+  });
+
+  // 576. DELETE /api/v1/fleet/threat-intel/indicators/:id
+  router.delete('/api/v1/fleet/threat-intel/indicators/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const success = ThreatIntelEngine.deleteIndicator(getDb(), req.params.id);
+      sendJson(res, 200, { success });
+    } catch (err) {
+      sendJson(res, 500, { error: "INDICATOR_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 577. GET /api/v1/fleet/threat-intel/matches
+  router.get('/api/v1/fleet/threat-intel/matches', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const matches = ThreatIntelEngine.getMatchEvents(getDb(), req.query || {});
+      sendJson(res, 200, { matches, count: matches.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "MATCHES_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 578. POST /api/v1/fleet/threat-intel/matches
+  router.post('/api/v1/fleet/threat-intel/matches', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.device_id || !req.body?.indicator_type || !req.body?.matched_value) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "device_id, indicator_type, and matched_value are required" });
+        return;
+      }
+      const event = ThreatIntelEngine.logMatchEvent(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, event });
+    } catch (err) {
+      sendJson(res, 400, { error: "MATCH_LOG_ERROR", message: err.message });
     }
   });
 }
