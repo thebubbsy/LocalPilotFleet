@@ -1,3 +1,4 @@
+import { CisBenchmarkEngine } from '../services/cisBenchmarkEngine.js';
 import { DlpEngine } from '../services/dlpEngine.js';
 import { IdentityThreatEngine } from '../services/identityThreatEngine.js';
 import { VulnerabilityManagementEngine } from '../services/vulnerabilityManagementEngine.js';
@@ -9422,6 +9423,166 @@ try {
       sendJson(res, 200, { success: true, ...result });
     } catch (err) {
       sendJson(res, 400, { error: "DLP_SCAN_TEXT_ERROR", message: err.message });
+    }
+  });
+
+  // 626. GET /api/v1/fleet/cis/stats — Fleet-wide CIS benchmark compliance & drift metrics
+  router.get('/api/v1/fleet/cis/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = CisBenchmarkEngine.getCisStats(getDb());
+      sendJson(res, 200, { success: true, stats });
+    } catch (err) {
+      sendJson(res, 500, { error: "CIS_STATS_ERROR", message: err.message });
+    }
+  });
+
+  // 627. GET /api/v1/fleet/cis/rules — Retrieve CIS benchmark catalog rules
+  router.get('/api/v1/fleet/cis/rules', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const rules = CisBenchmarkEngine.getRules(getDb(), req.query || {});
+      sendJson(res, 200, { rules, count: rules.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "CIS_RULES_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 628. GET /api/v1/fleet/cis/rules/:id — Retrieve single CIS rule with remediation script
+  router.get('/api/v1/fleet/cis/rules/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const rule = CisBenchmarkEngine.getRuleById(getDb(), req.params.id);
+      if (!rule) {
+        sendJson(res, 404, { error: "RULE_NOT_FOUND", message: "CIS benchmark rule not found" });
+        return;
+      }
+      sendJson(res, 200, { rule });
+    } catch (err) {
+      sendJson(res, 500, { error: "CIS_RULE_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 629. POST /api/v1/fleet/cis/rules — Author new CIS benchmark hardening rule
+  router.post('/api/v1/fleet/cis/rules', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.section_id || !req.body?.title || !req.body?.target_path || req.body?.expected_value === undefined) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "section_id, title, target_path, and expected_value are required" });
+        return;
+      }
+      const rule = CisBenchmarkEngine.createRule(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, rule });
+    } catch (err) {
+      sendJson(res, 400, { error: "CIS_RULE_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 630. PUT /api/v1/fleet/cis/rules/:id — Update CIS benchmark rule
+  router.put('/api/v1/fleet/cis/rules/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const updated = CisBenchmarkEngine.updateRule(getDb(), req.params.id, req.body || {});
+      if (!updated) {
+        sendJson(res, 404, { error: "RULE_NOT_FOUND", message: "Rule not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, rule: updated });
+    } catch (err) {
+      sendJson(res, 400, { error: "CIS_RULE_UPDATE_ERROR", message: err.message });
+    }
+  });
+
+  // 631. DELETE /api/v1/fleet/cis/rules/:id — Remove CIS benchmark rule
+  router.delete('/api/v1/fleet/cis/rules/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const success = CisBenchmarkEngine.deleteRule(getDb(), req.params.id);
+      sendJson(res, 200, { success });
+    } catch (err) {
+      sendJson(res, 500, { error: "CIS_RULE_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 632. GET /api/v1/fleet/cis/audits — Retrieve endpoint compliance audits
+  router.get('/api/v1/fleet/cis/audits', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const audits = CisBenchmarkEngine.getAudits(getDb(), req.query || {});
+      sendJson(res, 200, { audits, count: audits.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "CIS_AUDITS_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 633. POST /api/v1/fleet/cis/audits — Ingest endpoint compliance evaluation
+  router.post('/api/v1/fleet/cis/audits', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.device_id) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "device_id is required" });
+        return;
+      }
+      const audit = CisBenchmarkEngine.recordAudit(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, audit });
+    } catch (err) {
+      sendJson(res, 400, { error: "CIS_AUDIT_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 634. POST /api/v1/fleet/cis/evaluate/:deviceId — Trigger automated compliance audit sweep
+  router.post('/api/v1/fleet/cis/evaluate/:deviceId', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const audit = CisBenchmarkEngine.evaluateDeviceDrift(getDb(), req.params.deviceId, req.body?.benchmark_name);
+      sendJson(res, 200, { success: true, audit });
+    } catch (err) {
+      sendJson(res, 400, { error: "CIS_EVALUATION_ERROR", message: err.message });
+    }
+  });
+
+  // 635. GET /api/v1/fleet/cis/remediations/:ruleId — Retrieve remediation code snippet
+  router.get('/api/v1/fleet/cis/remediations/:ruleId', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const remediation = CisBenchmarkEngine.getRemediationScript(getDb(), req.params.ruleId);
+      if (!remediation) {
+        sendJson(res, 404, { error: "REMEDIATION_NOT_FOUND", message: "Remediation script not found for this rule" });
+        return;
+      }
+      sendJson(res, 200, { remediation });
+    } catch (err) {
+      sendJson(res, 500, { error: "CIS_REMEDIATION_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 636. POST /api/v1/fleet/cis/remediations — Create or link surgical remediation script to rule
+  router.post('/api/v1/fleet/cis/remediations', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.rule_id || !req.body?.remediation_code) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "rule_id and remediation_code are required" });
+        return;
+      }
+      const remediation = CisBenchmarkEngine.createOrUpdateRemediationScript(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, remediation });
+    } catch (err) {
+      sendJson(res, 400, { error: "CIS_REMEDIATION_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 637. POST /api/v1/fleet/cis/apply-remediation — Dispatch remediation to endpoint
+  router.post('/api/v1/fleet/cis/apply-remediation', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.device_id || !req.body?.rule_id) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "device_id and rule_id are required" });
+        return;
+      }
+      const result = CisBenchmarkEngine.applyRemediation(getDb(), req.body.device_id, req.body.rule_id);
+      sendJson(res, 200, { success: true, result });
+    } catch (err) {
+      sendJson(res, 400, { error: "CIS_APPLY_REMEDIATION_ERROR", message: err.message });
     }
   });
 }

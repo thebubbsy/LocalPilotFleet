@@ -1,3 +1,4 @@
+import { CisBenchmarkEngine } from '../services/cisBenchmarkEngine.js';
 import { DlpEngine } from '../services/dlpEngine.js';
 import { IdentityThreatEngine } from '../services/identityThreatEngine.js';
 import { VulnerabilityManagementEngine } from '../services/vulnerabilityManagementEngine.js';
@@ -2599,6 +2600,45 @@ export function registerNodeRoutes(router) {
       sendJson(res, 201, { success: true, incident });
     } catch (err) {
       sendJson(res, 400, { error: "NODE_DLP_EXFILTRATION_REPORT_ERROR", message: err.message });
+    }
+  });
+
+  // 638. GET /api/v1/nodes/:id/cis/benchmarks — Node agent pulls benchmark rules to audit local registry/GPO
+  router.get('/api/v1/nodes/:id/cis/benchmarks', (req, res) => {
+    try {
+      const rules = CisBenchmarkEngine.getRules(getDb(), req.query || {});
+      sendJson(res, 200, { rules, count: rules.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "NODE_CIS_RULES_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 639. POST /api/v1/nodes/:id/cis/report-audit — Node agent posts compliance audit scorecard
+  router.post('/api/v1/nodes/:id/cis/report-audit', (req, res) => {
+    const { id } = req.params;
+    try {
+      const audit = CisBenchmarkEngine.recordAudit(getDb(), {
+        device_id: id,
+        ...(req.body || {})
+      });
+      sendJson(res, 201, { success: true, audit });
+    } catch (err) {
+      sendJson(res, 400, { error: "NODE_CIS_REPORT_AUDIT_ERROR", message: err.message });
+    }
+  });
+
+  // 640. POST /api/v1/nodes/:id/cis/request-remediation — Node agent requests surgical remediation snippet
+  router.post('/api/v1/nodes/:id/cis/request-remediation', (req, res) => {
+    const { id } = req.params;
+    try {
+      if (!req.body?.rule_id) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "rule_id is required" });
+        return;
+      }
+      const result = CisBenchmarkEngine.applyRemediation(getDb(), id, req.body.rule_id);
+      sendJson(res, 200, { success: true, result });
+    } catch (err) {
+      sendJson(res, 400, { error: "NODE_CIS_REQUEST_REMEDIATION_ERROR", message: err.message });
     }
   });
 }

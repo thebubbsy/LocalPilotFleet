@@ -3361,6 +3361,63 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_dei_device ON dlp_exfiltration_incidents(device_id);
     CREATE INDEX IF NOT EXISTS idx_dei_channel ON dlp_exfiltration_incidents(channel);
     CREATE INDEX IF NOT EXISTS idx_dei_action ON dlp_exfiltration_incidents(action_taken);
+    -- =========================================================================
+    -- ITERATION 58: Endpoint Configuration Drift & CIS Benchmark Compliance Engine
+    -- =========================================================================
+    -- Table 163: cis_benchmark_rules
+    CREATE TABLE IF NOT EXISTS cis_benchmark_rules (
+      id TEXT PRIMARY KEY,
+      benchmark_name TEXT NOT NULL DEFAULT 'CIS_WINDOWS_11_ENTERPRISE',
+      section_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      profile_level TEXT NOT NULL DEFAULT 'LEVEL_1' CHECK(profile_level IN ('LEVEL_1', 'LEVEL_2', 'BITLOCKER_ADDON')),
+      check_type TEXT NOT NULL CHECK(check_type IN ('REGISTRY_VALUE', 'AUDIT_POLICY', 'SECURITY_OPTION', 'POWERSHELL_QUERY')),
+      target_path TEXT NOT NULL,
+      target_key TEXT,
+      expected_value TEXT NOT NULL,
+      remediation_impact TEXT DEFAULT 'LOW',
+      created_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_cbr_benchmark ON cis_benchmark_rules(benchmark_name);
+    CREATE INDEX IF NOT EXISTS idx_cbr_level ON cis_benchmark_rules(profile_level);
+
+    -- Table 164: cis_endpoint_compliance_audits
+    CREATE TABLE IF NOT EXISTS cis_endpoint_compliance_audits (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      hostname TEXT NOT NULL,
+      benchmark_name TEXT NOT NULL,
+      total_rules_evaluated INTEGER NOT NULL DEFAULT 0,
+      passed_rules_count INTEGER NOT NULL DEFAULT 0,
+      failed_rules_count INTEGER NOT NULL DEFAULT 0,
+      compliance_score_percent REAL NOT NULL DEFAULT 0.0,
+      drift_detected INTEGER NOT NULL DEFAULT 0,
+      audit_status TEXT NOT NULL DEFAULT 'COMPLETED' CHECK(audit_status IN ('PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED')),
+      evaluated_at TEXT DEFAULT (DATETIME('now')),
+      findings_summary_json TEXT NOT NULL DEFAULT '{}'
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ceca_device ON cis_endpoint_compliance_audits(device_id);
+    CREATE INDEX IF NOT EXISTS idx_ceca_score ON cis_endpoint_compliance_audits(compliance_score_percent);
+    CREATE INDEX IF NOT EXISTS idx_ceca_drift ON cis_endpoint_compliance_audits(drift_detected);
+
+    -- Table 165: cis_rule_remediation_scripts
+    CREATE TABLE IF NOT EXISTS cis_rule_remediation_scripts (
+      id TEXT PRIMARY KEY,
+      rule_id TEXT NOT NULL,
+      script_type TEXT NOT NULL DEFAULT 'POWERSHELL' CHECK(script_type IN ('POWERSHELL', 'REGISTRY_PATCH', 'CMD_BATCH')),
+      remediation_code TEXT NOT NULL,
+      rollback_code TEXT,
+      reboot_required INTEGER NOT NULL DEFAULT 0,
+      applied_count INTEGER NOT NULL DEFAULT 0,
+      last_applied_at TEXT,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(rule_id) REFERENCES cis_benchmark_rules(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_crrs_rule ON cis_rule_remediation_scripts(rule_id);
 
   `);
 
@@ -8002,6 +8059,122 @@ exit 0`,
       JSON.stringify({ destination_window: 'Discord', matched_content_preview: 'AKIAIOSFODNN7EXAMPLE' })
     );
   }
+
+  // Iteration 58: Endpoint Configuration Drift & CIS Benchmark Compliance Seeds
+  const cisCount = db.prepare('SELECT COUNT(*) as count FROM cis_benchmark_rules').get().count;
+  if (cisCount === 0) {
+    const devTarget = db.prepare('SELECT id, hostname FROM devices LIMIT 1').get() || { id: 'dev-01', hostname: 'DESKTOP-CORP-01' };
+
+    const insertCbr = db.prepare(`
+      INSERT OR IGNORE INTO cis_benchmark_rules (
+        id, benchmark_name, section_id, title, description, profile_level, check_type, target_path, target_key, expected_value, remediation_impact
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertCbr.run(
+      'cbr-01',
+      'CIS_WINDOWS_11_ENTERPRISE',
+      '18.9.4.1',
+      'Ensure Configure Windows Defender SmartScreen is enabled',
+      'Protects endpoints against phishing and malicious software downloads.',
+      'LEVEL_1',
+      'REGISTRY_VALUE',
+      'HKLM:\\Software\\Policies\\Microsoft\\Windows\\System',
+      'EnableSmartScreen',
+      '1',
+      'LOW'
+    );
+
+    insertCbr.run(
+      'cbr-02',
+      'CIS_WINDOWS_11_ENTERPRISE',
+      '18.5.11.2',
+      'Ensure Turn off Link-Local Multicast Name Resolution (LLMNR) is enabled',
+      'Mitigates LLMNR poisoning and NTLM relay attacks.',
+      'LEVEL_1',
+      'REGISTRY_VALUE',
+      'HKLM:\\Software\\Policies\\Microsoft\\Windows NT\\DNSClient',
+      'EnableMulticast',
+      '0',
+      'LOW'
+    );
+
+    insertCbr.run(
+      'cbr-03',
+      'CIS_WINDOWS_11_ENTERPRISE',
+      '2.3.17.2',
+      'Ensure User Account Control: Switch to the secure desktop when prompting for elevation is enabled',
+      'Prevents background software from simulating keystrokes or tampering with elevation dialogs.',
+      'LEVEL_1',
+      'REGISTRY_VALUE',
+      'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System',
+      'PromptOnSecureDesktop',
+      '1',
+      'LOW'
+    );
+
+    insertCbr.run(
+      'cbr-04',
+      'CIS_WINDOWS_11_ENTERPRISE',
+      '18.9.15.1',
+      'Ensure Choose drive encryption method and cipher strength (XTS-AES 256-bit) is enabled',
+      'Enforces XTS-AES 256 BitLocker volume encryption across operating system and fixed data drives.',
+      'LEVEL_2',
+      'REGISTRY_VALUE',
+      'HKLM:\\Software\\Policies\\Microsoft\\FVE',
+      'EncryptionMethodWithXtsOs',
+      '7',
+      'MEDIUM'
+    );
+
+    const insertCeca = db.prepare(`
+      INSERT OR IGNORE INTO cis_endpoint_compliance_audits (
+        id, device_id, hostname, benchmark_name, total_rules_evaluated,
+        passed_rules_count, failed_rules_count, compliance_score_percent, drift_detected, findings_summary_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertCeca.run(
+      'ceca-01',
+      devTarget.id,
+      devTarget.hostname,
+      'CIS_WINDOWS_11_ENTERPRISE',
+      4,
+      3,
+      1,
+      75.0,
+      1,
+      JSON.stringify({
+        failed_rules: ['cbr-02 (LLMNR Enabled)'],
+        passed_rules: ['cbr-01 (SmartScreen)', 'cbr-03 (UAC Secure Desktop)', 'cbr-04 (BitLocker 256)']
+      })
+    );
+
+    const insertCrrs = db.prepare(`
+      INSERT OR IGNORE INTO cis_rule_remediation_scripts (
+        id, rule_id, script_type, remediation_code, rollback_code, reboot_required
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    insertCrrs.run(
+      'crrs-01',
+      'cbr-01',
+      'POWERSHELL',
+      'Set-ItemProperty -Path "HKLM:\\Software\\Policies\\Microsoft\\Windows\\System" -Name "EnableSmartScreen" -Value 1 -Type DWord -Force',
+      'Remove-ItemProperty -Path "HKLM:\\Software\\Policies\\Microsoft\\Windows\\System" -Name "EnableSmartScreen" -ErrorAction SilentlyContinue',
+      0
+    );
+
+    insertCrrs.run(
+      'crrs-02',
+      'cbr-02',
+      'POWERSHELL',
+      'if (!(Test-Path "HKLM:\\Software\\Policies\\Microsoft\\Windows NT\\DNSClient")) { New-Item -Path "HKLM:\\Software\\Policies\\Microsoft\\Windows NT\\DNSClient" -Force }; Set-ItemProperty -Path "HKLM:\\Software\\Policies\\Microsoft\\Windows NT\\DNSClient" -Name "EnableMulticast" -Value 0 -Type DWord -Force',
+      'Set-ItemProperty -Path "HKLM:\\Software\\Policies\\Microsoft\\Windows NT\\DNSClient" -Name "EnableMulticast" -Value 1 -Type DWord -Force',
+      0
+    );
+  }
+
 
 
 

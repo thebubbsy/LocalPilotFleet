@@ -233,6 +233,11 @@ const App = {
       case 'dlp':
         if (window.DlpTable) window.DlpTable.render();
         break;
+      case 'cis':
+        if (window.CisBenchmarkTable && typeof window.CisBenchmarkTable.render === 'function') {
+          window.CisBenchmarkTable.render();
+        }
+        break;
       case 'itdr':
         if (window.IdentityThreatTable) window.IdentityThreatTable.render();
         break;
