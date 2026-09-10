@@ -1,3 +1,4 @@
+import { MobileThreatDefenseEngine } from '../services/mobileThreatDefenseEngine.js';
 import { EnterpriseVpnProfileEngine } from '../services/enterpriseVpnProfileEngine.js';
 import { ScepPkiEnrollmentEngine } from '../services/scepPkiEnrollmentEngine.js';
 import { MamAppProtectionEngine } from '../services/mamAppProtectionEngine.js';
@@ -11356,6 +11357,155 @@ try {
       sendJson(res, 200, { success: true, logs, count: logs.length });
     } catch (err) {
       sendJson(res, 500, { error: "VPN_LOGS_QUERY_ERROR", message: err.message });
+    }
+  });
+
+  // =========================================================================
+  // ITERATION 69: Mobile Threat Defense (MTD) & Device Risk Posture Routes
+  // =========================================================================
+
+  // 791. GET /api/v1/fleet/mtd/stats — Fleet MTD threat summaries & posture
+  router.get('/api/v1/fleet/mtd/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = MobileThreatDefenseEngine.getMtdStats(getDb());
+      sendJson(res, 200, { success: true, stats });
+    } catch (err) {
+      sendJson(res, 500, { error: "MTD_STATS_ERROR", message: err.message });
+    }
+  });
+
+  // 792. GET /api/v1/fleet/mtd/signals — List threat signals
+  router.get('/api/v1/fleet/mtd/signals', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const signals = MobileThreatDefenseEngine.getThreatSignals(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, signals, count: signals.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "MTD_SIGNALS_ERROR", message: err.message });
+    }
+  });
+
+  // 793. POST /api/v1/fleet/mtd/signals — Ingest threat signal and evaluate compliance
+  router.post('/api/v1/fleet/mtd/signals', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.device_id || !req.body?.signal_type || !req.body?.threat_level) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "device_id, signal_type, and threat_level are required" });
+        return;
+      }
+      const result = MobileThreatDefenseEngine.ingestThreatSignal(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, ...result });
+    } catch (err) {
+      sendJson(res, 400, { error: "MTD_SIGNAL_INGEST_ERROR", message: err.message });
+    }
+  });
+
+  // 794. GET /api/v1/fleet/mtd/signals/:id — Single threat signal details
+  router.get('/api/v1/fleet/mtd/signals/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const signal = MobileThreatDefenseEngine.getSignal(getDb(), req.params.id);
+      if (!signal) {
+        sendJson(res, 404, { error: "SIGNAL_NOT_FOUND", message: "Threat signal not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, signal });
+    } catch (err) {
+      sendJson(res, 500, { error: "MTD_SIGNAL_GET_ERROR", message: err.message });
+    }
+  });
+
+  // 795. POST /api/v1/fleet/mtd/signals/:id/resolve — Resolve threat signal
+  router.post('/api/v1/fleet/mtd/signals/:id/resolve', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const resolved = MobileThreatDefenseEngine.resolveThreatSignal(getDb(), req.params.id, req.body?.notes);
+      if (!resolved) {
+        sendJson(res, 404, { error: "SIGNAL_NOT_FOUND", message: "Threat signal not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, signal: resolved });
+    } catch (err) {
+      sendJson(res, 500, { error: "MTD_SIGNAL_RESOLVE_ERROR", message: err.message });
+    }
+  });
+
+  // 796. GET /api/v1/fleet/mtd/policies — List risk compliance policies
+  router.get('/api/v1/fleet/mtd/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policies = MobileThreatDefenseEngine.getPolicies(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, policies, count: policies.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "MTD_POLICIES_ERROR", message: err.message });
+    }
+  });
+
+  // 797. POST /api/v1/fleet/mtd/policies — Create compliance policy
+  router.post('/api/v1/fleet/mtd/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.name) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "Policy name is required" });
+        return;
+      }
+      const policy = MobileThreatDefenseEngine.createPolicy(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, policy });
+    } catch (err) {
+      sendJson(res, 400, { error: "MTD_POLICY_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 798. DELETE /api/v1/fleet/mtd/policies/:id — Delete compliance policy
+  router.delete('/api/v1/fleet/mtd/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const deleted = MobileThreatDefenseEngine.deletePolicy(getDb(), req.params.id);
+      if (!deleted) {
+        sendJson(res, 404, { error: "POLICY_NOT_FOUND", message: "MTD policy not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, deleted: true });
+    } catch (err) {
+      sendJson(res, 500, { error: "MTD_POLICY_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 799. GET /api/v1/fleet/mtd/remediations — List remediation actions
+  router.get('/api/v1/fleet/mtd/remediations', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const remediations = MobileThreatDefenseEngine.getRemediations(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, remediations, count: remediations.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "MTD_REMEDIATIONS_ERROR", message: err.message });
+    }
+  });
+
+  // 800. POST /api/v1/fleet/mtd/remediations/dispatch — Dispatch manual remediation
+  router.post('/api/v1/fleet/mtd/remediations/dispatch', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.device_id || !req.body?.action_type) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "device_id and action_type are required" });
+        return;
+      }
+      const remediation = MobileThreatDefenseEngine.dispatchRemediation(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, remediation });
+    } catch (err) {
+      sendJson(res, 400, { error: "MTD_REMEDIATION_DISPATCH_ERROR", message: err.message });
+    }
+  });
+
+  // 801. GET /api/v1/fleet/mtd/devices/:id/risk — Query aggregated device risk score
+  router.get('/api/v1/fleet/mtd/devices/:id/risk', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const evaluation = MobileThreatDefenseEngine.calculateDeviceRiskScore(getDb(), req.params.id);
+      sendJson(res, 200, { success: true, evaluation });
+    } catch (err) {
+      sendJson(res, 500, { error: "MTD_RISK_QUERY_ERROR", message: err.message });
     }
   });
 

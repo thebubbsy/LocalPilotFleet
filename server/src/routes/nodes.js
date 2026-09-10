@@ -1,3 +1,4 @@
+import { MobileThreatDefenseEngine } from '../services/mobileThreatDefenseEngine.js';
 import { EnterpriseVpnProfileEngine } from '../services/enterpriseVpnProfileEngine.js';
 import { ScepPkiEnrollmentEngine } from '../services/scepPkiEnrollmentEngine.js';
 import { MamAppProtectionEngine } from '../services/mamAppProtectionEngine.js';
@@ -3152,6 +3153,69 @@ export function registerNodeRoutes(router) {
       sendJson(res, 201, { success: true, log });
     } catch (err) {
       sendJson(res, 400, { error: "NODE_VPN_TELEMETRY_ERROR", message: err.message });
+    }
+  });
+
+  // =========================================================================
+  // ITERATION 69: Mobile Threat Defense (MTD) Node Routes
+  // =========================================================================
+
+  // 802. POST /api/v1/nodes/:id/mtd/signals — Agent reports local threat signal
+  router.post('/api/v1/nodes/:id/mtd/signals', (req, res) => {
+    const node = authenticateNode(req, res);
+    if (!node) return;
+
+    try {
+      const payload = {
+        device_id: req.params.id,
+        ...req.body
+      };
+      const result = MobileThreatDefenseEngine.ingestThreatSignal(getDb(), payload);
+      sendJson(res, 201, { success: true, ...result });
+    } catch (err) {
+      sendJson(res, 400, { error: "NODE_MTD_SIGNAL_ERROR", message: err.message });
+    }
+  });
+
+  // 803. GET /api/v1/nodes/:id/mtd/posture — Agent fetches current device risk posture
+  router.get('/api/v1/nodes/:id/mtd/posture', (req, res) => {
+    const node = authenticateNode(req, res);
+    if (!node) return;
+
+    try {
+      const evaluation = MobileThreatDefenseEngine.calculateDeviceRiskScore(getDb(), req.params.id);
+      sendJson(res, 200, { success: true, evaluation });
+    } catch (err) {
+      sendJson(res, 500, { error: "NODE_MTD_POSTURE_ERROR", message: err.message });
+    }
+  });
+
+  // 804. POST /api/v1/nodes/:id/mtd/evaluate — Agent sends health beacon for posture evaluation
+  router.post('/api/v1/nodes/:id/mtd/evaluate', (req, res) => {
+    const node = authenticateNode(req, res);
+    if (!node) return;
+
+    try {
+      const result = MobileThreatDefenseEngine.evaluateDevicePosture(getDb(), req.params.id, req.body || {});
+      sendJson(res, 200, { success: true, result });
+    } catch (err) {
+      sendJson(res, 400, { error: "NODE_MTD_EVALUATE_ERROR", message: err.message });
+    }
+  });
+
+  // 805. GET /api/v1/nodes/:id/mtd/remediations/pending — Agent polls pending remediations
+  router.get('/api/v1/nodes/:id/mtd/remediations/pending', (req, res) => {
+    const node = authenticateNode(req, res);
+    if (!node) return;
+
+    try {
+      const remediations = MobileThreatDefenseEngine.getRemediations(getDb(), {
+        device_id: req.params.id,
+        status: 'PENDING'
+      });
+      sendJson(res, 200, { success: true, remediations, count: remediations.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "NODE_MTD_REMEDIATIONS_ERROR", message: err.message });
     }
   });
 

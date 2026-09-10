@@ -289,6 +289,12 @@ const App = {
         window.EnterpriseVpnProfilesTable.render();
       }
       break;
+    case 'mtd':
+      if (window.MobileThreatDefenseTable && typeof window.MobileThreatDefenseTable.render === 'function') {
+        window.MobileThreatDefenseTable.render();
+      }
+      break;
+
       case 'itdr':
         if (window.IdentityThreatTable) window.IdentityThreatTable.render();
         break;

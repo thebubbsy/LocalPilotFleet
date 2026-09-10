@@ -4031,6 +4031,63 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_vpn_log_event ON vpn_connection_audit_logs(event_type);
     CREATE INDEX IF NOT EXISTS idx_vpn_log_session ON vpn_connection_audit_logs(session_id);
 
+    -- Table 196: mtd_device_threat_signals
+    CREATE TABLE IF NOT EXISTS mtd_device_threat_signals (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      signal_type TEXT NOT NULL CHECK(signal_type IN (
+        'JAILBREAK_DETECTED', 'ROOT_DETECTED', 'SIDELOADED_APP',
+        'DEBUGGER_ATTACHED', 'SELINUX_PERMISSIVE', 'SYSTEM_INTEGRITY_DISABLED',
+        'UNKNOWN_CERT_AUTHORITY', 'MALICIOUS_PROFILE_INSTALLED'
+      )),
+      threat_level TEXT NOT NULL CHECK(threat_level IN ('INFORMATIONAL', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+      detection_engine TEXT NOT NULL DEFAULT 'LOCALPILOT_NATIVE',
+      threat_details_json TEXT DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE', 'MITIGATED', 'SUPPRESSED', 'RESOLVED')),
+      detected_at TEXT DEFAULT (DATETIME('now')),
+      resolved_at TEXT,
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mtd_sig_dev ON mtd_device_threat_signals(device_id);
+    CREATE INDEX IF NOT EXISTS idx_mtd_sig_type ON mtd_device_threat_signals(signal_type);
+    CREATE INDEX IF NOT EXISTS idx_mtd_sig_status ON mtd_device_threat_signals(status);
+
+    -- Table 197: mtd_risk_compliance_policies
+    CREATE TABLE IF NOT EXISTS mtd_risk_compliance_policies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      max_allowed_risk_level TEXT NOT NULL DEFAULT 'LOW' CHECK(max_allowed_risk_level IN ('SECURE', 'LOW', 'MEDIUM', 'HIGH')),
+      target_platform TEXT NOT NULL DEFAULT 'COMBINED' CHECK(target_platform IN ('COMBINED', 'MACOS', 'IOS', 'ANDROID', 'WINDOWS')),
+      auto_remediation_action TEXT NOT NULL DEFAULT 'BLOCK_ACCESS' CHECK(auto_remediation_action IN (
+        'NOTIFY_USER', 'BLOCK_ACCESS', 'TRIGGER_MAM_SELECTIVE_WIPE', 'QUARANTINE_DEVICE'
+      )),
+      is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mtd_pol_plat ON mtd_risk_compliance_policies(target_platform);
+
+    -- Table 198: mtd_remediation_actions
+    CREATE TABLE IF NOT EXISTS mtd_remediation_actions (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      signal_id TEXT,
+      policy_id TEXT,
+      action_type TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'EXECUTED' CHECK(status IN ('PENDING', 'EXECUTED', 'FAILED', 'REVERTED')),
+      action_details_json TEXT DEFAULT '{}',
+      executed_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(signal_id) REFERENCES mtd_device_threat_signals(id) ON DELETE SET NULL,
+      FOREIGN KEY(policy_id) REFERENCES mtd_risk_compliance_policies(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mtd_rem_dev ON mtd_remediation_actions(device_id);
+    CREATE INDEX IF NOT EXISTS idx_mtd_rem_status ON mtd_remediation_actions(status);
+
+
 
 
 
@@ -9597,6 +9654,63 @@ exit 0`,
       'macOS Sonoma 14.5',
       JSON.stringify({ cipher: 'AES-256-GCM', dh_group: 19, split_routes_count: 3 })
     );
+
+    // Seed 196-198: Mobile Threat Defense & Risk Posture (Iteration 69)
+    const insertMtdSig = db.prepare(`
+      INSERT OR IGNORE INTO mtd_device_threat_signals (
+        id, device_id, signal_type, threat_level, detection_engine,
+        threat_details_json, status, detected_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, DATETIME('now', '-30 minutes'))
+    `);
+
+    insertMtdSig.run(
+      'mtd-sig-01',
+      devTarget.id,
+      'JAILBREAK_DETECTED',
+      'CRITICAL',
+      'LOCALPILOT_NATIVE',
+      JSON.stringify({
+        indicator: '/Library/MobileSubstrate/MobileSubstrate.dylib',
+        description: 'Cydia substrate binary hook discovered in iOS container sandbox',
+        process_name: 'sandbox_probe'
+      }),
+      'ACTIVE'
+    );
+
+    const insertMtdPol = db.prepare(`
+      INSERT OR IGNORE INTO mtd_risk_compliance_policies (
+        id, name, max_allowed_risk_level, target_platform, auto_remediation_action, is_active
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    insertMtdPol.run(
+      'mtd-pol-01',
+      'Zero-Tolerance Mobile Threat Defense Compliance',
+      'LOW',
+      'COMBINED',
+      'TRIGGER_MAM_SELECTIVE_WIPE',
+      1
+    );
+
+    const insertMtdRem = db.prepare(`
+      INSERT OR IGNORE INTO mtd_remediation_actions (
+        id, device_id, signal_id, policy_id, action_type, status, action_details_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertMtdRem.run(
+      'mtd-rem-01',
+      devTarget.id,
+      'mtd-sig-01',
+      'mtd-pol-01',
+      'TRIGGER_MAM_SELECTIVE_WIPE',
+      'EXECUTED',
+      JSON.stringify({
+        enforcement: 'Automated MAM Selective Wipe dispatched due to CRITICAL jailbreak signal',
+        policy_name: 'Zero-Tolerance Mobile Threat Defense Compliance'
+      })
+    );
+
 
   }
 
