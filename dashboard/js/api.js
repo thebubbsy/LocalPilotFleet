@@ -2464,6 +2464,89 @@ async function forwardSiemEvent(data) {
 }
 
 
+
+// 40. Content Distribution, BITS, P2P LAN Mesh & Hardware TPM mTLS
+async function getContentDistributionStats() {
+  return apiFetch('/api/v1/fleet/content-distribution/stats');
+}
+
+async function getBitsJobs(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.deviceId) qs.set('deviceId', params.deviceId);
+  if (params.status) qs.set('status', params.status);
+  if (params.priority) qs.set('priority', params.priority);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/bits/jobs${qStr ? '?' + qStr : ''}`);
+}
+
+async function getBitsJob(id) {
+  return apiFetch(`/api/v1/fleet/bits/jobs/${encodeURIComponent(id)}`);
+}
+
+async function createBitsJob(data) {
+  return apiFetch('/api/v1/fleet/bits/jobs', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function updateBitsJob(id, data) {
+  return apiFetch(`/api/v1/fleet/bits/jobs/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
+}
+
+async function cancelBitsJob(id) {
+  return apiFetch(`/api/v1/fleet/bits/jobs/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
+async function getBitsJobScript(id) {
+  const res = await fetch(`/api/v1/fleet/bits/jobs/${encodeURIComponent(id)}/script`, {
+    headers: { 'X-Fleet-Key': getFleetKey() }
+  });
+  return res.text();
+}
+
+async function getP2pSeeds(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.content_sha256) qs.set('content_sha256', params.content_sha256);
+  if (params.subnet_cidr) qs.set('subnet_cidr', params.subnet_cidr);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/p2p/seeds${qStr ? '?' + qStr : ''}`);
+}
+
+async function getMtlsCertificates(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.deviceId) qs.set('deviceId', params.deviceId);
+  if (params.revocation_status) qs.set('revocation_status', params.revocation_status);
+  const qStr = qs.toString();
+  return apiFetch(`/api/v1/fleet/mtls/certificates${qStr ? '?' + qStr : ''}`);
+}
+
+async function enrollMtlsCertificate(data) {
+  return apiFetch('/api/v1/fleet/mtls/enroll', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function revokeMtlsCertificate(data) {
+  return apiFetch('/api/v1/fleet/mtls/revoke', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+async function verifyMtlsCertificate(data) {
+  return apiFetch('/api/v1/fleet/mtls/verify', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
 // 39. Native Windows MDM Protocol & CSP Integration
 async function getMdmStats() {
   return apiFetch('/api/v1/fleet/mdm/stats');
@@ -2520,6 +2603,20 @@ async function dispatchNativeRemoteWipe(data) {
 }
 
 window.FleetAPI = {
+  // Content Distribution, BITS, P2P LAN Mesh & Hardware TPM mTLS
+  getContentDistributionStats,
+  getBitsJobs,
+  getBitsJob,
+  createBitsJob,
+  updateBitsJob,
+  cancelBitsJob,
+  getBitsJobScript,
+  getP2pSeeds,
+  getMtlsCertificates,
+  enrollMtlsCertificate,
+  revokeMtlsCertificate,
+  verifyMtlsCertificate,
+
   // Native Windows MDM Protocol & CSP Integration
   getMdmStats,
   getMdmCsps,

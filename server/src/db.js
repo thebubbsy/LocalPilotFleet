@@ -2309,6 +2309,75 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_native_wipe_device ON native_remote_wipes(device_id);
     CREATE INDEX IF NOT EXISTS idx_native_wipe_status ON native_remote_wipes(status);
 
+    -- 110. BITS_TRANSFER_JOBS — Background Intelligent Transfer Service (BITS) & Content Distribution Queue
+    CREATE TABLE IF NOT EXISTS bits_transfer_jobs (
+      id TEXT PRIMARY KEY,
+      job_name TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      source_url TEXT NOT NULL,
+      target_local_path TEXT NOT NULL,
+      transfer_type TEXT NOT NULL DEFAULT 'DOWNLOAD' CHECK(transfer_type IN ('DOWNLOAD', 'UPLOAD')),
+      priority TEXT NOT NULL DEFAULT 'NORMAL' CHECK(priority IN ('FOREGROUND', 'HIGH', 'NORMAL', 'LOW')),
+      total_bytes INTEGER NOT NULL DEFAULT 0,
+      transferred_bytes INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'QUEUED' CHECK(status IN ('QUEUED', 'CONNECTING', 'TRANSFERRING', 'SUSPENDED', 'ERROR', 'TRANSFERRED', 'ACKNOWLEDGED', 'CANCELLED')),
+      error_code TEXT,
+      peer_caching_enabled INTEGER NOT NULL DEFAULT 1 CHECK(peer_caching_enabled IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      completed_at TEXT,
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_bits_device ON bits_transfer_jobs(device_id);
+    CREATE INDEX IF NOT EXISTS idx_bits_status ON bits_transfer_jobs(status);
+    CREATE INDEX IF NOT EXISTS idx_bits_priority ON bits_transfer_jobs(priority);
+
+    -- 111. P2P_CACHE_SEEDS — Peer-to-Peer LAN Mesh & Subnet Cache Ledger
+    CREATE TABLE IF NOT EXISTS p2p_cache_seeds (
+      id TEXT PRIMARY KEY,
+      content_sha256 TEXT NOT NULL,
+      payload_name TEXT NOT NULL,
+      total_size_bytes INTEGER NOT NULL DEFAULT 0,
+      device_id TEXT NOT NULL,
+      subnet_cidr TEXT NOT NULL DEFAULT '192.168.1.0/24',
+      lan_ip TEXT NOT NULL,
+      p2p_port INTEGER NOT NULL DEFAULT 7680,
+      bytes_served_p2p INTEGER NOT NULL DEFAULT 0,
+      is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+      expires_at TEXT,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_p2p_sha ON p2p_cache_seeds(content_sha256);
+    CREATE INDEX IF NOT EXISTS idx_p2p_subnet ON p2p_cache_seeds(subnet_cidr);
+    CREATE INDEX IF NOT EXISTS idx_p2p_active ON p2p_cache_seeds(is_active);
+
+    -- 112. DEVICE_MTLS_CERTIFICATES — Hardware TPM 2.0 Identity & Client mTLS Enrollment Ledger
+    CREATE TABLE IF NOT EXISTS device_mtls_certificates (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      cert_thumbprint TEXT NOT NULL UNIQUE,
+      subject_cn TEXT NOT NULL,
+      issuer_cn TEXT NOT NULL DEFAULT 'LocalPilot Root Enterprise Device CA',
+      tpm_backed INTEGER NOT NULL DEFAULT 1 CHECK(tpm_backed IN (0, 1)),
+      tpm_ek_pub_sha256 TEXT NOT NULL,
+      key_algorithm TEXT NOT NULL DEFAULT 'RSA-2048' CHECK(key_algorithm IN ('RSA-2048', 'RSA-4096', 'ECC-P256', 'ECC-P384')),
+      scep_transaction_id TEXT,
+      valid_from TEXT DEFAULT (DATETIME('now')),
+      valid_to TEXT NOT NULL,
+      revocation_status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(revocation_status IN ('ACTIVE', 'REVOKED', 'EXPIRED')),
+      revoked_at TEXT,
+      revocation_reason TEXT,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mtls_device ON device_mtls_certificates(device_id);
+    CREATE INDEX IF NOT EXISTS idx_mtls_thumbprint ON device_mtls_certificates(cert_thumbprint);
+    CREATE INDEX IF NOT EXISTS idx_mtls_status ON device_mtls_certificates(revocation_status);
+
+
 
 
 
@@ -5336,5 +5405,102 @@ exit 0`,
       );
     }
   }
+
+  // 40. Seed Content Distribution (BITS, P2P LAN Mesh & Hardware TPM mTLS)
+  const bitsCount = db.prepare('SELECT COUNT(*) as count FROM bits_transfer_jobs').get().count;
+  if (bitsCount === 0) {
+    const hostDev = db.prepare("SELECT id, hostname, friendly_name, serial_number FROM devices LIMIT 1").get();
+    const devId = hostDev ? hostDev.id : 'dev-01';
+    const hostName = hostDev ? (hostDev.hostname || hostDev.friendly_name || 'DESKTOP-R0H12DJ') : 'DESKTOP-R0H12DJ';
+
+    // Seed BITS jobs
+    const insertBits = db.prepare(`
+      INSERT OR IGNORE INTO bits_transfer_jobs (
+        id, job_name, device_id, source_url, target_local_path, transfer_type, priority, total_bytes, transferred_bytes, status, peer_caching_enabled
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertBits.run(
+      'bits-win11-cum-01',
+      'Windows 11 23H2 Cumulative Security Update KB5034441',
+      devId,
+      'https://swcdn.localpilot.internal/patches/KB5034441-x64.msu',
+      'C:\\Windows\\Temp\\KB5034441-x64.msu',
+      'DOWNLOAD',
+      'NORMAL',
+      754974720,
+      528482304,
+      'TRANSFERRING',
+      1
+    );
+
+    insertBits.run(
+      'bits-edr-core-02',
+      'LocalPilot Host Security Engine Core Definitions v4.12',
+      devId,
+      'https://swcdn.localpilot.internal/security/DefenderDefinitions-x64.exe',
+      'C:\\ProgramData\\LocalPilot\\DefenderDefinitions-x64.exe',
+      'DOWNLOAD',
+      'HIGH',
+      85983232,
+      85983232,
+      'ACKNOWLEDGED',
+      1
+    );
+
+    // Seed P2P LAN cache seeds
+    const insertP2p = db.prepare(`
+      INSERT OR IGNORE INTO p2p_cache_seeds (
+        id, content_sha256, payload_name, total_size_bytes, device_id, subnet_cidr, lan_ip, p2p_port, bytes_served_p2p, is_active
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertP2p.run(
+      'p2p-seed-01',
+      'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+      'KB5034441-x64.msu',
+      754974720,
+      devId,
+      '192.168.1.0/24',
+      '192.168.1.105',
+      7680,
+      1509949440,
+      1
+    );
+
+    insertP2p.run(
+      'p2p-seed-02',
+      'a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e',
+      'DefenderDefinitions-x64.exe',
+      85983232,
+      devId,
+      '192.168.1.0/24',
+      '192.168.1.108',
+      7680,
+      429916160,
+      1
+    );
+
+    // Seed Hardware TPM 2.0 mTLS Client Certificate
+    db.prepare(`
+      INSERT OR IGNORE INTO device_mtls_certificates (
+        id, device_id, cert_thumbprint, subject_cn, issuer_cn, tpm_backed, tpm_ek_pub_sha256, key_algorithm, scep_transaction_id, valid_from, valid_to, revocation_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'mtls-01',
+      devId,
+      '9E78C218B2A61D2B52F94CD4B105F88EE41209AB',
+      `CN=${hostName}, OU=Workstations, O=LocalPilot Fleet`,
+      'LocalPilot Root Enterprise Device CA',
+      1,
+      '482a4d33a925430f9a2e61a415ff6896ee7a3068e89139f40821034f5cb1b938',
+      'RSA-2048',
+      'SCEP-TX-8839201',
+      '2026-01-01 00:00:00',
+      '2028-01-01 23:59:59',
+      'ACTIVE'
+    );
+  }
+
 
 }

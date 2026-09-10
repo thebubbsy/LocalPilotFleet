@@ -1,3 +1,4 @@
+import { contentDistributionEngine } from '../services/contentDistributionEngine.js';
 import { mdmCspEngine } from '../services/mdmCspEngine.js';
 import * as supervisorEngine from '../services/supervisorEngine.js';
 import * as realtimePushEngine from '../services/realtimePushEngine.js';
@@ -2148,6 +2149,72 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { success: true, wipe: updated });
     } catch (err) {
       sendJson(res, 400, { error: 'WIPE_STATUS_ERROR', message: err.message });
+    }
+  });
+
+
+  // ── Dimension 4: Node Content Distribution & P2P Mesh Routes (94–97) ──
+  // 94. GET /api/v1/nodes/:id/bits/jobs
+  router.get('/api/v1/nodes/:id/bits/jobs', (req, res) => {
+    const authNode = authenticateNode(req, res);
+    if (!authNode) return;
+    try {
+      const db = getDb();
+      const jobs = contentDistributionEngine.getBitsJobs(db, { deviceId: req.params.id });
+      sendJson(res, 200, { jobs, count: jobs.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'NODE_BITS_JOBS_ERROR', message: err.message });
+    }
+  });
+
+  // 95. POST /api/v1/nodes/:id/bits/progress
+  router.post('/api/v1/nodes/:id/bits/progress', (req, res) => {
+    const authNode = authenticateNode(req, res);
+    if (!authNode) return;
+    try {
+      const db = getDb();
+      const jobId = req.body?.job_id;
+      if (!jobId) {
+        return sendJson(res, 400, { error: 'JOB_ID_REQUIRED', message: 'job_id is required' });
+      }
+      const updated = contentDistributionEngine.updateBitsJobProgress(db, jobId, req.body || {});
+      sendJson(res, 200, { success: true, job: updated });
+    } catch (err) {
+      sendJson(res, 400, { error: 'NODE_BITS_PROGRESS_ERROR', message: err.message });
+    }
+  });
+
+  // 96. POST /api/v1/nodes/:id/p2p/announce
+  router.post('/api/v1/nodes/:id/p2p/announce', (req, res) => {
+    const authNode = authenticateNode(req, res);
+    if (!authNode) return;
+    try {
+      const db = getDb();
+      const seed = contentDistributionEngine.registerP2pSeed(db, {
+        device_id: req.params.id,
+        ...(req.body || {})
+      });
+      sendJson(res, 201, { success: true, seed });
+    } catch (err) {
+      sendJson(res, 400, { error: 'P2P_ANNOUNCE_ERROR', message: err.message });
+    }
+  });
+
+  // 97. GET /api/v1/nodes/:id/p2p/peers
+  router.get('/api/v1/nodes/:id/p2p/peers', (req, res) => {
+    const authNode = authenticateNode(req, res);
+    if (!authNode) return;
+    try {
+      const db = getDb();
+      const sha = req.query?.content_sha256;
+      const subnet = req.query?.subnet_cidr;
+      if (!sha) {
+        return sendJson(res, 400, { error: 'SHA_REQUIRED', message: 'content_sha256 query param is required' });
+      }
+      const peers = contentDistributionEngine.findPeerSeedsForContent(db, sha, subnet);
+      sendJson(res, 200, { peers, count: peers.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'P2P_PEERS_ERROR', message: err.message });
     }
   });
 

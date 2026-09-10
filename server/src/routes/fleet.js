@@ -1,3 +1,4 @@
+import { contentDistributionEngine } from '../services/contentDistributionEngine.js';
 import { mdmCspEngine } from '../services/mdmCspEngine.js';
 import { rbacEngine } from '../services/rbacEngine.js';
 import { siemForwarderEngine } from '../services/siemForwarderEngine.js';
@@ -6537,6 +6538,165 @@ try {
       res.end(script);
     } catch (err) {
       sendJson(res, 500, { error: 'CSP_SCRIPT_ERROR', message: err.message });
+    }
+  });
+
+
+  // ── Dimension 4 & 3: Content Distribution, BITS, P2P Mesh & Hardware TPM mTLS Routes (396–407) ──
+  // 396. GET /api/v1/fleet/content-distribution/stats
+  router.get('/api/v1/fleet/content-distribution/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const stats = contentDistributionEngine.getContentDistributionStats(db);
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'CONTENT_DIST_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 397. GET /api/v1/fleet/bits/jobs
+  router.get('/api/v1/fleet/bits/jobs', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const jobs = contentDistributionEngine.getBitsJobs(db, req.query || {});
+      sendJson(res, 200, { jobs, count: jobs.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'BITS_JOBS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 398. GET /api/v1/fleet/bits/jobs/:id
+  router.get('/api/v1/fleet/bits/jobs/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const job = contentDistributionEngine.getBitsJobById(db, req.params.id);
+      if (!job) {
+        return sendJson(res, 404, { error: 'JOB_NOT_FOUND', message: `BITS job '${req.params.id}' not found` });
+      }
+      sendJson(res, 200, job);
+    } catch (err) {
+      sendJson(res, 500, { error: 'BITS_JOB_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 399. POST /api/v1/fleet/bits/jobs
+  router.post('/api/v1/fleet/bits/jobs', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const job = contentDistributionEngine.createBitsJob(db, req.body || {});
+      sendJson(res, 201, job);
+    } catch (err) {
+      sendJson(res, 400, { error: 'BITS_JOB_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 400. PATCH /api/v1/fleet/bits/jobs/:id
+  router.patch('/api/v1/fleet/bits/jobs/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const updated = contentDistributionEngine.updateBitsJobProgress(db, req.params.id, req.body || {});
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 400, { error: 'BITS_JOB_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 401. DELETE /api/v1/fleet/bits/jobs/:id
+  router.delete('/api/v1/fleet/bits/jobs/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const cancelled = contentDistributionEngine.cancelBitsJob(db, req.params.id);
+      sendJson(res, 200, { success: true, job: cancelled });
+    } catch (err) {
+      sendJson(res, 400, { error: 'BITS_JOB_CANCEL_ERROR', message: err.message });
+    }
+  });
+
+  // 402. GET /api/v1/fleet/bits/jobs/:id/script
+  router.get('/api/v1/fleet/bits/jobs/:id/script', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const job = contentDistributionEngine.getBitsJobById(db, req.params.id);
+      if (!job) {
+        return sendJson(res, 404, { error: 'JOB_NOT_FOUND', message: `BITS job '${req.params.id}' not found` });
+      }
+      const script = contentDistributionEngine.generateBitsTransferScript(job);
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end(script);
+    } catch (err) {
+      sendJson(res, 500, { error: 'BITS_SCRIPT_ERROR', message: err.message });
+    }
+  });
+
+  // 403. GET /api/v1/fleet/p2p/seeds
+  router.get('/api/v1/fleet/p2p/seeds', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const seeds = contentDistributionEngine.getP2pSeeds(db, req.query || {});
+      sendJson(res, 200, { seeds, count: seeds.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'P2P_SEEDS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 404. GET /api/v1/fleet/mtls/certificates
+  router.get('/api/v1/fleet/mtls/certificates', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const certs = contentDistributionEngine.getMtlsCertificates(db, req.query || {});
+      sendJson(res, 200, { certificates: certs, count: certs.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'MTLS_CERTS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 405. POST /api/v1/fleet/mtls/enroll
+  router.post('/api/v1/fleet/mtls/enroll', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const enrolled = contentDistributionEngine.enrollMtlsCertificate(db, req.body || {});
+      sendJson(res, 201, enrolled);
+    } catch (err) {
+      sendJson(res, 400, { error: 'MTLS_ENROLL_ERROR', message: err.message });
+    }
+  });
+
+  // 406. POST /api/v1/fleet/mtls/revoke
+  router.post('/api/v1/fleet/mtls/revoke', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const target = req.body?.id || req.body?.cert_thumbprint;
+      if (!target) {
+        return sendJson(res, 400, { error: 'TARGET_REQUIRED', message: 'Certificate id or cert_thumbprint is required' });
+      }
+      const revoked = contentDistributionEngine.revokeMtlsCertificate(db, target, req.body?.reason);
+      sendJson(res, 200, { success: true, certificate: revoked });
+    } catch (err) {
+      sendJson(res, 400, { error: 'MTLS_REVOKE_ERROR', message: err.message });
+    }
+  });
+
+  // 407. POST /api/v1/fleet/mtls/verify
+  router.post('/api/v1/fleet/mtls/verify', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const thumbprint = req.body?.cert_thumbprint;
+      const verification = contentDistributionEngine.verifyMtlsClientCert(db, thumbprint);
+      sendJson(res, 200, verification);
+    } catch (err) {
+      sendJson(res, 400, { error: 'MTLS_VERIFY_ERROR', message: err.message });
     }
   });
 

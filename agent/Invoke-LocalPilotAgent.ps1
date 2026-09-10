@@ -2104,6 +2104,88 @@ if ($Mode -eq 'Heartbeat') {
                 }
             }
 
+            # ── Content Distribution, BITS & Hardware TPM mTLS Audit ─────────
+            if (-not (Get-Variable -Name 'LastContentDistAudit' -Scope Script -ErrorAction SilentlyContinue)) {
+                $script:LastContentDistAudit = $null
+            }
+            $now = Get-Date
+            $shouldAuditDist = $false
+            if ($null -eq $script:LastContentDistAudit) {
+                $shouldAuditDist = $true
+            } elseif (($now - $script:LastContentDistAudit).TotalSeconds -ge 180) { # 3-minute interval
+                $shouldAuditDist = $true
+            }
+
+            if ($shouldAuditDist) {
+                $script:LastContentDistAudit = $now
+                try {
+                    # 1. Query assigned BITS jobs and inspect local BITS queue
+                    $bitsResp = Invoke-RestMethod -Uri "$baseUrl/api/v1/nodes/$deviceId/bits/jobs" -Headers $headers -Method GET -ErrorAction SilentlyContinue
+                    if ($bitsResp -and $bitsResp.jobs) {
+                        foreach ($job in $bitsResp.jobs) {
+                            if ($job.status -in @('QUEUED', 'CONNECTING', 'TRANSFERRING')) {
+                                $localJob = Get-BitsTransfer -Name "LocalPilot_$($job.id)*" -ErrorAction SilentlyContinue | Select-Object -First 1
+                                if ($localJob) {
+                                    $jobState = switch ($localJob.JobState) {
+                                        'Transferred' { 'TRANSFERRED' }
+                                        'Transferring' { 'TRANSFERRING' }
+                                        'Connecting' { 'CONNECTING' }
+                                        'Error' { 'ERROR' }
+                                        'TransientError' { 'ERROR' }
+                                        'Suspended' { 'SUSPENDED' }
+                                        default { 'TRANSFERRING' }
+                                    }
+
+                                    $bitsProgressPayload = @{
+                                        job_id            = $job.id
+                                        transferred_bytes = $localJob.BytesTransferred
+                                        total_bytes       = $localJob.BytesTotal
+                                        status            = $jobState
+                                    }
+
+                                    $null = Invoke-RestMethod `
+                                        -Uri "$baseUrl/api/v1/nodes/$deviceId/bits/progress" `
+                                        -Headers $headers `
+                                        -Method POST `
+                                        -Body ($bitsProgressPayload | ConvertTo-Json -Compress) `
+                                        -ContentType 'application/json' `
+                                        -ErrorAction SilentlyContinue
+
+                                    if ($localJob.JobState -eq 'Transferred') {
+                                        Complete-BitsTransfer -BitsJob $localJob -ErrorAction SilentlyContinue
+                                        Write-AgentLog 'INFO' "Completed and committed BITS transfer job: $($job.job_name)"
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    # 2. Check for Hardware TPM 2.0 Identity mTLS Certificate
+                    $tpm = Get-CimInstance -Namespace 'root/cimv2/Security/MicrosoftTpm' -ClassName Win32_Tpm -ErrorAction SilentlyContinue
+                    if ($tpm -and $tpm.IsEnabled_InitialValue) {
+                        $tpmEkSha = [System.Security.Cryptography.SHA256]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes("TPM_EK_$env:COMPUTERNAME"))
+                        $tpmEkHex = -join ($tpmEkSha | ForEach-Object { '{0:X2}' -f $_ })
+
+                        $certPayload = @{
+                            subject_cn        = "CN=$env:COMPUTERNAME, OU=Workstations, O=LocalPilot Fleet"
+                            tpm_ek_pub_sha256 = $tpmEkHex
+                            key_algorithm     = 'RSA-2048'
+                            tpm_backed        = 1
+                        }
+
+                        $null = Invoke-RestMethod `
+                            -Uri "$baseUrl/api/v1/fleet/mtls/enroll" `
+                            -Headers $headers `
+                            -Method POST `
+                            -Body ($certPayload | ConvertTo-Json -Compress) `
+                            -ContentType 'application/json' `
+                            -ErrorAction SilentlyContinue
+                    }
+                } catch {
+                    Write-AgentLog 'WARN' "Content distribution audit encountered non-fatal error: $($_.Exception.Message)"
+                }
+            }
+
             # ── Windows Firewall Rules, Profile Governance & Perimeter Sentinel ──
             if (-not (Get-Variable -Name 'LastFirewallAudit' -Scope Script -ErrorAction SilentlyContinue)) {
                 $script:LastFirewallAudit = $null

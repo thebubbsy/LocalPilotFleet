@@ -51,7 +51,7 @@ LocalPilot Fleet is the MDM you actually want:
   │  DESKTOP-A         │   │           │  Laptop (coffee shop)  │   │
   │  Install-LocalPilot│◄──┤           │  Install-LocalPilotNode│◄──┘
   │  Node.ps1          │   │           │  -ServerUrl https://   │
-  │  ├── Telemetry     │   │           │    fleet.example.com   │
+  │  ├── Telemetry     │   │           │    fleet.onyachamp.com │
   │  ├── Heartbeat     │   │           │  ├── Telemetry         │
   │  └── Event watcher │   │           │  └── Heartbeat         │
   └────────────────────┘   │           └────────────────────────┘
@@ -64,7 +64,7 @@ LocalPilot Fleet is the MDM you actually want:
 
   Connectivity resolution (Test-HybridResolver.ps1):
     1. Try  http://DADDY-PC:8443/api/v1/health   (3 s timeout, LAN)
-    2. Fallback https://fleet.example.com/api/v1/health  (Tunnel)
+    2. Fallback https://fleet.onyachamp.com/api/v1/health  (Tunnel)
     3. Report: Route='lan'|'tunnel'|'offline', Latency_ms, ServerVersion
 ```
 
@@ -197,7 +197,7 @@ Use Cloudflare Tunnel to manage devices that roam off your home network without 
 
 **Step 1** — Generate the tunnel config:
 ```powershell
-.\cloudflare\Generate-TunnelConfig.ps1 -Hostname fleet.yourdomain.com
+.\cloudflare\Generate-TunnelConfig.ps1 -Hostname fleet.onyachamp.com
 ```
 
 **Step 2** — Authenticate with Cloudflare (one-time, opens browser):
@@ -208,14 +208,14 @@ Use Cloudflare Tunnel to manage devices that roam off your home network without 
 **Step 3** — Create the tunnel:
 ```powershell
 & 'C:\Program Files (x86)\cloudflared\cloudflared.exe' tunnel create localpilot-fleet
-# Copy the UUID printed — e.g. a1b2c3d4-e5f6-7890-abcd-ef1234567890
+# Output: Created tunnel localpilot-fleet with id 151f6973-811e-4c64-8ddc-f0bb59c367ff
 ```
 
-**Step 4** — Edit `cloudflare/config.yml` and replace `<TUNNEL-ID>` with the UUID.
+**Step 4** — Populate `cloudflare/config.yml` with the tunnel ID and origin credentials file path.
 
 **Step 5** — Route your DNS:
 ```powershell
-& 'C:\Program Files (x86)\cloudflared\cloudflared.exe' tunnel route dns localpilot-fleet fleet.yourdomain.com
+& 'C:\Program Files (x86)\cloudflared\cloudflared.exe' tunnel route dns localpilot-fleet fleet.onyachamp.com
 ```
 
 **Step 6** — Run the tunnel (foreground test):
@@ -229,24 +229,44 @@ Use Cloudflare Tunnel to manage devices that roam off your home network without 
 .\cloudflare\Install-CloudflaredService.ps1
 ```
 
-### Test Connectivity
+### Test Connectivity (Hybrid LAN / Cloudflare Resolver)
 
 ```powershell
 .\cloudflare\Test-HybridResolver.ps1 `
-    -LanUrl    http://10.1.1.213:8443 `
-    -TunnelUrl https://fleet.yourdomain.com `
-    -FleetKey  a1b2c3d4-e5f6-7890-abcd-ef1234567890
+    -LanUrl    http://localhost:8443 `
+    -TunnelUrl https://fleet.onyachamp.com `
+    -FleetKey  <YOUR-FLEET-KEY>
 ```
 
-Output:
+Output when on LAN:
 ```
   LocalPilot Fleet -- Hybrid Connectivity Resolver
   ------------------------------------------------
-  [~]   LAN URL    : http://10.1.1.213:8443
-  [~]   Tunnel URL : https://fleet.yourdomain.com
+  [~]   LAN URL    : http://localhost:8443
+  [~]   Tunnel URL : https://fleet.onyachamp.com
 
   [~]   Probing LAN route (3 s timeout)...
-  [OK]  LAN route active (low latency) -- 4 ms  |  server: LocalPilot Fleet Server
+  [OK]  LAN route active (low latency) -- 2148 ms  |  server: LocalPilot Fleet Server
+
+Route Latency_ms ServerVersion
+----- ---------- -------------
+lan         2148 LocalPilot Fleet Server
+```
+
+Output when roaming off-LAN (automatic Cloudflare Tunnel fallback):
+```
+  [~]   LAN URL    : http://10.1.1.213:8443
+  [~]   Tunnel URL : https://fleet.onyachamp.com
+
+  [~]   Probing LAN route (3 s timeout)...
+  [XX]  LAN unreachable (3033 ms). Trying Cloudflare Tunnel...
+  [~]   Probing Tunnel route (10 s timeout)...
+  [OK]  Tunnel route active -- 173 ms  |  server: LocalPilot Fleet Server
+  [!!]  Using tunnel path -- expect higher latency than LAN.
+
+Route  Latency_ms ServerVersion
+-----  ---------- -------------
+tunnel        173 LocalPilot Fleet Server
 ```
 
 ---

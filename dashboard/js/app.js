@@ -197,6 +197,9 @@ const App = {
       case 'mdm-csp':
         if (window.MdmCspTable) window.MdmCspTable.render();
         break;
+      case 'content-distribution':
+        if (window.ContentDistributionTable) window.ContentDistributionTable.render();
+        break;
       case 'settings':
         this.renderSettings();
         break;
