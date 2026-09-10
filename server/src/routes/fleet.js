@@ -1,3 +1,4 @@
+import { HardwareAttestationEngine } from '../services/hardwareAttestationEngine.js';
 import { LicenseOptimizationEngine } from '../services/licenseOptimizationEngine.js';
 import { RansomwareCanaryEngine } from '../services/ransomwareCanaryEngine.js';
 import { CloudAppDiscoveryEngine } from '../services/cloudAppDiscoveryEngine.js';
@@ -10442,6 +10443,171 @@ try {
       sendJson(res, 200, { success: true, result });
     } catch (err) {
       sendJson(res, 500, { error: "SAM_SHELFWARE_SCAN_ERROR", message: err.message });
+    }
+  });
+
+
+  // =========================================================================
+  // ITERATION 64: Hardware Supply Chain & TPM 2.0 / UEFI Measured Boot Attestation
+  // =========================================================================
+
+  // 716. GET /api/v1/fleet/hardware-attestation/stats — Fleet-wide hardware attestation KPIs
+  router.get('/api/v1/fleet/hardware-attestation/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = HardwareAttestationEngine.getAttestationStats(getDb());
+      sendJson(res, 200, { success: true, stats });
+    } catch (err) {
+      sendJson(res, 500, { error: "ATTESTATION_STATS_ERROR", message: err.message });
+    }
+  });
+
+  // 717. GET /api/v1/fleet/hardware-attestation/baselines — List supply chain baselines
+  router.get('/api/v1/fleet/hardware-attestation/baselines', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const baselines = HardwareAttestationEngine.getSupplyChainBaselines(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, baselines, count: baselines.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "ATTESTATION_BASELINES_ERROR", message: err.message });
+    }
+  });
+
+  // 718. GET /api/v1/fleet/hardware-attestation/baselines/:deviceId — Single device baseline with latest boot
+  router.get('/api/v1/fleet/hardware-attestation/baselines/:deviceId', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const baseline = HardwareAttestationEngine.getBaselineByDeviceId(getDb(), req.params.deviceId);
+      if (!baseline) {
+        sendJson(res, 404, { error: "BASELINE_NOT_FOUND", message: "Hardware baseline not found for device" });
+        return;
+      }
+      sendJson(res, 200, { success: true, baseline });
+    } catch (err) {
+      sendJson(res, 500, { error: "ATTESTATION_BASELINE_GET_ERROR", message: err.message });
+    }
+  });
+
+  // 719. POST /api/v1/fleet/hardware-attestation/baselines — Register or update hardware baseline
+  router.post('/api/v1/fleet/hardware-attestation/baselines', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.device_id) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "device_id is required" });
+        return;
+      }
+      const baseline = HardwareAttestationEngine.registerBaseline(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, baseline });
+    } catch (err) {
+      sendJson(res, 400, { error: "ATTESTATION_BASELINE_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 720. DELETE /api/v1/fleet/hardware-attestation/baselines/:id — Delete hardware baseline
+  router.delete('/api/v1/fleet/hardware-attestation/baselines/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const deleted = HardwareAttestationEngine.deleteBaseline(getDb(), req.params.id);
+      if (!deleted) {
+        sendJson(res, 404, { error: "BASELINE_NOT_FOUND", message: "Hardware baseline not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, deleted: true });
+    } catch (err) {
+      sendJson(res, 500, { error: "ATTESTATION_BASELINE_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 721. POST /api/v1/fleet/hardware-attestation/verify-components — Compare live components against baseline
+  router.post('/api/v1/fleet/hardware-attestation/verify-components', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.device_id) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "device_id is required" });
+        return;
+      }
+      const result = HardwareAttestationEngine.verifyHardwareComponents(getDb(), req.body.device_id, req.body || {});
+      sendJson(res, 200, { success: true, result });
+    } catch (err) {
+      sendJson(res, 400, { error: "ATTESTATION_VERIFY_ERROR", message: err.message });
+    }
+  });
+
+  // 722. GET /api/v1/fleet/hardware-attestation/boot-logs — Query TPM measured boot logs
+  router.get('/api/v1/fleet/hardware-attestation/boot-logs', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const logs = HardwareAttestationEngine.getMeasuredBootLogs(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, logs, count: logs.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "ATTESTATION_BOOT_LOGS_ERROR", message: err.message });
+    }
+  });
+
+  // 723. POST /api/v1/fleet/hardware-attestation/boot-logs — Ingest TPM measured boot log
+  router.post('/api/v1/fleet/hardware-attestation/boot-logs', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.device_id || !req.body?.pcr_0_bios_sha256) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "device_id and pcr_0_bios_sha256 are required" });
+        return;
+      }
+      const record = HardwareAttestationEngine.ingestMeasuredBootLog(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, record });
+    } catch (err) {
+      sendJson(res, 400, { error: "ATTESTATION_BOOT_LOG_INGEST_ERROR", message: err.message });
+    }
+  });
+
+  // 724. GET /api/v1/fleet/hardware-attestation/policies — Retrieve attestation policies
+  router.get('/api/v1/fleet/hardware-attestation/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policies = HardwareAttestationEngine.getAttestationPolicies(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, policies, count: policies.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "ATTESTATION_POLICIES_ERROR", message: err.message });
+    }
+  });
+
+  // 725. POST /api/v1/fleet/hardware-attestation/policies — Create attestation policy
+  router.post('/api/v1/fleet/hardware-attestation/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.name) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "Policy name is required" });
+        return;
+      }
+      const policy = HardwareAttestationEngine.createAttestationPolicy(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, policy });
+    } catch (err) {
+      sendJson(res, 400, { error: "ATTESTATION_POLICY_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 726. DELETE /api/v1/fleet/hardware-attestation/policies/:id — Delete attestation policy
+  router.delete('/api/v1/fleet/hardware-attestation/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const deleted = HardwareAttestationEngine.deleteAttestationPolicy(getDb(), req.params.id);
+      if (!deleted) {
+        sendJson(res, 404, { error: "POLICY_NOT_FOUND", message: "Attestation policy not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, deleted: true });
+    } catch (err) {
+      sendJson(res, 500, { error: "ATTESTATION_POLICY_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 727. POST /api/v1/fleet/hardware-attestation/evaluate/:deviceId — Evaluate device compliance
+  router.post('/api/v1/fleet/hardware-attestation/evaluate/:deviceId', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const evaluation = HardwareAttestationEngine.evaluateDeviceCompliance(getDb(), req.params.deviceId);
+      sendJson(res, 200, { success: true, evaluation });
+    } catch (err) {
+      sendJson(res, 500, { error: "ATTESTATION_EVALUATE_ERROR", message: err.message });
     }
   });
 

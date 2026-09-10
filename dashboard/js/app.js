@@ -263,6 +263,11 @@ const App = {
           window.LicenseOptimizationTable.render();
         }
         break;
+      case 'attestation':
+        if (window.HardwareAttestationTable && typeof window.HardwareAttestationTable.render === 'function') {
+          window.HardwareAttestationTable.render();
+        }
+        break;
       case 'itdr':
         if (window.IdentityThreatTable) window.IdentityThreatTable.render();
         break;

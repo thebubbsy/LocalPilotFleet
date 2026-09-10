@@ -3718,6 +3718,72 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_sum_device ON software_usage_metering(device_id);
     CREATE INDEX IF NOT EXISTS idx_sum_process ON software_usage_metering(process_name);
     CREATE INDEX IF NOT EXISTS idx_sum_shelfware ON software_usage_metering(is_shelfware);
+    -- =========================================================================
+    -- ITERATION 64: Hardware Supply Chain & TPM 2.0 / UEFI Measured Boot Attestation
+    -- =========================================================================
+    -- Table 181: hardware_supply_chain_baselines
+    CREATE TABLE IF NOT EXISTS hardware_supply_chain_baselines (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL UNIQUE,
+      hostname TEXT NOT NULL,
+      tpm_manufacturer TEXT NOT NULL,
+      tpm_spec_version TEXT NOT NULL DEFAULT '2.0',
+      motherboard_serial TEXT,
+      chassis_serial TEXT,
+      cpu_model TEXT,
+      cpu_microcode_rev TEXT,
+      dimm_serials_json TEXT NOT NULL DEFAULT '[]',
+      nvme_serials_json TEXT NOT NULL DEFAULT '[]',
+      secure_boot_enabled INTEGER NOT NULL DEFAULT 1 CHECK(secure_boot_enabled IN (0, 1)),
+      dma_guard_enabled INTEGER NOT NULL DEFAULT 1 CHECK(dma_guard_enabled IN (0, 1)),
+      hvci_code_integrity INTEGER NOT NULL DEFAULT 1 CHECK(hvci_code_integrity IN (0, 1)),
+      verified_status TEXT NOT NULL DEFAULT 'VERIFIED' CHECK(verified_status IN ('VERIFIED', 'COMPONENT_MISMATCH', 'UNATTESTED', 'TAMPER_ALERT')),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_hscb_device ON hardware_supply_chain_baselines(device_id);
+    CREATE INDEX IF NOT EXISTS idx_hscb_status ON hardware_supply_chain_baselines(verified_status);
+
+    -- Table 182: tpm_measured_boot_logs
+    CREATE TABLE IF NOT EXISTS tpm_measured_boot_logs (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      hostname TEXT NOT NULL,
+      boot_session_id TEXT NOT NULL,
+      pcr_0_bios_sha256 TEXT NOT NULL,
+      pcr_2_rom_sha256 TEXT NOT NULL,
+      pcr_4_bootmgr_sha256 TEXT NOT NULL,
+      pcr_7_secureboot_sha256 TEXT NOT NULL,
+      pcr_11_bitlocker_sha256 TEXT NOT NULL,
+      attestation_result TEXT NOT NULL DEFAULT 'PASSED' CHECK(attestation_result IN ('PASSED', 'PCR_DRIFT_DETECTED', 'SECUREBOOT_REVOKED', 'FAILED')),
+      drift_details_json TEXT DEFAULT '{}',
+      recorded_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tmbl_device ON tpm_measured_boot_logs(device_id);
+    CREATE INDEX IF NOT EXISTS idx_tmbl_session ON tpm_measured_boot_logs(boot_session_id);
+    CREATE INDEX IF NOT EXISTS idx_tmbl_result ON tpm_measured_boot_logs(attestation_result);
+
+    -- Table 183: hardware_attestation_policies
+    CREATE TABLE IF NOT EXISTS hardware_attestation_policies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      target_scope TEXT NOT NULL DEFAULT 'ALL_FLEET' CHECK(target_scope IN ('ALL_FLEET', 'DYNAMIC_GROUP', 'DEVICE')),
+      target_id TEXT,
+      require_tpm_2_0 INTEGER NOT NULL DEFAULT 1 CHECK(require_tpm_2_0 IN (0, 1)),
+      require_secure_boot INTEGER NOT NULL DEFAULT 1 CHECK(require_secure_boot IN (0, 1)),
+      require_dma_protection INTEGER NOT NULL DEFAULT 1 CHECK(require_dma_protection IN (0, 1)),
+      require_memory_integrity_hvci INTEGER NOT NULL DEFAULT 1 CHECK(require_memory_integrity_hvci IN (0, 1)),
+      quarantine_on_component_mismatch INTEGER NOT NULL DEFAULT 1 CHECK(quarantine_on_component_mismatch IN (0, 1)),
+      is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_hap_active ON hardware_attestation_policies(is_active);
+
 
 
 
@@ -8940,6 +9006,81 @@ exit 0`,
       1
     );
   }
+
+  // Iteration 64: Hardware Supply Chain & Measured Boot Seeds
+  const hscbCount = db.prepare('SELECT COUNT(*) as count FROM hardware_supply_chain_baselines').get().count;
+  if (hscbCount === 0) {
+    const devTarget = db.prepare('SELECT id, hostname FROM devices LIMIT 1').get() || { id: 'dev-01', hostname: 'DESKTOP-CORP-01' };
+
+    const insertHscb = db.prepare(`
+      INSERT OR IGNORE INTO hardware_supply_chain_baselines (
+        id, device_id, hostname, tpm_manufacturer, tpm_spec_version,
+        motherboard_serial, chassis_serial, cpu_model, cpu_microcode_rev,
+        dimm_serials_json, nvme_serials_json, secure_boot_enabled, dma_guard_enabled,
+        hvci_code_integrity, verified_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertHscb.run(
+      'hscb-01',
+      devTarget.id,
+      devTarget.hostname,
+      'Infineon Technologies AG (IFX)',
+      '2.0',
+      'MB-LPT-998234-A',
+      'CHS-CORP-SEC-01',
+      '13th Gen Intel(R) Core(TM) i9-13900K',
+      '0x123',
+      JSON.stringify(['DIMM-SKH-8821092', 'DIMM-SKH-8821093']),
+      JSON.stringify(['SNDK-NVME-991208']),
+      1,
+      1,
+      1,
+      'VERIFIED'
+    );
+
+    const insertTmbl = db.prepare(`
+      INSERT OR IGNORE INTO tpm_measured_boot_logs (
+        id, device_id, hostname, boot_session_id,
+        pcr_0_bios_sha256, pcr_2_rom_sha256, pcr_4_bootmgr_sha256,
+        pcr_7_secureboot_sha256, pcr_11_bitlocker_sha256, attestation_result, drift_details_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertTmbl.run(
+      'mbl-01',
+      devTarget.id,
+      devTarget.hostname,
+      'boot-sess-99124',
+      'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+      'f2ca1bb6c7e907d06dafe4687e579fce76b37e4e93b7605022da52e6ccc26fd2',
+      'a7b3c1d9e2f40816283a4b5c6d7e8f90123456789abcdef0123456789abcdef0',
+      'c8d7e6f5a4b3928170615243342516070123456789abcdef0123456789abcdef',
+      '99887766554433221100aabbccddeeff0123456789abcdef0123456789abcdef',
+      'PASSED',
+      JSON.stringify({ note: 'All PCR hash measurements match enterprise gold master baseline' })
+    );
+
+    const insertHap = db.prepare(`
+      INSERT OR IGNORE INTO hardware_attestation_policies (
+        id, name, target_scope, require_tpm_2_0, require_secure_boot,
+        require_dma_protection, require_memory_integrity_hvci, quarantine_on_component_mismatch, is_active
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertHap.run(
+      'hap-01',
+      'DoD IL5 Strict Hardware Attestation & Measured Boot Policy',
+      'ALL_FLEET',
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    );
+  }
+
 
 
 

@@ -1,3 +1,4 @@
+import { HardwareAttestationEngine } from '../services/hardwareAttestationEngine.js';
 import { LicenseOptimizationEngine } from '../services/licenseOptimizationEngine.js';
 import { RansomwareCanaryEngine } from '../services/ransomwareCanaryEngine.js';
 import { CloudAppDiscoveryEngine } from '../services/cloudAppDiscoveryEngine.js';
@@ -2906,6 +2907,57 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { success: true, reclaim_orders: orders, count: orders.length });
     } catch (err) {
       sendJson(res, 500, { error: "NODE_SAM_RECLAIM_ORDERS_ERROR", message: err.message });
+    }
+  });
+
+
+  // =========================================================================
+  // ITERATION 64: Hardware Supply Chain & TPM 2.0 Attestation Endpoints
+  // =========================================================================
+
+  // 728. GET /api/v1/nodes/:id/hardware-attestation/policy — Agent retrieves active attestation policy
+  router.get('/api/v1/nodes/:id/hardware-attestation/policy', (req, res) => {
+    const node = authenticateNode(req, res);
+    if (!node) return;
+
+    try {
+      const db = getDb();
+      const policy = db.prepare('SELECT * FROM hardware_attestation_policies WHERE is_active = 1 LIMIT 1').get();
+      sendJson(res, 200, { success: true, policy: policy || null });
+    } catch (err) {
+      sendJson(res, 500, { error: "NODE_ATTESTATION_POLICY_ERROR", message: err.message });
+    }
+  });
+
+  // 729. POST /api/v1/nodes/:id/hardware-attestation/report-boot-pcr — Agent reports measured boot PCR hashes
+  router.post('/api/v1/nodes/:id/hardware-attestation/report-boot-pcr', (req, res) => {
+    const node = authenticateNode(req, res);
+    if (!node) return;
+
+    try {
+      const db = getDb();
+      const log = HardwareAttestationEngine.ingestMeasuredBootLog(db, {
+        ...req.body,
+        device_id: req.params.id,
+        hostname: node.hostname
+      });
+      sendJson(res, 201, { success: true, log });
+    } catch (err) {
+      sendJson(res, 400, { error: "NODE_BOOT_PCR_REPORT_ERROR", message: err.message });
+    }
+  });
+
+  // 730. POST /api/v1/nodes/:id/hardware-attestation/report-components — Agent submits component audit telemetry
+  router.post('/api/v1/nodes/:id/hardware-attestation/report-components', (req, res) => {
+    const node = authenticateNode(req, res);
+    if (!node) return;
+
+    try {
+      const db = getDb();
+      const result = HardwareAttestationEngine.verifyHardwareComponents(db, req.params.id, req.body || {});
+      sendJson(res, 200, { success: true, result });
+    } catch (err) {
+      sendJson(res, 400, { error: "NODE_COMPONENTS_REPORT_ERROR", message: err.message });
     }
   });
 
