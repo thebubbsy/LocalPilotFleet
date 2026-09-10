@@ -2071,3 +2071,643 @@ Iteration 51 delivers enterprise Endpoint Network Isolation and Host Quarantine 
    - 20/20 unit tests passed in `server/tests/network_isolation.test.js`.
    - 1,093/1,093 tests passed across 137 test suites in `npm test`.
    - Git Commit: `41c9f3a` pushed to `origin main` and mirrored to OneDrive.
+## Iteration 52: Endpoint Remediation Automation & Custom Live Response Engine
+
+### Overview
+Iteration 52 delivers comprehensive Endpoint Remediation Automation and Custom Live Response capabilities equivalent to Microsoft Defender for Endpoint Live Response and CrowdStrike Falcon Real Time Response (RTR). It allows SecOps analysts to establish interactive remote investigation sessions, dispatch queued commands (`EXEC_POWERSHELL`, `EXEC_CMD`, `LIST_DIRECTORY`, `GET_FILE`, `PUT_FILE`, `TERMINATE_PROCESS`, `ISOLATE_HOST`, `RESTORE_HOST`), execute automated self-healing detection/remediation playbooks, quarantine suspicious files into a secure local vault, and safely restore quarantined artifacts with an audited forensic chain of custody.
+
+### Key Deliverables & Database Schema
+1. **Database Schema (Tables 145-147 in SQLite):**
+   - `custom_remediation_packages` (Table 145): Configures automated self-healing playbooks with distinct detection and remediation scripts, execution timeout, run frequency (`ON_DEMAND`, `HOURLY`, `DAILY`, `WEEKLY`, `MONTHLY`), run-as account (`SYSTEM`, `CURRENT_USER`, `LOCAL_SERVICE`), and signature verification.
+   - `live_response_command_sessions` (Table 146): Interactive remote investigation session command queue tracking operators, execution statuses (`QUEUED`, `IN_PROGRESS`, `COMPLETED`, `FAILED`, `TIMED_OUT`, `CANCELLED`), stdout/stderr outputs, exit codes, and durations.
+   - `quarantined_files_inventory` (Table 147): Quarantined malware artifact vault tracking original paths, SHA-256 hashes, file sizes, threat names, quarantined dates, and forensic restoration states.
+2. **Backend Engine (`server/src/services/liveResponseEngine.js`):**
+   - 12 static methods providing live response metrics, playbook CRUD, interactive session initialization, command queuing, node agent polling and result recording, malware artifact quarantine, safe file restoration, and native PowerShell wrapper script generation with detection/remediation logic.
+3. **REST Endpoints (539-552 in `fleet.js` & `nodes.js`):**
+   - `GET /api/v1/fleet/live-response/stats`
+   - `GET /api/v1/fleet/live-response/sessions/:sessionId/commands`
+   - `POST /api/v1/fleet/live-response/sessions`
+   - `POST /api/v1/fleet/live-response/sessions/:sessionId/commands`
+   - `POST /api/v1/fleet/live-response/commands/:commandId/complete`
+   - `GET /api/v1/fleet/live-response/quarantine`
+   - `POST /api/v1/fleet/live-response/quarantine`
+   - `POST /api/v1/fleet/live-response/quarantine/:id/restore`
+   - `GET /api/v1/fleet/remediation-packages`
+   - `GET /api/v1/fleet/remediation-packages/:id`
+   - `POST /api/v1/fleet/remediation-packages`
+   - `DELETE /api/v1/fleet/remediation-packages/:id`
+   - `GET /api/v1/fleet/remediation-packages/:id/script`
+   - `GET /api/v1/nodes/:id/live-response/poll`
+   - `POST /api/v1/nodes/:id/live-response/results`
+4. **Dashboard Blade (`dashboard/js/components/liveResponseTable.js`):**
+   - KPI metric cards (Active Sessions, Remediation Playbooks, Executed Commands, Quarantine Vault).
+   - Live Response interactive terminal console with command type selector and retro monospace output.
+   - Automated remediation playbooks table with category badges, schedule, and script viewer.
+   - Quarantined artifacts vault with threat classifications, hashes, and 1-click restore actions.
+5. **Quality Gate Verification:**
+   - 20/20 unit tests passed in `server/tests/live_response.test.js`.
+   - 1,113/1,113 tests passed across 138 test suites in `npm test`.
+
+## Iteration 53: EDR Incident Correlation, Multi-Stage Attack Storyline & Automated Alert Aggregation Engine
+
+### Overview
+Iteration 53 delivers enterprise EDR Incident Correlation, Multi-Stage Attack Storylines, and Automated Alert Aggregation capabilities equivalent to Microsoft Defender for Endpoint Security Incidents and CrowdStrike Falcon Incident Workbenches. It automatically correlates discrete telemetry signals across modules (security events, tamper attempts, host network isolation logs, quarantined malware, and web protection alerts) into unified Security Incident cases, synthesizes sequential kill-chain Attack Storyline process graphs, maps events to MITRE ATT&CK techniques, calculates incident risk scores (0–100), and provides SecOps root cause attribution and remediation workflows.
+
+### Key Deliverables & Database Schema
+1. **Database Schema (Tables 148-150 in SQLite — Total: 150 Tables!):**
+   - `incident_investigation_cases` (Table 148): Correlated security incident cases with severity (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`), status (`ACTIVE`, `UNDER_INVESTIGATION`, `CONTAINED`, `RESOLVED`, `FALSE_POSITIVE`), classification (`UNCLASSIFIED`, `TRUE_POSITIVE`, `FALSE_POSITIVE`, `BENIGN_POSITIVE`), risk score (0–100), assigned analyst, root cause, attack storyline JSON graph, and MITRE tactics.
+   - `incident_alert_associations` (Table 149): Multi-module alert aggregation mapping incidents to underlying events across `SECURITY_EVENTS`, `TAMPER_AUDIT`, `ISOLATION_LOGS`, `QUARANTINE_INVENTORY`, and `WEB_PROTECTION`.
+   - `incident_timeline_milestones` (Table 150): Chronological kill-chain attack milestones tracking phase names (`INITIAL_ACCESS`, `EXECUTION`, `DEFENSE_EVASION`, `COMMAND_AND_CONTROL`, `REMEDIATION`), evidence artifacts, and MITRE ATT&CK technique IDs.
+2. **Backend Engine (`server/src/services/incidentCorrelationEngine.js`):**
+   - 12 static methods providing incident statistics, case CRUD, alert association, timeline milestone management, automated cross-signal alert correlation sweeps (`correlateAlerts`), attack storyline graph generation (`generateAttackStorylineJson`), and remediation closure logging.
+3. **REST Endpoints (553-566 in `fleet.js` & `nodes.js`):**
+   - `GET /api/v1/fleet/incidents/stats`
+   - `GET /api/v1/fleet/incidents`
+   - `POST /api/v1/fleet/incidents`
+   - `GET /api/v1/fleet/incidents/:id`
+   - `PATCH /api/v1/fleet/incidents/:id`
+   - `POST /api/v1/fleet/incidents/:id/close`
+   - `GET /api/v1/fleet/incidents/:id/alerts`
+   - `POST /api/v1/fleet/incidents/:id/alerts`
+   - `GET /api/v1/fleet/incidents/:id/timeline`
+   - `POST /api/v1/fleet/incidents/:id/timeline`
+   - `GET /api/v1/fleet/incidents/:id/storyline`
+   - `POST /api/v1/fleet/incidents/correlate/:deviceId`
+   - `GET /api/v1/nodes/:id/incidents`
+   - `POST /api/v1/nodes/:id/incidents/trigger-correlation`
+4. **Dashboard Blade (`dashboard/js/components/incidentCorrelationTable.js`):**
+   - KPI metric cards (Active Incidents, Critical Severity, Correlated Alerts, Mean Risk Score).
+   - Interactive Attack Storyline panel rendering sequential kill-chain milestone nodes with MITRE ATT&CK phase badges.
+   - Security incidents investigation table with risk indicators, analyst assignments, and 1-click Storyline inspection and case resolution.
+5. **Quality Gate Verification:**
+   - 20/20 unit tests passed in `server/tests/incident_correlation.test.js`.
+   - 1,133/1,133 tests passed across 139 test suites in `npm test`.
+
+## Iteration 54: Automated Threat Intelligence Feed Ingest & Real-Time Indicator Matching Engine
+
+### Overview
+Iteration 54 delivers enterprise Threat Intelligence Feed Ingest, High-Speed Indicator Caching, and Real-Time Endpoint IOC Matching equivalent to Microsoft Defender Threat Intelligence (MDTI) and CrowdStrike Falcon Intelligence. It automatically ingests and normalizes external threat feeds across multiple standards (STIX/TAXII 2.1, AbuseIPDB, AlienVault OTX, URLhaus, and custom MISP JSON feeds), caches indicators (IP addresses, domain FQDNs, URLs, and file hashes) with confidence scoring and MITRE ATT&CK technique tags, performs real-time interception on endpoints, and dispatches automated security event alarms upon indicator matches.
+
+### Key Deliverables & Database Schema
+1. **Database Schema (Tables 151-153 in SQLite — Total: 153 Tables!):**
+   - `threat_intel_feed_sources` (Table 151): External threat intelligence feed collectors supporting formats (`STIX_TAXII_21`, `MISP_JSON`, `CSV_INDICATORS`, `ABUSE_IPDB`, `URLHAUS_JSON`, `CUSTOM_API`), polling intervals, confidence weights (0–100), default mitigation actions (`ALERT`, `BLOCK`, `ISOLATE_HOST`, `AUDIT`), indicator counts, and sync statuses.
+   - `threat_intel_indicators_cache` (Table 152): High-speed IOC cache tracking indicator types (`IPV4_ADDRESS`, `DOMAIN_FQDN`, `URL`, `SHA256_HASH`, `MD5_HASH`, `CIDR_SUBNET`), threat classifications (`MALWARE`, `RANSOMWARE`, `C2_BEACON`, `PHISHING`, `BOTNET`, `EXPLOIT_KIT`), confidence scores, severities, descriptions, and MITRE technique IDs.
+   - `threat_intel_match_events` (Table 153): Real-time forensic match event telemetry capturing host ID, matched indicator, execution context (process name, destination port, DNS query), action taken (`BLOCKED`, `ALERTED`, `QUARANTINED`, `MONITORED`), and severity.
+2. **Backend Engine (`server/src/services/threatIntelEngine.js`):**
+   - 13 static methods providing aggregated threat metrics, feed source CRUD, indicator cache management, real-time indicator checking (`checkIndicatorMatch`), automated security alert creation, on-demand feed synchronization, and match event forensic logging.
+3. **REST Endpoints (567-580 in `fleet.js` & `nodes.js`):**
+   - `GET /api/v1/fleet/threat-intel/stats`
+   - `GET /api/v1/fleet/threat-intel/feeds`
+   - `POST /api/v1/fleet/threat-intel/feeds`
+   - `GET /api/v1/fleet/threat-intel/feeds/:id`
+   - `DELETE /api/v1/fleet/threat-intel/feeds/:id`
+   - `POST /api/v1/fleet/threat-intel/feeds/:id/sync`
+   - `GET /api/v1/fleet/threat-intel/indicators`
+   - `POST /api/v1/fleet/threat-intel/indicators`
+   - `POST /api/v1/fleet/threat-intel/indicators/match`
+   - `DELETE /api/v1/fleet/threat-intel/indicators/:id`
+   - `GET /api/v1/fleet/threat-intel/matches`
+   - `POST /api/v1/fleet/threat-intel/matches`
+   - `GET /api/v1/nodes/:id/threat-intel/indicators`
+   - `POST /api/v1/nodes/:id/threat-intel/matches`
+4. **Dashboard Blade (`dashboard/js/components/threatIntelTable.js`):**
+   - KPI metric cards (Active Feeds, Cached Indicators, Threat Interceptions, Critical Severity).
+   - Threat intelligence feed sources manager with 1-click sync triggers and indicator totals.
+   - High-speed threat indicator cache explorer with type filtering and value search.
+   - Real-time threat match interceptions stream with contextual process details and action badges.
+5. **Quality Gate Verification:**
+   - 20/20 unit tests passed in `server/tests/threat_intel.test.js`.
+   - 1,153/1,153 tests passed across 140 test suites in `npm test`.
+
+## Iteration 55: Threat & Vulnerability Management (TVM / CVE Vulnerability Scanner & Exploit Intelligence Engine)
+
+### Overview
+Iteration 55 delivers an enterprise Threat & Vulnerability Management (TVM) engine providing feature parity with Microsoft Defender Vulnerability Management and Qualys VMDR. It establishes a centralized CVE vulnerability intelligence catalog backed by CVSS v3.1 risk scores, Exploit Prediction Scoring System (EPSS) probabilities, and CISA Known Exploited Vulnerabilities (KEV) tracking. The system conducts automated host software inventory sweeps, identifies vulnerable and unpatched application packages, registers granular exposure findings, and manages actionable remediation workflows with automatic resolution cascades.
+
+### Key Deliverables & Database Schema
+1. **Database Schema (Tables 154-156 in SQLite — Total: 156 Native Tables):**
+   - `cve_vulnerabilities_catalog` (Table 154): Canonical CVE vulnerability intelligence repository tracking CVE ID, title, description, CVSS v3.1 score, severity (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`), affected vendor, affected product, fixed version, exploit maturity (`UNPROVEN`, `POC_EXISTS`, `ACTIVE_IN_THE_WILD`), EPSS score, and CISA KEV presence.
+   - `endpoint_vulnerability_findings` (Table 155): Per-endpoint vulnerability exposure telemetry capturing device ID, hostname, CVE ID reference, software component, installed version, fixed version, remediation status (`ACTIVE`, `PATCH_PENDING`, `EXCEPTION_APPROVED`, `REMEDIATED`), detection date, and remediation timestamp.
+   - `vulnerability_remediation_tasks` (Table 156): Actionable SecOps remediation task tracking capturing target CVE, priority (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`), title, remediation action guidelines, impacted device counts, exposed user counts, assigned admin/team, status (`OPEN`, `IN_PROGRESS`, `COMPLETED`), and due dates.
+2. **Backend Service Engine (`server/src/services/vulnerabilityManagementEngine.js`):**
+   - 14 static methods delivering aggregated TVM exposure metrics, CVE catalog query & CRUD, endpoint vulnerability finding management, status transitions, remediation task creation, automated finding resolution cascades, and full endpoint software vulnerability scans (`scanDeviceSoftware`).
+3. **REST Endpoints (581-595 in `fleet.js` & `nodes.js` — Total: 595 Registered Endpoints):**
+   - `GET /api/v1/fleet/tvm/cve-stats` — Fleet-wide TVM exposure & vulnerability statistics
+   - `GET /api/v1/fleet/tvm/cves` — Retrieve CVE vulnerability catalog with search and filters
+   - `GET /api/v1/fleet/tvm/cves/:id` — Retrieve single CVE with exposure findings
+   - `POST /api/v1/fleet/tvm/cves` — Ingest/register new CVE into catalog
+   - `PUT /api/v1/fleet/tvm/cves/:id` — Update CVE catalog entry
+   - `DELETE /api/v1/fleet/tvm/cves/:id` — Remove CVE from catalog
+   - `GET /api/v1/fleet/tvm/findings` — Query endpoint vulnerability findings
+   - `POST /api/v1/fleet/tvm/findings` — Record a host vulnerability finding
+   - `PUT /api/v1/fleet/tvm/findings/:id` — Update finding remediation status
+   - `GET /api/v1/fleet/tvm/tasks` — Retrieve actionable remediation tasks
+   - `POST /api/v1/fleet/tvm/tasks` — Create an actionable remediation task
+   - `POST /api/v1/fleet/tvm/tasks/:id/complete` — Mark task completed and cascade resolve findings
+   - `POST /api/v1/fleet/tvm/scan/:deviceId` — Sweep host against CVE catalog
+   - `GET /api/v1/nodes/:id/tvm/findings` — Node agent queries active vulnerability findings
+   - `POST /api/v1/nodes/:id/tvm/scan` — Node agent triggers local vulnerability scan
+4. **Dashboard Blade (`dashboard/js/components/vulnerabilityManagementTable.js`):**
+   - KPI metric cards: Exposed Endpoints, Catalog CVEs, CISA KEV Exploited, Open Remediation Tasks.
+   - Interactive CVE Vulnerabilities Catalog table with search, severity filter, CVSS score badges, EPSS probability indicators, and CISA KEV tags.
+   - Endpoint Vulnerability Exposure Findings table with device hostname, unpatched package versions, and 1-click status resolution.
+   - Actionable Remediation Tasks table with priority badges, assigned SecOps teams, impacted host counts, and task completion workflows.
+   - Ingest New CVE and Create Remediation Task interactive modals.
+5. **Quality Gate Verification:**
+   - 20/20 unit tests passed in `server/tests/vulnerability_management.test.js`.
+   - 1,173/1,173 tests passed across 141 test suites in `npm test` with 100% green trunk status.
+
+## Iteration 56: Identity Threat Detection & Response (ITDR & Credential Defense Engine)
+
+### Overview
+Iteration 56 delivers enterprise Identity Threat Detection & Response (ITDR) and Active Directory / Entra ID credential defense equivalent to Microsoft Defender for Identity (MDI), CrowdStrike Falcon Identity Protection, and SentinelOne Singularity Identity. It intercepts active credential attacks across the hybrid enterprise—including Kerberoasting, AS-REP roasting, DCSync domain replication abuse, LSASS process memory scraping, Pass-The-Hash, and Golden Ticket forgery. Furthermore, it introduces deceptive honeytoken tripwires (decoy privileged accounts, fake SPN services, memory credentials) and provides automated 1-click account containment (account locking, token revocation, forced password resets).
+
+### Key Deliverables & Database Schema
+1. **Database Schema (Tables 157-159 in SQLite — Fleet Total: 159 Native Tables):**
+   - `identity_threat_detections` (Table 157): Real-time identity attack telemetry recording target account, source workstation, attacker IP, domain controller, attack vector (`KERBEROASTING`, `ASREP_ROASTING`, `DCSYNC`, `LSASS_MEMORY_DUMP`, `HONEYTOKEN_TRIGGERED`, `PASSWORD_SPRAY`, `PASS_THE_HASH`, `GOLDEN_TICKET`), MITRE ATT&CK technique IDs, risk scores (0–100), investigation status (`NEW`, `INVESTIGATING`, `CONTAINED`, `DISMISSED`), and forensic evidence payloads.
+   - `identity_honeytokens_catalog` (Table 158): Deception tripwire inventory tracking decoy accounts, fake SPNs, and credential manager traps with activation counters, trigger timestamps, and deployment hosts.
+   - `identity_account_risk_scores` (Table 159): Continuous behavioral account risk directory tracking account types (`USER`, `SERVICE_ACCOUNT`, `DOMAIN_ADMIN`, `LOCAL_ADMIN`), risk ratings (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`), anomaly counters, and containment states (`NORMAL`, `PASSWORD_RESET_REQUIRED`, `TOKENS_REVOKED`, `ACCOUNT_LOCKED`).
+2. **Backend Service Engine (`server/src/services/identityThreatEngine.js`):**
+   - 12 static methods delivering aggregated ITDR metrics, attack detection ingestion with automated security alarm triggers, status lifecycle management, automated account containment cascades, honeytoken deployment and tripwire triggering, and account risk score recalculation.
+3. **REST Endpoints (596-610 in `fleet.js` & `nodes.js` — Fleet Total: 610 Registered Endpoints):**
+   - `GET /api/v1/fleet/itdr/stats` — Fleet-wide identity attack & risk statistics
+   - `GET /api/v1/fleet/itdr/detections` — Retrieve identity attack events with vector & risk filters
+   - `GET /api/v1/fleet/itdr/detections/:id` — Retrieve single detection with parsed evidence
+   - `POST /api/v1/fleet/itdr/detections` — Ingest new identity attack detection
+   - `PATCH /api/v1/fleet/itdr/detections/:id` — Update detection status & investigation notes
+   - `POST /api/v1/fleet/itdr/contain-account` — Execute automated account containment (lock/revoke)
+   - `GET /api/v1/fleet/itdr/honeytokens` — Retrieve deception honeytokens catalog
+   - `POST /api/v1/fleet/itdr/honeytokens` — Deploy new deception honeytoken asset
+   - `POST /api/v1/fleet/itdr/honeytokens/:id/trigger` — Tripwire activation trigger
+   - `DELETE /api/v1/fleet/itdr/honeytokens/:id` — Delete honeytoken asset
+   - `GET /api/v1/fleet/itdr/accounts` — Query identity account risk directory
+   - `POST /api/v1/fleet/itdr/accounts/:name/assess` — Recalculate account risk profile
+   - `GET /api/v1/nodes/:id/itdr/honeytokens` — Node agent pulls deception assets to plant
+   - `POST /api/v1/nodes/:id/itdr/report-tripwire` — Node agent reports honeytoken tripwire hit
+   - `POST /api/v1/nodes/:id/itdr/report-credential-theft` — Node agent reports local LSASS/SAM dump
+4. **Dashboard Blade (`dashboard/js/components/identityThreatTable.js`):**
+   - KPI metric cards: Active Attacks, Critical Risk, Deception Traps, Contained Accounts.
+   - Interactive Live Identity Threat Detections table with vector filtering, MITRE technique tags, and 1-click Contain action.
+   - Deception Honeytokens Catalog with tripwire status badges and test triggers.
+   - Identity Account Risk Directory with risk score bars, anomalous logon counts, and containment status indicators.
+   - Deploy Honeytoken and Execute Containment interactive modals.
+5. **Quality Gate Verification:**
+   - 20/20 unit tests passed in `server/tests/identity_threat.test.js`.
+   - 1,193/1,193 tests passed across 142 test suites in `npm test` with 100% green trunk status.
+
+## Iteration 57: Data Loss Prevention & Sensitive Information Defense Engine (DLP & Exfiltration Guardrails)
+
+### Overview
+Iteration 57 delivers enterprise Data Loss Prevention (DLP) and real-time exfiltration defense equivalent to Microsoft Purview DLP, CrowdStrike Falcon Data Protection, and Symantec DLP. It establishes centralized sensitive information classification rules (PCI-DSS credit card numbers, US Social Security Numbers / PII, RSA/EC private key PEM headers, and AWS cloud API access keys), identifies unencrypted sensitive file exposures across endpoint disks, provides real-time exfiltration interception across removable USB drives, clipboard copying, and web uploads, and equips administrators with a fast text scanner to validate pattern matching.
+
+### Key Deliverables & Database Schema
+1. **Database Schema (Tables 160-162 in SQLite — Fleet Total: 161 Native Tables):**
+   - `dlp_classification_rules` (Table 160): Definitions of sensitive data patterns with categories (`FINANCIAL_PCI`, `PERSONAL_PII`, `SECRETS_CREDENTIALS`, `HEALTH_HIPAA`, `INTELLECTUAL_PROPERTY`, `CUSTOM_REGEX`), severity ratings (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`), regular expressions, confidence thresholds, and enforcement actions (`AUDIT_ONLY`, `BLOCK`, `ENCRYPT`, `QUARANTINE_FILE`).
+   - `dlp_file_scan_findings` (Table 161): Unencrypted file exposure telemetry recording device ID, hostname, file path, matched rule name, match counts, severity, and remediation states (`UNENCRYPTED_EXPOSURE`, `SECURED_ENCRYPTED`, `FILE_QUARANTINED`, `EXCEPTION_APPROVED`).
+   - `dlp_exfiltration_incidents` (Table 162): Real-time exfiltration incident telemetry capturing device ID, hostname, user account, exfiltration channel (`REMOVABLE_USB`, `CLIPBOARD_PASTE`, `BROWSER_UPLOAD`, `NETWORK_SHARE`, `PRINTER_SPOOL`), file/data target, rule name, action taken (`BLOCKED`, `AUDITED`, `USER_JUSTIFIED`, `QUARANTINED`), user justification, and forensic details.
+2. **Backend Service Engine (`server/src/services/dlpEngine.js`):**
+   - 12 static methods delivering aggregated DLP metrics, classification rule CRUD with regex compilation validation, file scan exposure tracking, remediation status transitions, exfiltration logging with automated security alarm triggers, and fast in-memory text scanning (`scanContent`).
+3. **REST Endpoints (611-625 in `fleet.js` & `nodes.js` — Fleet Total: 625 Registered Endpoints):**
+   - `GET /api/v1/fleet/dlp/stats` — Fleet-wide DLP discovery and exfiltration statistics
+   - `GET /api/v1/fleet/dlp/rules` — Retrieve DLP classification rules with category filters
+   - `GET /api/v1/fleet/dlp/rules/:id` — Retrieve single classification rule
+   - `POST /api/v1/fleet/dlp/rules` — Author and validate new classification rule
+   - `PUT /api/v1/fleet/dlp/rules/:id` — Update classification rule properties
+   - `DELETE /api/v1/fleet/dlp/rules/:id` — Delete classification rule
+   - `GET /api/v1/fleet/dlp/findings` — Query endpoint sensitive file exposures
+   - `POST /api/v1/fleet/dlp/findings` — Record sensitive file finding on endpoint
+   - `PUT /api/v1/fleet/dlp/findings/:id` — Update finding remediation status
+   - `GET /api/v1/fleet/dlp/incidents` — Retrieve intercepted exfiltration incidents
+   - `POST /api/v1/fleet/dlp/incidents` — Ingest exfiltration incident telemetry
+   - `POST /api/v1/fleet/dlp/scan-text` — Scan plain text payload against active DLP rules
+   - `GET /api/v1/nodes/:id/dlp/rules` — Node agent pulls active rules for local interceptors
+   - `POST /api/v1/nodes/:id/dlp/report-finding` — Node agent reports discovered sensitive file
+   - `POST /api/v1/nodes/:id/dlp/report-exfiltration` — Node agent reports blocked exfiltration attempt
+4. **Dashboard Blade (`dashboard/js/components/dlpTable.js`):**
+   - KPI metric cards: Active Rules, Unencrypted Exposures, Exposed Endpoints, Blocked Exfiltrations.
+   - Interactive Data Classification Rules table with category filtering and pattern previews.
+   - Endpoint File Exposures table with 1-click Encrypt/Secure action.
+   - Real-time Exfiltration Interception Stream with channel badges and action pills.
+   - Author Classification Rule and Test Scanner interactive modals.
+5. **Quality Gate Verification:**
+   - 20/20 unit tests passed in `server/tests/dlp.test.js`.
+   - 1,213/1,213 tests passed across 143 test suites in `npm test` with 100% green trunk status.
+
+## Iteration 58: Endpoint Configuration Drift & CIS Benchmark Compliance Engine (Center for Internet Security Hardening)
+
+### Overview
+Iteration 58 delivers enterprise Configuration Drift Detection and Center for Internet Security (CIS) Benchmark Compliance auditing equivalent to Microsoft Defender for Endpoint Security Baselines, Tenable.sc / Nessus CIS audits, and Qualys Policy Compliance (PC). It establishes standardized CIS Level 1 (Corporate Baseline) and Level 2 (High Security / Defense-in-Depth) benchmarks for Windows 11 and Server 2025, calculates continuous compliance scores (0–100%), identifies registry and group policy drift in real time, and equips SecOps with automated 1-click surgical PowerShell remediation scripts to re-align drifted endpoints.
+
+### Key Deliverables & Database Schema
+1. **Database Schema (Tables 163-165 in SQLite — Fleet Total: 164 Native Tables):**
+   - `cis_benchmark_rules` (Table 163): Hardening benchmark definitions tracking section ID, profile level (`LEVEL_1`, `LEVEL_2`, `BITLOCKER_ADDON`), title, check type (`REGISTRY_VALUE`, `AUDIT_POLICY`, `SECURITY_OPTION`, `POWERSHELL_QUERY`), target path, target key/property, expected value, operator, and severity (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`).
+   - `cis_endpoint_compliance_audits` (Table 164): Host scorecard telemetry capturing device ID, hostname, benchmark profile, evaluation counts, pass/fail totals, compliance score percentage (0–100%), configuration drift detection status (`drift_detected = 0 | 1`), and raw setting evaluation results JSON.
+   - `cis_rule_remediation_scripts` (Table 165): Surgical remediation playbook repository linking CIS rule IDs with script types (`POWERSHELL`, `REGISTRY_IMPORT`, `CMD`), remediation code, rollback instructions, and verification queries.
+2. **Backend Service Engine (`server/src/services/cisBenchmarkEngine.js`):**
+   - 12 static methods delivering aggregated compliance metrics, benchmark rule CRUD, endpoint scorecard evaluation with drift calculation, compliance audit recording, remediation script management, and automated security alarm trigger on drift detection.
+3. **REST Endpoints (626-640 in `fleet.js` & `nodes.js` — Fleet Total: 640 Registered Endpoints):**
+   - `GET /api/v1/fleet/cis/stats` — Fleet-wide benchmark compliance & drift metrics
+   - `GET /api/v1/fleet/cis/rules` — Retrieve CIS benchmark catalog with profile filter
+   - `GET /api/v1/fleet/cis/rules/:id` — Retrieve single benchmark rule with remediation
+   - `POST /api/v1/fleet/cis/rules` — Author and register new benchmark rule
+   - `PUT /api/v1/fleet/cis/rules/:id` — Update benchmark rule definition
+   - `DELETE /api/v1/fleet/cis/rules/:id` — Delete benchmark rule
+   - `GET /api/v1/fleet/cis/audits` — Query endpoint compliance scorecards & drift status
+   - `POST /api/v1/fleet/cis/audits` — Ingest endpoint compliance evaluation scorecard
+   - `POST /api/v1/fleet/cis/evaluate/:deviceId` — Trigger evaluation sweep for host
+   - `GET /api/v1/fleet/cis/remediations/:ruleId` — Retrieve surgical remediation script
+   - `POST /api/v1/fleet/cis/remediations` — Register or update rule remediation script
+   - `DELETE /api/v1/fleet/cis/remediations/:ruleId` — Remove rule remediation script
+   - `GET /api/v1/nodes/:id/cis/rules` — Node agent pulls active benchmark rules to audit
+   - `POST /api/v1/nodes/:id/cis/report-audit` — Node agent submits local compliance evaluation
+   - `GET /api/v1/nodes/:id/cis/remediation/:ruleId` — Node agent retrieves remediation script
+4. **Dashboard Blade (`dashboard/js/components/cisBenchmarkTable.js`):**
+   - KPI metric cards: Benchmark Rules, Mean Compliance %, Drifted Endpoints, Remediation Scripts.
+   - Interactive CIS Hardening Benchmark Catalog table with profile filtering (Level 1 vs Level 2) and 1-click Remediate modal viewer.
+   - Endpoint Compliance Scorecards table with animated drift indicators, compliance score color grading, and 1-click Re-Audit actions.
+   - Author CIS Benchmark Rule modal for enterprise baseline expansion.
+5. **Quality Gate Verification:**
+   - 20/20 unit tests passed in `server/tests/cis_benchmark.test.js`.
+   - 1,233/1,233 tests passed across 144 test suites in `npm test` with 100% green trunk status.
+
+## Iteration 59: Windows Exploit Protection & Process Mitigation Engine (Exploit Guard & Memory Hardening)
+
+### Overview
+Iteration 59 delivers enterprise Exploit Protection and Process Mitigation governance equivalent to Microsoft Intune Attack Surface Reduction / Exploit Protection profiles, Microsoft Defender Exploit Guard (`Set-ProcessMitigation`), and CrowdStrike Falcon Memory Defense. It establishes centralized policies enforcing operating-system-level memory integrity protections (Data Execution Prevention / DEP, Mandatory & High-Entropy ASLR, Control Flow Guard / CFG, and Structured Exception Handling Overwrite Protection / SEHOP), delivers fine-grained per-executable shields (blocking child process creation, remote DLL/image injection, Arbitrary Code Guard / ACG, Code Integrity Guard / CIG, and Export/Import Address Table / EAT/IAT filtering), continuously evaluates endpoint mitigation drift, and automatically generates native PowerShell deployment scripts for instant remediation.
+
+### Key Deliverables & Database Schema
+1. **Database Schema (Tables 166-168 in SQLite — Fleet Total: 168 Native Tables):**
+   - `exploit_mitigation_policies` (Table 166): Enterprise memory protection baselines defining profile name, target groups, system-level DEP, ASLR (bottom-up, force relocate, high entropy), SEHOP, CFG, and lifecycle status (`ACTIVE`, `AUDIT_ONLY`, `DISABLED`).
+   - `exploit_app_mitigations` (Table 167): Per-executable process mitigation rules (e.g., `powershell.exe`, `cmd.exe`, `excel.exe`, `winword.exe`, `chrome.exe`) enforcing child process blocking, remote image blocking, low integrity image blocking, ACG, CIG, EAT/IAT filtering, strict handle validation, and Win32k system call disablement.
+   - `exploit_endpoint_audits` (Table 168): Host scorecard telemetry capturing device ID, hostname, policy ID, system mitigation compliance, evaluated apps count, compliant apps count, drifted apps count, compliance score percentage (0–100%), drift detection status, and detailed findings JSON.
+2. **Backend Service Engine (`server/src/services/exploitProtectionEngine.js`):**
+   - 12 static methods delivering aggregated exploit mitigation metrics, policy CRUD lifecycle with app-mitigation cascade, application hardening rule management, endpoint scorecard evaluation with drift calculation, and native PowerShell `Set-ProcessMitigation` script generation.
+3. **REST Endpoints (641-655 in `fleet.js` & `nodes.js` — Fleet Total: 655 Registered Endpoints):**
+   - `GET /api/v1/fleet/exploit-protection/stats` — Fleet-wide exploit mitigation statistics
+   - `GET /api/v1/fleet/exploit-protection/policies` — Retrieve exploit mitigation policies
+   - `GET /api/v1/fleet/exploit-protection/policies/:id` — Retrieve single policy with app mitigations
+   - `POST /api/v1/fleet/exploit-protection/policies` — Author and register exploit protection baseline
+   - `PUT /api/v1/fleet/exploit-protection/policies/:id` — Update baseline settings
+   - `DELETE /api/v1/fleet/exploit-protection/policies/:id` — Remove policy and cascading rules
+   - `GET /api/v1/fleet/exploit-protection/mitigations` — Query application mitigation rules
+   - `POST /api/v1/fleet/exploit-protection/mitigations` — Add per-executable mitigation rule
+   - `DELETE /api/v1/fleet/exploit-protection/mitigations/:id` — Remove application mitigation rule
+   - `GET /api/v1/fleet/exploit-protection/audits` — Query endpoint compliance scorecards & drift status
+   - `POST /api/v1/fleet/exploit-protection/audits` — Ingest endpoint evaluation scorecard
+   - `GET /api/v1/fleet/exploit-protection/script/:policyId` — Generate native PowerShell deployment script
+   - `GET /api/v1/nodes/:id/exploit-protection/policy` — Node agent pulls assigned exploit protection policy
+   - `POST /api/v1/nodes/:id/exploit-protection/report-audit` — Node agent reports local mitigation compliance audit
+   - `GET /api/v1/nodes/:id/exploit-protection/remediate-script` — Node agent pulls PowerShell remediation script
+4. **Dashboard Blade (`dashboard/js/components/exploitProtectionTable.js`):**
+   - KPI metric cards: Policies, Active Baseline, Hardened Apps, Mean Compliance %, Drifted Hosts.
+   - Interactive Exploit Protection Baselines table with DEP, ASLR, CFG, SEHOP badges, and 1-click PowerShell Script viewer.
+   - Per-Executable Mitigation Rules table with executable badges, child process blocking status, remote image blocking, ACG, and EAT/IAT indicators.
+   - Endpoint Mitigation Compliance Audits table with animated drift status pills and compliance score color grading.
+   - Interactive New Exploit Protection Policy and Harden Application Executable modals.
+5. **Quality Gate Verification:**
+   - 20/20 unit tests passed in `server/tests/exploit_protection.test.js`.
+   - 1,253/1,253 tests passed across 145 test suites in `npm test` with 100% green trunk status.
+
+## Iteration 60: User & Entity Behavior Analytics (UEBA) & Insider Risk Intelligence Engine
+
+### Overview
+Iteration 60 delivers enterprise User & Entity Behavior Analytics (UEBA) and Insider Risk Management equivalent to Microsoft Purview Insider Risk Management, CrowdStrike Falcon Insight UEBA, and Forcepoint Insider Threat. It establishes continuous behavioral baseline telemetry tracking anomalous user deviations across multiple threat vectors—including mass file exfiltration spikes (USB, cloud sync, web uploads), after-hours authentication anomalies, privilege creep/abuse, and flight-risk indicators (bulk CRM/customer downloads prior to resignation). It dynamically calculates composite user risk scores (0–100), assigns severity tiers (LOW, MEDIUM, HIGH, CRITICAL), and empowers SecOps with 1-click autonomous containment actions (session restriction, device USB/clipboard lockdown, account containment).
+
+### Key Deliverables & Database Schema
+1. **Database Schema (Tables 169-171 in SQLite — Fleet Total: 171 Native Tables):**
+   - `ueba_risk_indicators` (Table 169): Catalog of behavioral anomaly heuristics tracking indicator name, category (`DATA_EXFILTRATION`, `ANOMALOUS_LOGON`, `PRIVILEGE_ABUSE`, `FLIGHT_RISK`, `RESOURCE_SNOOPING`), description, risk weight (1–50), baseline threshold multiplier, and severity tier (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`).
+   - `ueba_user_behavior_anomalies` (Table 170): Real-time behavioral deviation telemetry capturing user principal, device ID, hostname, matched indicator, anomaly type, observed vs. baseline metric values, calculated deviation multiplier, status (`OPEN`, `INVESTIGATING`, `RESOLVED`, `DISMISSED`), and JSON evidence payload.
+   - `ueba_user_risk_profiles` (Table 171): Continuous calculated risk profile directory tracking user principal, display name, department, composite risk score (0–100), risk tier, active flight-risk flag, and automated containment state (`MONITORED`, `RESTRICTED`, `CONTAINED`, `REVOKED`).
+2. **Backend Service Engine (`server/src/services/uebaEngine.js`):**
+   - 12 static methods delivering aggregated UEBA metrics, risk indicator CRUD, anomaly ingestion with automatic composite risk score recalculation and threshold weighting, status transitions, user profile lookups, and automated user containment policy enforcement.
+3. **REST Endpoints (656-670 in `fleet.js` & `nodes.js` — Fleet Total: 670 Registered Endpoints):**
+   - `GET /api/v1/fleet/ueba/stats` — Fleet-wide UEBA & insider risk statistics
+   - `GET /api/v1/fleet/ueba/indicators` — Retrieve behavioral risk indicators catalog
+   - `GET /api/v1/fleet/ueba/indicators/:id` — Retrieve single risk indicator
+   - `POST /api/v1/fleet/ueba/indicators` — Register new behavioral risk indicator
+   - `PUT /api/v1/fleet/ueba/indicators/:id` — Update risk indicator weights & thresholds
+   - `DELETE /api/v1/fleet/ueba/indicators/:id` — Delete risk indicator
+   - `GET /api/v1/fleet/ueba/anomalies` — Retrieve real-time behavioral anomaly stream
+   - `POST /api/v1/fleet/ueba/anomalies` — Ingest behavioral anomaly event
+   - `PATCH /api/v1/fleet/ueba/anomalies/:id` — Update anomaly investigation status
+   - `GET /api/v1/fleet/ueba/profiles` — Retrieve user risk profiles
+   - `GET /api/v1/fleet/ueba/profiles/:userPrincipal` — Retrieve single user risk profile with anomaly history
+   - `POST /api/v1/fleet/ueba/contain-user` — Execute automated insider containment
+   - `GET /api/v1/nodes/:id/ueba/indicators` — Node agent pulls active UEBA indicator baseline
+   - `POST /api/v1/nodes/:id/ueba/report-anomaly` — Node agent reports local behavioral anomaly
+   - `GET /api/v1/nodes/:id/ueba/containment-status` — Node agent queries user containment state
+4. **Dashboard Blade (`dashboard/js/components/uebaTable.js`):**
+   - KPI metric cards: Risk Indicators, Open Anomalies, High Risk Users, Flight Risk Flags, Mean Risk Score.
+   - Interactive User Insider Risk Profiles table with composite risk score bars, risk level badges, flight-risk indicators, containment status pills, and 1-click Restrict/Contain actions.
+   - Live Behavioral Anomaly Stream table with user, hostname, anomaly indicator tag, deviation multipliers, and 1-click Resolve workflows.
+   - Behavioral Risk Indicators Catalog table with categories, risk weights, threshold multipliers, and severity tags.
+   - Interactive Add Risk Indicator modal.
+5. **Quality Gate Verification:**
+   - 20/20 unit tests passed in `server/tests/ueba.test.js`.
+   - 1,273/1,273 tests passed across 146 test suites in `npm test` with 100% green trunk status.
+
+## Iteration 61: Cloud App Discovery & Shadow SaaS Governance Engine (Endpoint CASB)
+
+### Overview
+Iteration 61 delivers enterprise Cloud App Discovery and Shadow IT / SaaS Governance equivalent to Microsoft Defender for Cloud Apps (MDCA), Microsoft Intune Cloud App Security, and Cloudflare Zero Trust CASB. It establishes continuous discovery of cloud applications accessed across the fleet, calculates comprehensive SaaS risk scores (0–100) based on category, compliance certifications (SOC2, ISO27001, HIPAA, FedRAMP, GDPR), and data handling practices, captures endpoint cloud connection telemetry (upload/download byte volumes and user sessions), enables centralized Sanctioned vs. Unsanctioned classification, and enforces automated access blocking via dynamic endpoint blocklists.
+
+### Key Deliverables & Database Schema
+1. **Database Schema (Tables 172-174 in SQLite — Fleet Total: 174 Native Tables):**
+   - `cloud_app_catalog` (Table 172): Catalog of discovered SaaS cloud applications tracking app name, category (`CLOUD_STORAGE`, `GENERATIVE_AI`, `COLLABORATION`, `DEVELOPER_TOOLS`, `SHADOW_VPN`, `SOCIAL_MEDIA`, `WEBMAIL`), primary domain name, risk score (0–100), sanctioned status (`SANCTIONED`, `UNSANCTIONED`, `MONITORED`), compliance certifications JSON, total distinct users, and cumulative byte traffic.
+   - `endpoint_cloud_usage_telemetry` (Table 173): Telemetry tracking endpoint cloud connection transactions capturing app ID, app name, device ID, hostname, user principal, uploaded bytes, downloaded bytes, session count, and last observed timestamp.
+   - `cloud_app_access_policies` (Table 174): Cloud security governance policies defining target scopes (`ALL_FLEET`, `DYNAMIC_GROUP`, `DEVICE`), enforcement actions (`ALLOW`, `AUDIT`, `WARN`, `BLOCK`), and active toggle.
+2. **Backend Service Engine (`server/src/services/cloudAppDiscoveryEngine.js`):**
+   - 12 static methods delivering aggregated CASB metrics, cloud app catalog CRUD, sanction status transitions, usage telemetry recording with cumulative traffic aggregation, access policy governance, and dynamic unsanctioned domain blocklist generation for endpoint network protection.
+3. **REST Endpoints (671-685 in `fleet.js` & `nodes.js` — Fleet Total: 685 Registered Endpoints):**
+   - `GET /api/v1/fleet/cloud-apps/stats` — Fleet-wide cloud application discovery statistics
+   - `GET /api/v1/fleet/cloud-apps/catalog` — Retrieve SaaS cloud apps catalog
+   - `GET /api/v1/fleet/cloud-apps/catalog/:id` — Retrieve single cloud app with usage history
+   - `POST /api/v1/fleet/cloud-apps/catalog` — Register SaaS cloud app in catalog
+   - `PUT /api/v1/fleet/cloud-apps/catalog/:id` — Update cloud app attributes
+   - `DELETE /api/v1/fleet/cloud-apps/catalog/:id` — Delete cloud app
+   - `PATCH /api/v1/fleet/cloud-apps/catalog/:id/sanction` — Update sanction status (Sanction/Block/Monitor)
+   - `GET /api/v1/fleet/cloud-apps/usage` — Query endpoint cloud usage telemetry
+   - `POST /api/v1/fleet/cloud-apps/usage` — Ingest endpoint cloud usage telemetry
+   - `GET /api/v1/fleet/cloud-apps/policies` — Retrieve cloud access policies
+   - `POST /api/v1/fleet/cloud-apps/policies` — Create cloud access policy
+   - `DELETE /api/v1/fleet/cloud-apps/policies/:id` — Delete cloud access policy
+   - `GET /api/v1/nodes/:id/cloud-apps/blocklist` — Node agent pulls unsanctioned domain blocklist
+   - `POST /api/v1/nodes/:id/cloud-apps/report-usage` — Node agent reports endpoint cloud traffic usage
+   - `GET /api/v1/nodes/:id/cloud-apps/policies` — Node agent pulls cloud app access policies
+4. **Dashboard Blade (`dashboard/js/components/cloudAppDiscoveryTable.js`):**
+   - KPI metric cards: Discovered SaaS, Sanctioned, Unsanctioned, Monitored, Cloud Traffic, Block Policies.
+   - Interactive Discovered Cloud Applications Catalog table with category filters, risk score bars, compliance certification tags, sanctioned status pills, traffic volumes, and 1-click Sanction / Block buttons.
+   - Endpoint Cloud Connection Telemetry table with host, user principal, upload/download byte metrics, and session counters.
+   - Interactive View Blocklist modal displaying active endpoint CASB blocked domains.
+   - Register Cloud Application modal.
+5. **Quality Gate Verification:**
+   - 20/20 unit tests passed in `server/tests/cloud_app_discovery.test.js`.
+   - 1,293/1,293 tests passed across 147 test suites in `npm test` with 100% green trunk status.
+
+## Iteration 62: Automated Ransomware Canary Files & Early-Warning File Integrity Trap Engine (Ransomware Defense & Rapid Containment)
+
+### Overview
+Iteration 62 delivers native, enterprise-grade automated ransomware honeytoken canary traps and real-time file integrity monitoring equivalent to CrowdStrike Falcon Ransomware Protection, SentinelOne Canary Defense, and Sophos CryptoGuard. It enables security administrators to deploy decoy canary documents (spreadsheets, databases, confidential archives) into key bait locations across endpoint filesystems. The engine actively monitors canary file modification, deletion, renaming, extension alterations, and Shannon entropy spikes (>7.5) indicative of bulk cryptographic encryption. Upon detecting tamper events, the engine automatically triggers zero-trust containment protocols (instant host network isolation and offending process termination) within sub-second thresholds to prevent lateral spread.
+
+### Key Deliverables & Database Schema
+1. **Database Schema (Tables 175-177 in SQLite — Fleet Total: 177 Native Tables):**
+   - `ransomware_canary_traps` (Table 175): Deployed decoy canary traps tracking trap ID, bait filename, directory path, baseline SHA256 checksum, baseline byte size, baseline Shannon entropy, status (`HEALTHY`, `TAMPERED`, `ENCRYPTED`), last verified timestamp, and creation date.
+   - `ransomware_tamper_detections` (Table 176): High-fidelity tamper event log capturing detection ID, trap ID, device ID, hostname, tamper type (`FILE_MODIFIED`, `FILE_DELETED`, `FILE_RENAMED`, `EXTENSION_CHANGE`, `ENTROPY_SPIKE`), offending process ID, process name/binary, detected file extension, severity (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`), containment action executed (`NONE`, `KILL_PROCESS`, `ISOLATE_HOST`), containment status, forensic details JSON, and detected timestamp.
+   - `ransomware_containment_policies` (Table 177): Automated response policy configurations defining policy name, target scope (`ALL_FLEET`, `DYNAMIC_GROUP`, `DEVICE`), auto process termination toggle, auto host network isolation toggle, Shannon entropy threshold trigger, and active status flag.
+2. **Backend Service Engine (`server/src/services/ransomwareCanaryEngine.js`):**
+   - 12 static methods delivering aggregated canary stats, canary trap catalog CRUD, cryptographic health and entropy verification, tamper detection ingestion with automated policy-driven containment execution, containment policy management, and dynamic PowerShell canary bait deployment script generation.
+3. **REST Endpoints (686-700 in `fleet.js` & `nodes.js` — Fleet Total: Exactly 700 Registered Endpoints):**
+   - `GET /api/v1/fleet/ransomware/stats` — Fleet-wide ransomware trap and containment statistics
+   - `GET /api/v1/fleet/ransomware/traps` — Retrieve catalog of deployed canary traps
+   - `GET /api/v1/fleet/ransomware/traps/:id` — Retrieve single trap with detection history
+   - `POST /api/v1/fleet/ransomware/traps` — Deploy and register canary trap file
+   - `DELETE /api/v1/fleet/ransomware/traps/:id` — Remove canary trap
+   - `POST /api/v1/fleet/ransomware/traps/:id/verify` — Verify integrity and entropy of canary trap
+   - `GET /api/v1/fleet/ransomware/detections` — Retrieve ransomware tamper detections
+   - `POST /api/v1/fleet/ransomware/detections` — Ingest tamper event and execute containment
+   - `GET /api/v1/fleet/ransomware/policies` — Retrieve containment policies
+   - `POST /api/v1/fleet/ransomware/policies` — Create containment policy
+   - `DELETE /api/v1/fleet/ransomware/policies/:id` — Delete containment policy
+   - `GET /api/v1/fleet/ransomware/deploy-script` — Generate PowerShell deployment script
+   - `GET /api/v1/nodes/:id/ransomware/traps` — Node agent retrieves assigned canary traps
+   - `POST /api/v1/nodes/:id/ransomware/tamper-event` — Node agent reports canary tamper detection
+   - `POST /api/v1/nodes/:id/ransomware/verify-traps` — Node agent submits periodic trap health snapshot
+4. **Dashboard Blade (`dashboard/js/components/ransomwareCanaryTable.js`):**
+   - KPI metric cards: Active Traps, Healthy, Tampered, Encrypted, Tamper Events, Contained Incidents.
+   - Deployed Canary Honeytoken Traps table with filename search, status filter, entropy indicators, baseline SHA256 hashes, status badges, and 1-click Delete.
+   - Tamper Detections & Rapid Containment Stream table with timestamps, affected host, tamper type tag, process binary, severity badge, containment action pill, and status.
+   - Interactive Deploy Canary Honeytoken Trap modal with bait filename, target directory, baseline entropy, and file size inputs.
+   - PowerShell Fleet Canary Deployment Script modal with 1-click clipboard copy.
+5. **Quality Gate Verification:**
+   - 20/20 unit tests passed in `server/tests/ransomware_canary.test.js`.
+   - 1,313/1,313 tests passed across 148 test suites in `npm test` with 100% green trunk status.
+
+## Iteration 63: Software License Optimization & Enterprise Metering Engine (SaaS & Desktop FinOps / SAM)
+
+### Overview
+Iteration 63 delivers enterprise Software Asset Management (SAM), SaaS and Desktop FinOps, seat entitlement governance, and active foreground process runtime metering equivalent to Microsoft Intune SAM, ServiceNow Software Asset Management, and Flexera One. The engine manages the entire lifecycle of software licenses (subscriptions, per-seat, perpetual, concurrent, and site licenses), tracks allocated seats against entitlement quotas, calculates annualized licensing spend, meters granular process foreground usage versus background idle time, autonomously detects unused "shelfware" applications (zero active foreground runtime in >30 days), and executes automated license reclamation workflows to recover thousands of dollars in wasted software expenditures across the fleet.
+
+### Key Deliverables & Database Schema
+1. **Database Schema (Tables 178-180 in SQLite — Fleet Total: 180 Native Tables):**
+   - `software_licenses` (Table 178): Software entitlements repository tracking product name, vendor, license type (`PER_SEAT`, `CONCURRENT`, `SITE_LICENSE`, `SUBSCRIPTION`, `OEM`, `PERPETUAL`), activation/license key, total purchased seats, allocated seats, cost per seat (USD), billing cycle (`ANNUAL`, `MONTHLY`, `PERPETUAL`), expiration date, and timestamps.
+   - `software_license_allocations` (Table 179): Device and user seat allocation ledger tracking allocation ID, license ID, device ID, hostname, assigned user principal, assignment timestamp, allocation status (`ACTIVE`, `RECLAIMED`, `REVOKED`, `FLAGGED_SHELFWARE`), last used timestamp, and reclamation reason.
+   - `software_usage_metering` (Table 180): Process runtime and foreground usage telemetry tracking device ID, hostname, process binary name, product name, cumulative runtime seconds, cumulative foreground usage seconds, launch counter, last launched timestamp, and binary shelfware flag.
+2. **Backend Service Engine (`server/src/services/licenseOptimizationEngine.js`):**
+   - 12 static methods delivering aggregated SAM metrics, entitlement catalog CRUD, seat allocation and deallocation, automated license reclamation with quota replenishment, process runtime telemetry ingestion, usage summary analytics, and autonomous shelfware identification.
+3. **REST Endpoints (701-715 in `fleet.js` & `nodes.js` — Fleet Total: 715 Registered Endpoints):**
+   - `GET /api/v1/fleet/sam/stats` — Fleet-wide SAM & license optimization statistics
+   - `GET /api/v1/fleet/sam/licenses` — List software license entitlements
+   - `GET /api/v1/fleet/sam/licenses/:id` — Single license entitlement with seat allocations
+   - `POST /api/v1/fleet/sam/licenses` — Register new software license entitlement
+   - `PUT /api/v1/fleet/sam/licenses/:id` — Update license entitlement
+   - `DELETE /api/v1/fleet/sam/licenses/:id` — Delete license entitlement
+   - `GET /api/v1/fleet/sam/allocations` — List seat allocations
+   - `POST /api/v1/fleet/sam/allocations` — Allocate seat to device
+   - `POST /api/v1/fleet/sam/allocations/:id/reclaim` — Reclaim license seat (FinOps cost recovery)
+   - `GET /api/v1/fleet/sam/metering` — Query process usage metering
+   - `POST /api/v1/fleet/sam/metering` — Ingest process usage metering telemetry
+   - `POST /api/v1/fleet/sam/reclaim-shelfware` — Bulk identify and flag shelfware licenses
+   - `GET /api/v1/nodes/:id/sam/licenses` — Endpoint agent checks assigned licenses & product keys
+   - `POST /api/v1/nodes/:id/sam/metering-report` — Endpoint agent reports process foreground runtime
+   - `GET /api/v1/nodes/:id/sam/reclaim-orders` — Endpoint agent checks for software uninstall/deactivation orders
+4. **Dashboard Blade (`dashboard/js/components/licenseOptimizationTable.js`):**
+   - KPI metric cards: Total Licenses, Total Seats, Seat Utilization %, Annual SAM Spend, Shelfware Recovery Potential ($), Shelfware Flags.
+   - Interactive Software Licenses Catalog table with search and type filters, seat utilization visual progress bars, cost/seat, expiration tracking, 1-click +Seat allocation modal trigger, and Delete.
+   - Device Seat Allocations & Shelfware Reclamation table with status filter, assigned hostname and user, last active date, reclamation reason, and 1-click Reclaim action.
+   - Process Usage & Foreground Metering Telemetry table with total runtime (hrs), foreground usage (hrs), launch counts, and shelfware risk badges.
+   - Interactive Register Software License Entitlement modal.
+   - Interactive Allocate Software Seat modal.
+5. **Quality Gate Verification:**
+   - 20/20 unit tests passed in `server/tests/license_optimization.test.js`.
+   - 1,333/1,333 tests passed across 149 test suites in `npm test` with 100% green trunk status.
+
+## Iteration 64: Hardware Supply Chain & TPM 2.0 / UEFI Measured Boot Attestation Engine (Zero-Trust Firmware Integrity & Supply Chain Tamper Defense)
+
+### Overview
+Iteration 64 delivers enterprise-grade Hardware Root-of-Trust Attestation, TPM 2.0 Platform Configuration Register (PCR) cryptographic validation, UEFI boot-chain integrity monitoring, and physical component supply-chain anti-tamper defense equivalent to Microsoft Intune Device Health Attestation (DHA), Microsoft Pluton, and CrowdStrike Falcon Zero-Trust Hardware Attestation. The engine establishes immutable hardware component baselines (motherboard serial numbers, chassis UUID, CPU microcode revision, RAM DIMM serials, NVMe storage drives) and continuously validates live telemetry against cryptographic golden baselines to detect Evil Maid attacks, physical component swaps, and supply-chain tampering. Additionally, it audits TPM 2.0 Measured Boot logs across PCR 0 (BIOS/UEFI firmware), PCR 2 (Option ROMs), PCR 4 (Windows Boot Manager), PCR 7 (Secure Boot authority and certificate revocation databases), and PCR 11 (BitLocker measurement), flagging unauthorized firmware modifications and zero-day bootkit infections before OS kernel execution.
+
+### Key Deliverables & Database Schema
+1. **Database Schema (Tables 181-183 in SQLite — Fleet Total: 183 Native Tables):**
+   - `hardware_supply_chain_baselines` (Table 181): Cryptographic hardware root-of-trust baselines tracking device ID, hostname, TPM manufacturer and specification version (`2.0`), motherboard serial, chassis serial, CPU model, microcode revision, RAM DIMM serials JSON array, NVMe storage serials JSON array, Secure Boot state, Kernel DMA Protection state, Hypervisor-Protected Code Integrity (HVCI) state, verification status (`VERIFIED`, `COMPONENT_MISMATCH`, `UNATTESTED`, `TAMPER_ALERT`), and timestamps.
+   - `tpm_measured_boot_logs` (Table 182): Cryptographic measured boot session log capturing boot session ID, device ID, hostname, PCR 0 (BIOS/UEFI code SHA256), PCR 2 (Option ROMs SHA256), PCR 4 (Boot Manager SHA256), PCR 7 (Secure Boot authority SHA256), PCR 11 (BitLocker measurement SHA256), attestation result (`PASSED`, `PCR_DRIFT_DETECTED`, `SECUREBOOT_REVOKED`, `FAILED`), drift details JSON, and recorded timestamp.
+   - `hardware_attestation_policies` (Table 183): Zero-trust hardware compliance governance policies defining required TPM version (`2.0`), required UEFI Secure Boot, required Kernel DMA protection, required Memory Integrity (HVCI), automated device quarantine on physical component mismatch toggle, and active status flag.
+2. **Backend Service Engine (`server/src/services/hardwareAttestationEngine.js`):**
+   - 12 static methods delivering aggregated attestation KPIs, hardware supply chain baseline management, physical component serial audit verification, measured boot log ingestion with autonomous PCR hash drift detection, attestation policy governance, and multi-factor device compliance evaluation.
+3. **REST Endpoints (716-730 in `fleet.js` & `nodes.js` — Fleet Total: Exactly 730 Registered Endpoints):**
+   - `GET /api/v1/fleet/hardware-attestation/stats` — Fleet-wide hardware attestation statistics
+   - `GET /api/v1/fleet/hardware-attestation/baselines` — List supply chain baselines
+   - `GET /api/v1/fleet/hardware-attestation/baselines/:deviceId` — Single device baseline with latest boot
+   - `POST /api/v1/fleet/hardware-attestation/baselines` — Register or update hardware baseline
+   - `DELETE /api/v1/fleet/hardware-attestation/baselines/:id` — Delete hardware baseline
+   - `POST /api/v1/fleet/hardware-attestation/verify-components` — Compare live components against baseline
+   - `GET /api/v1/fleet/hardware-attestation/boot-logs` — Query TPM measured boot logs
+   - `POST /api/v1/fleet/hardware-attestation/boot-logs` — Ingest TPM measured boot log
+   - `GET /api/v1/fleet/hardware-attestation/policies` — Retrieve attestation policies
+   - `POST /api/v1/fleet/hardware-attestation/policies` — Create attestation policy
+   - `DELETE /api/v1/fleet/hardware-attestation/policies/:id` — Delete attestation policy
+   - `POST /api/v1/fleet/hardware-attestation/evaluate/:deviceId` — Evaluate device compliance
+   - `GET /api/v1/nodes/:id/hardware-attestation/policy` — Agent retrieves active attestation policy
+   - `POST /api/v1/nodes/:id/hardware-attestation/report-boot-pcr` — Agent reports measured boot PCR hashes
+   - `POST /api/v1/nodes/:id/hardware-attestation/report-components` — Agent submits component audit telemetry
+4. **Dashboard Blade (`dashboard/js/components/hardwareAttestationTable.js`):**
+   - KPI metric cards: Attested Fleet, Cryptographically Verified, Component Mismatches, Secure Boot %, DMA / HVCI Guard %, PCR Drifts.
+   - Interactive Hardware Supply Chain Baselines table with search, status filters, hardware root-of-trust indicators, component serial inspection, and 1-click Delete.
+   - TPM 2.0 Measured Boot & PCR Attestation Stream table with real-time PCR 0, 4, 7, and 11 SHA256 hashes, attestation result badges, and drift alarms.
+   - Interactive Enroll Hardware Supply Chain Baseline modal.
+5. **Quality Gate Verification:**
+   - 20/20 unit tests passed in `server/tests/hardware_attestation.test.js`.
+   - 1,353/1,353 tests passed across 150 test suites in `npm test` with 100% green trunk status.
+
+## Iteration 65: Unified Endpoint Management (UEM) Multi-Platform Support (Apple macOS, Apple iOS/iPadOS, Google Android Enterprise)
+
+### Overview
+Iteration 65 transitions LocalPilot Fleet from a Windows-centric management plane into a full enterprise Unified Endpoint Management (UEM) platform matching and exceeding Microsoft Intune, Jamf Pro, and VMware Workspace ONE for Apple macOS (MacBook Air/Pro, Mac Mini, Mac Studio, iMac), Apple iOS & iPadOS (iPhones and iPads), and Google Android Enterprise (Work Profile & Fully Managed / COBO). Features native Apple MDM `.mobileconfig` Property List XML generation, Android Enterprise DPC QR-code provisioning payloads, a native POSIX/Bash macOS telemetry agent (`agent/enroll-macos.sh`), remote command orchestration (Remote Lock, Factory Wipe, Passcode Reset, Lost Mode, FileVault recovery key escrow), and multi-platform security compliance auditing (macOS SIP/FileVault/Gatekeeper, iOS jailbreak detection, Android Knox encryption/root detection).
+
+### Key Deliverables & Database Schema
+1. **Database Schema (Tables 184-186 in SQLite — Fleet Total: 185 Native Tables):**
+   - `apple_mdm_enrollment_profiles` (Table 184): Apple MDM configuration profiles tracking profile ID, name, description, target platform (`MACOS`, `IOS`, `IPADOS`, `UNIVERSAL`), payload identifier (`com.localpilot.fleet.mdm.baseline`), payload UUID, passcode policy JSON, FileVault/encryption policy JSON, restrictions JSON, Wi-Fi/network JSON, and active state.
+   - `android_enterprise_profiles` (Table 185): Google Android Enterprise EMM profiles tracking profile ID, name, description, enrollment type (`FULLY_MANAGED`, `WORK_PROFILE`, `DEDICATED_KIOSK`), DPC package name (`com.google.android.apps.work.clouddpc` / LocalPilot DPC), enrollment token, password complexity (`NUMERIC_COMPLEX`, `ALPHANUMERIC`), system update policy, camera disabled toggle, factory reset protection (FRP) admin emails JSON array, and active state.
+   - `mobile_device_commands` (Table 186): Non-Windows remote management command queue tracking command ID, target device ID, platform, command type (`DEVICE_LOCK`, `CLEAR_PASSCODE`, `DEVICE_WIPE`, `ENABLE_LOST_MODE`, `DISABLE_LOST_MODE`, `ROTATE_FILEVAULT_KEY`), parameters JSON, status (`PENDING`, `DISPATCHED`, `ACKNOWLEDGED`, `FAILED`, `EXPIRED`), issued by admin, issued timestamp, executed timestamp, and execution result details JSON.
+2. **Backend Service Engine (`server/src/services/multiPlatformUemEngine.js`):**
+   - 15 static methods delivering multi-platform OS detection, fleet-wide UEM KPI aggregation, multi-platform device filtering, cross-platform mobile enrollment normalizer, Apple `.mobileconfig` XML Property List generator, Android Enterprise QR provisioning generator, asynchronous remote command dispatch and acknowledgment pipeline, FileVault key retrieval, and platform-specific zero-trust compliance evaluation (SIP, FileVault, Gatekeeper, Jailbreak, Knox).
+3. **REST Endpoints (731-745 in `fleet.js` & `nodes.js` — Fleet Total: Exactly 745 Registered Endpoints + convenience aliases):**
+   - `GET /api/v1/fleet/uem/stats` — Fleet-wide multi-platform UEM statistics
+   - `GET /api/v1/fleet/uem/devices` — Query multi-platform devices with platform filters
+   - `GET /api/v1/fleet/uem/apple/profiles` — List Apple MDM configuration profiles
+   - `POST /api/v1/fleet/uem/apple/profiles` — Create Apple MDM configuration profile
+   - `GET /api/v1/fleet/uem/apple/profiles/:id/download` — Download Apple `.mobileconfig` Property List XML
+   - `GET /api/v1/fleet/uem/apple/profiles/:id/mobileconfig` — Direct alias for Apple mobileconfig
+   - `GET /api/v1/fleet/uem/android/profiles` — List Android Enterprise profiles
+   - `POST /api/v1/fleet/uem/android/profiles` — Create Android Enterprise profile
+   - `GET /api/v1/fleet/uem/android/qr-payload/:id` — Retrieve Android QR provisioning payload
+   - `GET /api/v1/fleet/uem/android/profiles/:id/qr-payload` — Direct alias for Android QR payload
+   - `POST /api/v1/fleet/uem/devices/:id/commands` — Dispatch remote command (Lock, Wipe, Lost Mode, FileVault)
+   - `GET /api/v1/fleet/uem/devices/:id/commands` — Retrieve command history for device
+   - `GET /api/v1/fleet/uem/devices/:id/filevault` — Retrieve FileVault recovery key for macOS
+   - `POST /api/v1/fleet/uem/devices/:id/evaluate` — Evaluate device platform compliance
+   - `POST /api/v1/nodes/enroll/mobile` — Dedicated cross-platform enrollment for macOS, iOS, Android
+   - `POST /api/v1/fleet/uem/enroll` — Direct enrollment endpoint under fleet namespace
+   - `GET /api/v1/nodes/:id/uem/pending-commands` — Mobile client polls for pending commands
+   - `POST /api/v1/nodes/:id/uem/acknowledge-command` — Mobile client reports command execution outcome
+   - `GET /api/v1/fleet/uem/macos/agent.sh` — Serve macOS enrollment bash script
+4. **macOS Shell Agent (`agent/enroll-macos.sh`):**
+   - Native POSIX/Bash telemetry harvesting with zero external dependencies. Collects hardware UUID, serial number, model identifier via `ioreg`, macOS release and Darwin kernel build via `sw_vers` and `uname`, CPU architecture and core count via `sysctl`, System Integrity Protection (SIP) via `csrutil status`, FileVault encryption state and recovery key escrow via `fdesetup status`, and Gatekeeper state via `spctl --status`.
+5. **Dashboard Blade (`dashboard/js/components/multiPlatformUemTable.js`):**
+   - KPI metric cards: Total Endpoints, Apple macOS, Apple iOS/iPadOS, Android Enterprise, Windows Fleet, Compliance Rate %.
+   - Multi-platform tab filters: All Platforms, 🍏 macOS, 📱 iOS / iPadOS, 🤖 Android, 🪟 Windows.
+   - Unified device catalog table with OS badges, hardware serials, MDM enrollment badges, FileVault/Knox encryption indicators, and Remote Action triggers.
+   - Apple MDM Configuration Profiles card with `.mobileconfig` download button.
+   - Android Enterprise Provisioning card with QR code payload JSON view button.
+   - Mobile Device Remote Commands Audit Trail table.
+   - Enroll Multi-Platform Device modal with copyable curl 1-liner, Safari mobileconfig link, and Android 6-tap QR setup guide.
+   - Dispatch Remote Action modal supporting Device Lock, Clear Passcode, Lost Mode, FileVault Key Rotation, and Factory Wipe.
+   - Integrated with sidebar navigation and router in `dashboard/index.html` and `dashboard/js/app.js`.
+6. **Quality Gate Verification:**
+   - 20/20 unit tests passed in `server/tests/multiplatform_uem.test.js`.
+   - 1,373/1,373 tests passed across 151 test suites in `npm test` with 100% green trunk status.
+   - 12/12 live smoke tests verified against the live daemon on port 8443.
+
+## Iteration 66: Mobile Application Management (MAM) & App Protection Policies Engine (Corporate Data Containerization & Selective Wipe for iOS, Android & Windows)
+
+### Overview
+Iteration 66 delivers enterprise-grade Mobile Application Management (MAM) and Application Protection Policies equivalent to Microsoft Intune MAM-WE (Management Without Enrollment) and Jamf Protect for Apple iOS, Google Android, and Windows endpoints. The engine enforces corporate data sandboxing within managed applications, prevents data leakage into unmanaged personal applications, restricts cut/copy/paste clipboard sharing, prevents "Save As" to personal cloud storage or external SD cards, blocks screen captures/multitasking preview disclosure, enforces app-level biometric authentication (Face ID, Touch ID, Android BiometricPrompt) and PIN access locks, governs maximum offline grace periods, and orchestrates selective corporate account wipes without deleting personal photos, text messages, or personal apps.
+
+### Key Deliverables & Database Schema
+1. **Database Schema (Tables 187-189 in SQLite — Fleet Total: 189 Native Tables):**
+   - `mam_app_protection_policies` (Table 187): Corporate MAM policy definitions tracking policy ID, name, description, target platform (`IOS`, `ANDROID`, `WINDOWS`, `COMBINED`), allowed data storage destination (`LOCAL_STORAGE_BLOCKED`, `MANAGED_STORAGE_ONLY`, `ANY_STORAGE`), prevent Save-As toggle, clipboard sharing mode (`BLOCKED`, `POLICY_MANAGED_APPS_ONLY`, `POLICY_MANAGED_WITH_PASTE_IN`, `ANY_APP`), screen capture prevention toggle, biometric/PIN requirements toggle, minimum PIN length, maximum allowable offline grace period in minutes, zero-trust jailbreak/root wipe trigger, and active state.
+   - `mam_managed_apps_catalog` (Table 188): Catalog of enlightened corporate applications tracking application ID, foreign key to policy, friendly application name (`Microsoft Outlook`, `Microsoft Teams`, `LocalPilot Secure Portal`), package/bundle identifier (`com.microsoft.Office.Outlook`, `com.microsoft.skype.teams`), platform, SDK enlightened integration flag, minimum allowed application version, blocked toggle, and creation timestamp.
+   - `mam_selective_wipe_requests` (Table 189): Non-destructive selective wipe audit trail tracking wipe request ID, target user email identity, target device ID, wipe reason code (`USER_OFFBOARDED`, `DEVICE_LOST`, `COMPROMISED`, `ADMIN_REQUEST`, `POLICY_NON_COMPLIANT`), status (`PENDING`, `DISPATCHED`, `COMPLETED`, `CANCELLED`), issuing administrator, issued timestamp, completion timestamp, and result audit JSON payload.
+2. **Backend Service Engine (`server/src/services/mamAppProtectionEngine.js`):**
+   - 16 static methods delivering MAM KPI metrics calculation, policy lifecycle management (CRUD), managed application catalog registration, selective corporate wipe dispatch and cancellation, semver comparison engine, real-time client posture evaluation against active protection policies, and client-side MAM SDK configuration JSON payload generation.
+3. **REST Endpoints (746-760 in `fleet.js` & `nodes.js` — Fleet Total: Exactly 760 Registered REST Endpoints):**
+   - `GET /api/v1/fleet/mam/stats` — Fleet-wide MAM statistics and KPI metrics
+   - `GET /api/v1/fleet/mam/policies` — List all MAM App Protection Policies
+   - `POST /api/v1/fleet/mam/policies` — Create new MAM App Protection Policy
+   - `GET /api/v1/fleet/mam/policies/:id` — Get single MAM policy details and targeted apps
+   - `PUT /api/v1/fleet/mam/policies/:id` — Update MAM policy parameters
+   - `DELETE /api/v1/fleet/mam/policies/:id` — Delete MAM policy
+   - `GET /api/v1/fleet/mam/apps` — List managed corporate apps catalog
+   - `POST /api/v1/fleet/mam/apps` — Register app into MAM catalog
+   - `DELETE /api/v1/fleet/mam/apps/:id` — Remove app from MAM catalog
+   - `GET /api/v1/fleet/mam/selective-wipes` — List selective wipe orders
+   - `POST /api/v1/fleet/mam/selective-wipes` — Issue selective wipe order
+   - `POST /api/v1/fleet/mam/selective-wipes/:id/cancel` — Cancel pending selective wipe
+   - `GET /api/v1/fleet/mam/policies/:id/config` — Export mobile SDK configuration payload
+   - `GET /api/v1/nodes/:id/mam/wipe-orders` — Mobile client checks for pending selective wipe orders
+   - `POST /api/v1/nodes/:id/mam/evaluate` — Mobile app reports posture and evaluates MAM compliance
+4. **Dashboard Blade (`dashboard/js/components/mamAppProtectionTable.js`):**
+   - KPI metric cards: Active Policies, Managed Corporate Apps, Selective Wipes, Clipboard DLP Sandboxed, Biometric Auth Enforced, Offline Grace Limit.
+   - Sub-tab views for Policies, Managed Apps, and Selective Wipes.
+   - App Protection Policies Catalog table with platform badges, clipboard rule indicators, biometric flags, and 1-click SDK Config export.
+   - Managed Corporate Applications Catalog with bundle IDs, minimum versions, and enlightened status.
+   - Selective Wipe Orchestrator table with status indicators and 1-click wipe cancellation.
+   - Interactive Create MAM Policy modal with zero-trust presets.
+   - Interactive Issue Selective Corporate Wipe modal.
+   - Wired to dashboard sidebar navigation (`#mam` / `App Protection (MAM)`) and application router.
+5. **Quality Gate Verification:**
+   - 20/20 unit tests passed in `server/tests/mam_app_protection.test.js`.
+   - 1,393/1,393 tests passed across 152 test suites in `npm test` with 100% green trunk status.
+   - All 15/15 live smoke tests verified against the live daemon on port 8443.
+
+---
+
+## Iteration 67 — Automated SCEP / NDES PKI Dynamic Challenge Engine & 802.1X Enterprise Wi-Fi Profiles (Zero-Touch EAP-TLS Device Identity)
+
+### 1. Architectural Summary & Intune Parity Objectives
+Iteration 67 delivers native, zero-cloud SCEP (Simple Certificate Enrollment Protocol, RFC 8894) PKI infrastructure and enterprise 802.1X EAP-TLS Wi-Fi / VPN profile delivery for macOS, iOS, Android, and Windows endpoints:
+- **Dynamic Single-Use SCEP Challenges:** Ephemeral, one-time authentication passwords linked to specific enrolled device identities to prevent unauthorized CSR signing.
+- **On-Premises Device Certificate Authority:** Synthetic X.509 device identity certificate issuance, serial number generation, SHA-256 thumbprint hashing, and full revocation lifecycle governance (CRL / audit reasons).
+- **Enterprise 802.1X EAP-TLS Wi-Fi Profiles:** Automatic generation and export of Apple `.mobileconfig` property lists (with `com.apple.wifi.managed` and EAP Type 13) and Windows native WLANProfile XML payloads.
+- **Over-the-Air Device Provisioning:** Protocol gateways (`/api/v1/scep/pkiclient.exe`) and device agent endpoints for seamless, zero-touch certificate renewal and active Wi-Fi profile synchronization.
+
+### 2. Database Schema Expansions (Tables 190–192)
+Added three new relational tables with foreign keys and index optimization:
+- **Table 190: `scep_enrollment_challenges`**: Stores dynamic challenge passwords, target device references, validity windows, and single-use status (`PENDING`, `REDEEMED`, `EXPIRED`, `REVOKED`).
+- **Table 191: `scep_issued_certificates`**: Complete catalog of issued X.509 client certificates, public key algorithms, validity periods, SHA-256 thumbprints, PEM blocks, and revocation metadata.
+- **Table 192: `wifi_8021x_profiles`**: Configuration definitions for enterprise Wi-Fi networks, SSID broadcasting, security encryption (`WPA2_ENTERPRISE`, `WPA3_ENTERPRISE_192BIT`), EAP methods (`EAP_TLS`), and SCEP CA binding.
+*Cumulative user tables: 192 native SQLite tables.*
+
+### 3. Backend Engine Service
+Created `server/src/services/scepPkiEnrollmentEngine.js` offering 16 core functions:
+- `getScepStats(db)`: Aggregates fleet PKI metrics, active certificates, pending challenges, and profiles.
+- `getChallenges(db, filters)` / `generateChallenge(db, params)` / `validateChallenge(db, password, deviceId)`.
+- `enrollCertificateWithCsr(db, payload)`: Enforces single-use challenge consumption, processes CSR, generates serial number and SHA-256 thumbprint, and stores active PEM certificate.
+- `getIssuedCertificates(db, filters)` / `getCertificate(db, id)` / `revokeCertificate(db, id, reason)`.
+- `getWifiProfiles(db, filters)` / `getWifiProfile(db, id)` / `createWifiProfile(db, params)` / `deleteWifiProfile(db, id)`.
+- `generateAppleWifiPayload(db, profileId)`: Emits standard Apple Configuration Profile plist XML.
+- `generateWindowsWifiXml(db, profileId)`: Emits native Windows WLANProfile XML with EAP-TLS Method 13.
+- `getEffectiveDeviceWifiProfile(db, deviceId)` / `getDeviceActiveCertificate(db, deviceId)`.
+
+### 4. REST Endpoints (Endpoints 761–775 Registered)
+- **Fleet Admin Endpoints (761–771 in `server/src/routes/fleet.js`):**
+  - `GET /api/v1/fleet/scep/stats` — Fleet-wide SCEP & 802.1X metrics
+  - `GET /api/v1/fleet/scep/challenges` — List active/historical SCEP challenges
+  - `POST /api/v1/fleet/scep/challenges` — Generate dynamic one-time challenge password
+  - `GET /api/v1/fleet/scep/certificates` — List issued device certificates
+  - `GET /api/v1/fleet/scep/certificates/:id` — Single certificate details and PEM inspection
+  - `POST /api/v1/fleet/scep/certificates/:id/revoke` — Revoke certificate with RFC reason
+  - `GET /api/v1/fleet/scep/wifi-profiles` — List 802.1X Wi-Fi profiles
+  - `POST /api/v1/fleet/scep/wifi-profiles` — Create new 802.1X Wi-Fi profile
+  - `DELETE /api/v1/fleet/scep/wifi-profiles/:id` — Delete Wi-Fi profile
+  - `GET /api/v1/fleet/scep/wifi-profiles/:id/apple-payload` — Download Apple .mobileconfig
+  - `GET /api/v1/fleet/scep/wifi-profiles/:id/windows-xml` — Download Windows WLANProfile XML
+- **Node & SCEP Protocol Endpoints (772–775 in `server/src/routes/nodes.js`):**
+  - `POST /api/v1/scep/pkiclient.exe` — SCEP RFC 8894 PKIOperation protocol gateway
+  - `POST /api/v1/scep/enroll` — Direct REST CSR enrollment
+  - `GET /api/v1/nodes/:id/scep/certificate` — Device agent checks active certificate status
+  - `GET /api/v1/nodes/:id/scep/wifi-profile` — Device agent fetches effective 802.1X configuration
+*Cumulative registered endpoints: 775 endpoints.*
+
+### 5. Dashboard Blade (`dashboard/js/components/scepPkiEnrollmentTable.js`)
+- KPI metric cards: Issued Certificates, SCEP Challenges, 802.1X Wi-Fi Profiles, Revoked Certs, Zero-Trust Identity.
+- Sub-tab views: Issued Certificates, SCEP Dynamic Challenges, and 802.1X Wi-Fi Profiles.
+- Certificate details modal with PEM copy-to-clipboard and SHA-256 thumbprint inspection.
+- Certificate revocation modal with RFC 5280 revocation reason selection.
+- SCEP challenge generation modal with configurable expiry and subject DN.
+- 802.1X Wi-Fi profile creator and 1-click download actions for Apple `.mobileconfig` and Windows WLAN XML.
+- Registered in sidebar navigation (`#scep` / `802.1X Wi-Fi & SCEP PKI`) and application router.
+
+### 6. Quality Gate Verification
+- **Unit Tests:** 20/20 unit tests passed in `server/tests/scep_pki_enrollment.test.js`.
+- **Full Regression:** 1,413 tests passed across 153 suites with zero failures and zero skipped (`npm test`).
+- **Live Smoke Tests:** 15/15 live API tests verified against running daemon on port 8443.

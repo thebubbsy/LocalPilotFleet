@@ -3901,6 +3901,73 @@ export function initDb(dbOrPath, options = {}) {
 
     CREATE INDEX IF NOT EXISTS idx_mam_wipe_user ON mam_selective_wipe_requests(target_user_email);
     CREATE INDEX IF NOT EXISTS idx_mam_wipe_status ON mam_selective_wipe_requests(status);
+    -- =========================================================================
+    -- ITERATION 67: Automated SCEP / NDES PKI Dynamic Challenge Engine & 802.1X Enterprise Wi-Fi Profiles
+    -- =========================================================================
+    -- Table 190: scep_enrollment_challenges
+    CREATE TABLE IF NOT EXISTS scep_enrollment_challenges (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      challenge_password TEXT NOT NULL UNIQUE,
+      subject_name TEXT NOT NULL,
+      subject_alt_names_json TEXT DEFAULT '[]',
+      key_usage TEXT DEFAULT 'DIGITAL_SIGNATURE,KEY_ENCIPHERMENT',
+      extended_key_usage_json TEXT DEFAULT '["1.3.6.1.5.5.7.3.2"]',
+      status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'REDEEMED', 'EXPIRED', 'REVOKED')),
+      expires_at TEXT NOT NULL,
+      redeemed_at TEXT,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_scep_ch_dev ON scep_enrollment_challenges(device_id);
+    CREATE INDEX IF NOT EXISTS idx_scep_ch_pwd ON scep_enrollment_challenges(challenge_password);
+    CREATE INDEX IF NOT EXISTS idx_scep_ch_status ON scep_enrollment_challenges(status);
+
+    -- Table 191: scep_issued_certificates
+    CREATE TABLE IF NOT EXISTS scep_issued_certificates (
+      id TEXT PRIMARY KEY,
+      challenge_id TEXT,
+      device_id TEXT NOT NULL,
+      serial_number TEXT NOT NULL UNIQUE,
+      subject_dn TEXT NOT NULL,
+      thumbprint_sha256 TEXT NOT NULL UNIQUE,
+      public_key_algorithm TEXT NOT NULL DEFAULT 'RSA-2048',
+      valid_from TEXT NOT NULL,
+      valid_to TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE', 'RENEWED', 'REVOKED', 'EXPIRED')),
+      revocation_reason TEXT CHECK(revocation_reason IN ('KEY_COMPROMISE', 'AFFILIATION_CHANGED', 'SUPERSEDED', 'CESSATION_OF_OPERATION', 'UNSPECIFIED')),
+      revoked_at TEXT,
+      certificate_pem TEXT NOT NULL,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(challenge_id) REFERENCES scep_enrollment_challenges(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_scep_cert_dev ON scep_issued_certificates(device_id);
+    CREATE INDEX IF NOT EXISTS idx_scep_cert_thumb ON scep_issued_certificates(thumbprint_sha256);
+    CREATE INDEX IF NOT EXISTS idx_scep_cert_status ON scep_issued_certificates(status);
+
+    -- Table 192: wifi_8021x_profiles
+    CREATE TABLE IF NOT EXISTS wifi_8021x_profiles (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      ssid TEXT NOT NULL,
+      security_type TEXT NOT NULL DEFAULT 'WPA2_ENTERPRISE' CHECK(security_type IN ('WPA2_ENTERPRISE', 'WPA3_ENTERPRISE_192BIT', 'WPA2_WPA3_MIXED')),
+      eap_type TEXT NOT NULL DEFAULT 'EAP_TLS' CHECK(eap_type IN ('EAP_TLS', 'PEAP_MSCHAPv2', 'EAP_TTLS')),
+      target_platform TEXT NOT NULL DEFAULT 'COMBINED' CHECK(target_platform IN ('COMBINED', 'MACOS', 'IOS', 'ANDROID', 'WINDOWS')),
+      root_ca_thumbprint TEXT,
+      scep_server_url TEXT NOT NULL DEFAULT 'https://fleet.localpilot.internal:8443/api/v1/scep',
+      hidden_network INTEGER NOT NULL DEFAULT 0 CHECK(hidden_network IN (0, 1)),
+      auto_connect INTEGER NOT NULL DEFAULT 1 CHECK(auto_connect IN (0, 1)),
+      is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_wifi_ssid ON wifi_8021x_profiles(ssid);
+    CREATE INDEX IF NOT EXISTS idx_wifi_plat ON wifi_8021x_profiles(target_platform);
+
 
 
 
@@ -9329,6 +9396,70 @@ exit 0`,
 
     insertWipe.run('wipe-01', 'contractor.temp@localpilot.corp', null, 'USER_OFFBOARDED', 'COMPLETED', 'SecOps Lead');
   }
+  // Iteration 67: SCEP PKI & 802.1X Wi-Fi Seeds
+  const scepChCount = db.prepare('SELECT COUNT(*) as count FROM scep_enrollment_challenges').get().count;
+  if (scepChCount === 0) {
+    const devTarget = db.prepare('SELECT id, hostname FROM devices LIMIT 1').get() || { id: 'dev-01', hostname: 'DESKTOP-CORP-01' };
+
+    const insertCh = db.prepare(`
+      INSERT OR IGNORE INTO scep_enrollment_challenges (
+        id, device_id, challenge_password, subject_name, subject_alt_names_json,
+        key_usage, extended_key_usage_json, status, expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', '+60 minutes'))
+    `);
+
+    insertCh.run(
+      'scep-ch-01',
+      devTarget.id,
+      'a1b2c3d4e5f67890abcdef1234567890',
+      `CN=${devTarget.hostname}.localpilot.corp,OU=Workstations,O=LocalPilot`,
+      JSON.stringify([`DNS:${devTarget.hostname}.localpilot.corp`, `UPN:${devTarget.id}@localpilot.corp`]),
+      'DIGITAL_SIGNATURE,KEY_ENCIPHERMENT',
+      JSON.stringify(['1.3.6.1.5.5.7.3.2']),
+      'PENDING'
+    );
+
+    const insertCert = db.prepare(`
+      INSERT OR IGNORE INTO scep_issued_certificates (
+        id, challenge_id, device_id, serial_number, subject_dn, thumbprint_sha256,
+        public_key_algorithm, valid_from, valid_to, status, certificate_pem
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, DATETIME('now'), DATETIME('now', '+365 days'), ?, ?)
+    `);
+
+    insertCert.run(
+      'cert-01',
+      'scep-ch-01',
+      devTarget.id,
+      '7F3A2B1C0D9E8F7A6B5C4D3E2F1A0B9C',
+      `CN=${devTarget.hostname}.localpilot.corp,OU=Workstations,O=LocalPilot`,
+      '9F86D081884C7D659A2FEAA0C55AD015A3BF4F1B2B0B822CD15D6C15B0F00A08',
+      'RSA-2048',
+      'ACTIVE',
+      '-----BEGIN CERTIFICATE-----\nMIIBkTCB+wIBATANBgkqhkiG9w0BAQsFAD...\n-----END CERTIFICATE-----'
+    );
+
+    const insertWifi = db.prepare(`
+      INSERT OR IGNORE INTO wifi_8021x_profiles (
+        id, name, ssid, security_type, eap_type, target_platform,
+        root_ca_thumbprint, scep_server_url, hidden_network, auto_connect, is_active
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertWifi.run(
+      'wifi-prof-01',
+      'Corporate Headquarters Secure 802.1X',
+      'LocalPilot-Corp-Secure',
+      'WPA2_ENTERPRISE',
+      'EAP_TLS',
+      'COMBINED',
+      'A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2',
+      'https://fleet.localpilot.internal:8443/api/v1/scep',
+      0,
+      1,
+      1
+    );
+  }
+
 
 
 

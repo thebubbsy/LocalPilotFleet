@@ -278,6 +278,12 @@ const App = {
           window.MamAppProtectionTable.render();
         }
         break;
+    case 'scep':
+      mainContent.innerHTML = renderScepPkiEnrollmentBlade();
+      if (typeof initScepPkiEnrollmentBlade === 'function') {
+        initScepPkiEnrollmentBlade();
+      }
+      break;
       case 'itdr':
         if (window.IdentityThreatTable) window.IdentityThreatTable.render();
         break;

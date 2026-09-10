@@ -1,3 +1,4 @@
+import { ScepPkiEnrollmentEngine } from '../services/scepPkiEnrollmentEngine.js';
 import { MamAppProtectionEngine } from '../services/mamAppProtectionEngine.js';
 import { MultiPlatformUemEngine } from '../services/multiPlatformUemEngine.js';
 import { HardwareAttestationEngine } from '../services/hardwareAttestationEngine.js';
@@ -11025,6 +11026,165 @@ try {
       sendJson(res, 200, { success: true, config });
     } catch (err) {
       sendJson(res, 500, { error: "MAM_CONFIG_EXPORT_ERROR", message: err.message });
+    }
+  });
+
+  // =========================================================================
+  // ITERATION 67: Automated SCEP PKI Dynamic Challenge & 802.1X Wi-Fi Routes
+  // =========================================================================
+
+  // 761. GET /api/v1/fleet/scep/stats — Fleet-wide SCEP & 802.1X statistics
+  router.get('/api/v1/fleet/scep/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = ScepPkiEnrollmentEngine.getScepStats(getDb());
+      sendJson(res, 200, { success: true, stats });
+    } catch (err) {
+      sendJson(res, 500, { error: "SCEP_STATS_ERROR", message: err.message });
+    }
+  });
+
+  // 762. GET /api/v1/fleet/scep/challenges — List SCEP challenges
+  router.get('/api/v1/fleet/scep/challenges', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const challenges = ScepPkiEnrollmentEngine.getChallenges(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, challenges, count: challenges.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "SCEP_CHALLENGES_ERROR", message: err.message });
+    }
+  });
+
+  // 763. POST /api/v1/fleet/scep/challenges — Generate new SCEP challenge for device
+  router.post('/api/v1/fleet/scep/challenges', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.device_id) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "device_id is required" });
+        return;
+      }
+      const challenge = ScepPkiEnrollmentEngine.generateChallenge(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, challenge });
+    } catch (err) {
+      sendJson(res, 400, { error: "SCEP_CHALLENGE_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 764. GET /api/v1/fleet/scep/certificates — List all issued SCEP device certificates
+  router.get('/api/v1/fleet/scep/certificates', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const certificates = ScepPkiEnrollmentEngine.getIssuedCertificates(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, certificates, count: certificates.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "SCEP_CERTS_ERROR", message: err.message });
+    }
+  });
+
+  // 765. GET /api/v1/fleet/scep/certificates/:id — Single certificate details and PEM
+  router.get('/api/v1/fleet/scep/certificates/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const cert = ScepPkiEnrollmentEngine.getCertificate(getDb(), req.params.id);
+      if (!cert) {
+        sendJson(res, 404, { error: "CERTIFICATE_NOT_FOUND", message: "Certificate not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, certificate: cert });
+    } catch (err) {
+      sendJson(res, 500, { error: "SCEP_CERT_GET_ERROR", message: err.message });
+    }
+  });
+
+  // 766. POST /api/v1/fleet/scep/certificates/:id/revoke — Revoke certificate
+  router.post('/api/v1/fleet/scep/certificates/:id/revoke', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const revoked = ScepPkiEnrollmentEngine.revokeCertificate(getDb(), req.params.id, req.body?.reason || 'CESSATION_OF_OPERATION');
+      if (!revoked) {
+        sendJson(res, 404, { error: "CERT_NOT_FOUND_OR_ALREADY_REVOKED", message: "Certificate not found or not in ACTIVE state" });
+        return;
+      }
+      sendJson(res, 200, { success: true, revoked: true });
+    } catch (err) {
+      sendJson(res, 500, { error: "SCEP_CERT_REVOKE_ERROR", message: err.message });
+    }
+  });
+
+  // 767. GET /api/v1/fleet/scep/wifi-profiles — List 802.1X Wi-Fi profiles
+  router.get('/api/v1/fleet/scep/wifi-profiles', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const profiles = ScepPkiEnrollmentEngine.getWifiProfiles(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, profiles, count: profiles.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "WIFI_PROFILES_ERROR", message: err.message });
+    }
+  });
+
+  // 768. POST /api/v1/fleet/scep/wifi-profiles — Create 802.1X Wi-Fi profile
+  router.post('/api/v1/fleet/scep/wifi-profiles', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.name || !req.body?.ssid) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "name and ssid are required" });
+        return;
+      }
+      const profile = ScepPkiEnrollmentEngine.createWifiProfile(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, profile });
+    } catch (err) {
+      sendJson(res, 400, { error: "WIFI_PROFILE_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 769. DELETE /api/v1/fleet/scep/wifi-profiles/:id — Delete Wi-Fi profile
+  router.delete('/api/v1/fleet/scep/wifi-profiles/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const deleted = ScepPkiEnrollmentEngine.deleteWifiProfile(getDb(), req.params.id);
+      if (!deleted) {
+        sendJson(res, 404, { error: "PROFILE_NOT_FOUND", message: "Wi-Fi profile not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, deleted: true });
+    } catch (err) {
+      sendJson(res, 500, { error: "WIFI_PROFILE_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 770. GET /api/v1/fleet/scep/wifi-profiles/:id/apple-payload — Export Apple Wi-Fi mobileconfig payload
+  router.get('/api/v1/fleet/scep/wifi-profiles/:id/apple-payload', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const payload = ScepPkiEnrollmentEngine.generateAppleWifiPayload(getDb(), req.params.id);
+      if (!payload) {
+        sendJson(res, 404, { error: "PROFILE_NOT_FOUND", message: "Wi-Fi profile not found" });
+        return;
+      }
+      res.setHeader('Content-Type', payload.content_type);
+      res.setHeader('Content-Disposition', `attachment; filename="${payload.filename}"`);
+      res.writeHead(200);
+      res.end(payload.plist_xml);
+    } catch (err) {
+      sendJson(res, 500, { error: "APPLE_WIFI_PAYLOAD_ERROR", message: err.message });
+    }
+  });
+
+  // 771. GET /api/v1/fleet/scep/wifi-profiles/:id/windows-xml — Export Windows WLANProfile XML
+  router.get('/api/v1/fleet/scep/wifi-profiles/:id/windows-xml', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const payload = ScepPkiEnrollmentEngine.generateWindowsWifiXml(getDb(), req.params.id);
+      if (!payload) {
+        sendJson(res, 404, { error: "PROFILE_NOT_FOUND", message: "Wi-Fi profile not found" });
+        return;
+      }
+      res.setHeader('Content-Type', payload.content_type);
+      res.setHeader('Content-Disposition', `attachment; filename="${payload.filename}"`);
+      res.writeHead(200);
+      res.end(payload.xml);
+    } catch (err) {
+      sendJson(res, 500, { error: "WINDOWS_WIFI_XML_ERROR", message: err.message });
     }
   });
 

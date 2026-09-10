@@ -1,3 +1,4 @@
+import { ScepPkiEnrollmentEngine } from '../services/scepPkiEnrollmentEngine.js';
 import { MamAppProtectionEngine } from '../services/mamAppProtectionEngine.js';
 import { MultiPlatformUemEngine } from '../services/multiPlatformUemEngine.js';
 import { HardwareAttestationEngine } from '../services/hardwareAttestationEngine.js';
@@ -3052,6 +3053,57 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { success: true, evaluation });
     } catch (err) {
       sendJson(res, 400, { error: "MAM_EVALUATE_ERROR", message: err.message });
+    }
+  });
+
+  // =========================================================================
+  // ITERATION 67: SCEP PKI & 802.1X Protocol Node Routes
+  // =========================================================================
+
+  // 772. POST /api/v1/scep/pkiclient.exe — RFC 8894 SCEP protocol enrollment gateway
+  router.post('/api/v1/scep/pkiclient.exe', (req, res) => {
+    try {
+      const operation = req.query?.operation || 'PKIOperation';
+      const cert = ScepPkiEnrollmentEngine.enrollCertificateWithCsr(getDb(), req.body || {});
+      sendJson(res, 200, { success: true, operation, certificate: cert });
+    } catch (err) {
+      sendJson(res, 400, { error: "SCEP_PROTOCOL_ERROR", message: err.message });
+    }
+  });
+
+  // 773. POST /api/v1/scep/enroll — Direct REST CSR enrollment with SCEP challenge
+  router.post('/api/v1/scep/enroll', (req, res) => {
+    try {
+      const cert = ScepPkiEnrollmentEngine.enrollCertificateWithCsr(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, certificate: cert });
+    } catch (err) {
+      sendJson(res, 400, { error: "SCEP_ENROLL_ERROR", message: err.message });
+    }
+  });
+
+  // 774. GET /api/v1/nodes/:id/scep/certificate — Device agent checks active certificate status & expiry
+  router.get('/api/v1/nodes/:id/scep/certificate', (req, res) => {
+    const node = authenticateNode(req, res);
+    if (!node) return;
+
+    try {
+      const cert = ScepPkiEnrollmentEngine.getDeviceActiveCertificate(getDb(), req.params.id);
+      sendJson(res, 200, { success: true, has_certificate: !!cert, certificate: cert });
+    } catch (err) {
+      sendJson(res, 500, { error: "NODE_CERT_QUERY_ERROR", message: err.message });
+    }
+  });
+
+  // 775. GET /api/v1/nodes/:id/scep/wifi-profile — Device agent fetches effective 802.1X Wi-Fi configuration
+  router.get('/api/v1/nodes/:id/scep/wifi-profile', (req, res) => {
+    const node = authenticateNode(req, res);
+    if (!node) return;
+
+    try {
+      const profile = ScepPkiEnrollmentEngine.getEffectiveDeviceWifiProfile(getDb(), req.params.id);
+      sendJson(res, 200, { success: true, profile });
+    } catch (err) {
+      sendJson(res, 500, { error: "NODE_WIFI_QUERY_ERROR", message: err.message });
     }
   });
 
