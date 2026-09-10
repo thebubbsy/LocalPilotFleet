@@ -248,6 +248,11 @@ const App = {
           window.UebaTable.render();
         }
         break;
+      case 'cloud-apps':
+        if (window.CloudAppDiscoveryTable && typeof window.CloudAppDiscoveryTable.render === 'function') {
+          window.CloudAppDiscoveryTable.render();
+        }
+        break;
       case 'itdr':
         if (window.IdentityThreatTable) window.IdentityThreatTable.render();
         break;

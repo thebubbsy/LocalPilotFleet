@@ -1,3 +1,4 @@
+import { CloudAppDiscoveryEngine } from '../services/cloudAppDiscoveryEngine.js';
 import { UebaEngine } from '../services/uebaEngine.js';
 import { ExploitProtectionEngine } from '../services/exploitProtectionEngine.js';
 import { CisBenchmarkEngine } from '../services/cisBenchmarkEngine.js';
@@ -2744,6 +2745,49 @@ export function registerNodeRoutes(router) {
       });
     } catch (err) {
       sendJson(res, 500, { error: "NODE_UEBA_CONTAINMENT_QUERY_ERROR", message: err.message });
+    }
+  });
+
+
+  // =========================================================================
+  // ITERATION 61: Cloud App Discovery & Shadow SaaS Governance Node Routes
+  // =========================================================================
+
+  // 683. GET /api/v1/nodes/:id/cloud-apps/blocklist — Node agent pulls unsanctioned domain blocklist
+  router.get('/api/v1/nodes/:id/cloud-apps/blocklist', (req, res) => {
+    try {
+      const blocklist = CloudAppDiscoveryEngine.generateBlocklist(getDb());
+      sendJson(res, 200, { success: true, blocklist });
+    } catch (err) {
+      sendJson(res, 500, { error: "NODE_BLOCKLIST_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 684. POST /api/v1/nodes/:id/cloud-apps/report-usage — Node agent reports endpoint cloud traffic usage
+  router.post('/api/v1/nodes/:id/cloud-apps/report-usage', (req, res) => {
+    const { id } = req.params;
+    try {
+      if (!req.body?.app_id) {
+        sendJson(res, 400, { error: "MISSING_APP_ID", message: "app_id is required" });
+        return;
+      }
+      const entry = CloudAppDiscoveryEngine.recordUsageTelemetry(getDb(), {
+        device_id: id,
+        ...(req.body || {})
+      });
+      sendJson(res, 201, { success: true, entry });
+    } catch (err) {
+      sendJson(res, 400, { error: "NODE_REPORT_USAGE_ERROR", message: err.message });
+    }
+  });
+
+  // 685. GET /api/v1/nodes/:id/cloud-apps/policies — Node agent pulls cloud app access policies
+  router.get('/api/v1/nodes/:id/cloud-apps/policies', (req, res) => {
+    try {
+      const policies = CloudAppDiscoveryEngine.getAccessPolicies(getDb(), { is_active: 1 });
+      sendJson(res, 200, { success: true, policies, count: policies.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "NODE_CLOUD_POLICIES_ERROR", message: err.message });
     }
   });
 

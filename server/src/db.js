@@ -3543,6 +3543,66 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_uurp_score ON ueba_user_risk_profiles(composite_risk_score);
     CREATE INDEX IF NOT EXISTS idx_uurp_level ON ueba_user_risk_profiles(risk_level);
     CREATE INDEX IF NOT EXISTS idx_uurp_containment ON ueba_user_risk_profiles(containment_status);
+    -- =========================================================================
+    -- ITERATION 61: Cloud App Discovery & Shadow SaaS Governance Engine (Endpoint CASB)
+    -- =========================================================================
+    -- Table 172: cloud_app_catalog
+    CREATE TABLE IF NOT EXISTS cloud_app_catalog (
+      id TEXT PRIMARY KEY,
+      app_name TEXT NOT NULL UNIQUE,
+      category TEXT NOT NULL CHECK(category IN ('CLOUD_STORAGE', 'GENERATIVE_AI', 'COLLABORATION', 'DEVELOPER_TOOLS', 'SHADOW_VPN', 'SOCIAL_MEDIA', 'WEBMAIL')),
+      domain_name TEXT NOT NULL,
+      description TEXT,
+      risk_score INTEGER NOT NULL DEFAULT 50,
+      sanctioned_status TEXT NOT NULL DEFAULT 'MONITORED' CHECK(sanctioned_status IN ('SANCTIONED', 'UNSANCTIONED', 'MONITORED')),
+      compliance_certifications TEXT DEFAULT '[]',
+      total_users_count INTEGER NOT NULL DEFAULT 0,
+      total_bytes_transferred INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_cac_category ON cloud_app_catalog(category);
+    CREATE INDEX IF NOT EXISTS idx_cac_status ON cloud_app_catalog(sanctioned_status);
+    CREATE INDEX IF NOT EXISTS idx_cac_score ON cloud_app_catalog(risk_score);
+
+    -- Table 173: endpoint_cloud_usage_telemetry
+    CREATE TABLE IF NOT EXISTS endpoint_cloud_usage_telemetry (
+      id TEXT PRIMARY KEY,
+      app_id TEXT NOT NULL,
+      app_name TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      hostname TEXT NOT NULL,
+      user_principal TEXT NOT NULL,
+      bytes_uploaded INTEGER NOT NULL DEFAULT 0,
+      bytes_downloaded INTEGER NOT NULL DEFAULT 0,
+      session_count INTEGER NOT NULL DEFAULT 1,
+      last_observed_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(app_id) REFERENCES cloud_app_catalog(id) ON DELETE CASCADE,
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ecut_app ON endpoint_cloud_usage_telemetry(app_id);
+    CREATE INDEX IF NOT EXISTS idx_ecut_device ON endpoint_cloud_usage_telemetry(device_id);
+    CREATE INDEX IF NOT EXISTS idx_ecut_user ON endpoint_cloud_usage_telemetry(user_principal);
+
+    -- Table 174: cloud_app_access_policies
+    CREATE TABLE IF NOT EXISTS cloud_app_access_policies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      target_scope TEXT NOT NULL DEFAULT 'ALL_FLEET' CHECK(target_scope IN ('ALL_FLEET', 'DYNAMIC_GROUP', 'DEVICE')),
+      target_id TEXT,
+      app_id TEXT,
+      category_filter TEXT,
+      enforcement_action TEXT NOT NULL DEFAULT 'AUDIT' CHECK(enforcement_action IN ('ALLOW', 'AUDIT', 'WARN', 'BLOCK')),
+      is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(app_id) REFERENCES cloud_app_catalog(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_caap_action ON cloud_app_access_policies(enforcement_action);
+    CREATE INDEX IF NOT EXISTS idx_caap_active ON cloud_app_access_policies(is_active);
+
 
 
 
@@ -8468,6 +8528,105 @@ exit 0`,
       })
     );
   }
+
+  // Iteration 61: Cloud App Discovery & Shadow SaaS Governance Seeds
+  const cacCount = db.prepare('SELECT COUNT(*) as count FROM cloud_app_catalog').get().count;
+  if (cacCount === 0) {
+    const devTarget = db.prepare('SELECT id, hostname FROM devices LIMIT 1').get() || { id: 'dev-01', hostname: 'DESKTOP-CORP-01' };
+
+    const insertCac = db.prepare(`
+      INSERT OR IGNORE INTO cloud_app_catalog (
+        id, app_name, category, domain_name, description, risk_score, sanctioned_status,
+        compliance_certifications, total_users_count, total_bytes_transferred
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertCac.run(
+      'cac-01',
+      'ChatGPT / OpenAI',
+      'GENERATIVE_AI',
+      'chatgpt.com',
+      'Public LLM chat portal used for code generation and document analysis.',
+      65,
+      'MONITORED',
+      JSON.stringify(['SOC2', 'GDPR']),
+      3,
+      14500000
+    );
+
+    insertCac.run(
+      'cac-02',
+      'Mega.nz Cloud Storage',
+      'CLOUD_STORAGE',
+      'mega.nz',
+      'High-risk anonymous encrypted cloud storage locker frequently leveraged for exfiltration.',
+      88,
+      'UNSANCTIONED',
+      JSON.stringify([]),
+      1,
+      482000000
+    );
+
+    insertCac.run(
+      'cac-03',
+      'Microsoft 365 & OneDrive',
+      'CLOUD_STORAGE',
+      'onedrive.live.com',
+      'Corporate sanctioned enterprise collaboration and cloud drive.',
+      10,
+      'SANCTIONED',
+      JSON.stringify(['SOC2', 'ISO27001', 'HIPAA', 'FedRAMP']),
+      8,
+      8920000000
+    );
+
+    insertCac.run(
+      'cac-04',
+      'GitHub Enterprise',
+      'DEVELOPER_TOOLS',
+      'github.com',
+      'Centralized code hosting, git repositories, and CI/CD pipelines.',
+      15,
+      'SANCTIONED',
+      JSON.stringify(['SOC2', 'ISO27001']),
+      5,
+      124000000
+    );
+
+    const insertEcut = db.prepare(`
+      INSERT OR IGNORE INTO endpoint_cloud_usage_telemetry (
+        id, app_id, app_name, device_id, hostname, user_principal, bytes_uploaded, bytes_downloaded, session_count
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertEcut.run(
+      'ecut-01',
+      'cac-02',
+      'Mega.nz Cloud Storage',
+      devTarget.id,
+      devTarget.hostname,
+      'alex.mercer@corp.local',
+      450000000,
+      32000000,
+      4
+    );
+
+    const insertCaap = db.prepare(`
+      INSERT OR IGNORE INTO cloud_app_access_policies (
+        id, name, target_scope, app_id, enforcement_action, is_active
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    insertCaap.run(
+      'caap-01',
+      'Block Unsanctioned Cloud Lockers',
+      'ALL_FLEET',
+      'cac-02',
+      'BLOCK',
+      1
+    );
+  }
+
 
 
 

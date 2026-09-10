@@ -1,3 +1,4 @@
+import { CloudAppDiscoveryEngine } from '../services/cloudAppDiscoveryEngine.js';
 import { UebaEngine } from '../services/uebaEngine.js';
 import { ExploitProtectionEngine } from '../services/exploitProtectionEngine.js';
 import { CisBenchmarkEngine } from '../services/cisBenchmarkEngine.js';
@@ -9930,6 +9931,179 @@ try {
       sendJson(res, 200, { success: true, profile });
     } catch (err) {
       sendJson(res, 400, { error: "UEBA_CONTAIN_USER_ERROR", message: err.message });
+    }
+  });
+
+
+  // =========================================================================
+  // ITERATION 61: Cloud App Discovery & Shadow SaaS Governance Routes
+  // =========================================================================
+
+  // 671. GET /api/v1/fleet/cloud-apps/stats — Fleet-wide cloud application discovery statistics
+  router.get('/api/v1/fleet/cloud-apps/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = CloudAppDiscoveryEngine.getCloudAppStats(getDb());
+      sendJson(res, 200, { success: true, stats });
+    } catch (err) {
+      sendJson(res, 500, { error: "CLOUD_APPS_STATS_ERROR", message: err.message });
+    }
+  });
+
+  // 672. GET /api/v1/fleet/cloud-apps/catalog — Retrieve SaaS cloud apps catalog
+  router.get('/api/v1/fleet/cloud-apps/catalog', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const apps = CloudAppDiscoveryEngine.getCatalog(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, apps, count: apps.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "CLOUD_APPS_CATALOG_ERROR", message: err.message });
+    }
+  });
+
+  // 673. GET /api/v1/fleet/cloud-apps/catalog/:id — Retrieve single cloud app with usage
+  router.get('/api/v1/fleet/cloud-apps/catalog/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const app = CloudAppDiscoveryEngine.getAppById(getDb(), req.params.id);
+      if (!app) {
+        sendJson(res, 404, { error: "APP_NOT_FOUND", message: "Cloud application not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, app });
+    } catch (err) {
+      sendJson(res, 500, { error: "CLOUD_APP_GET_ERROR", message: err.message });
+    }
+  });
+
+  // 674. POST /api/v1/fleet/cloud-apps/catalog — Register SaaS cloud app in catalog
+  router.post('/api/v1/fleet/cloud-apps/catalog', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.app_name || !req.body?.domain_name) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "app_name and domain_name are required" });
+        return;
+      }
+      const app = CloudAppDiscoveryEngine.createApp(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, app });
+    } catch (err) {
+      sendJson(res, 400, { error: "CLOUD_APP_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 675. PUT /api/v1/fleet/cloud-apps/catalog/:id — Update cloud app attributes
+  router.put('/api/v1/fleet/cloud-apps/catalog/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const app = CloudAppDiscoveryEngine.updateApp(getDb(), req.params.id, req.body || {});
+      if (!app) {
+        sendJson(res, 404, { error: "APP_NOT_FOUND", message: "Cloud application not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, app });
+    } catch (err) {
+      sendJson(res, 400, { error: "CLOUD_APP_UPDATE_ERROR", message: err.message });
+    }
+  });
+
+  // 676. DELETE /api/v1/fleet/cloud-apps/catalog/:id — Delete cloud app
+  router.delete('/api/v1/fleet/cloud-apps/catalog/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const deleted = CloudAppDiscoveryEngine.deleteApp(getDb(), req.params.id);
+      if (!deleted) {
+        sendJson(res, 404, { error: "APP_NOT_FOUND", message: "Cloud application not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, deleted: true });
+    } catch (err) {
+      sendJson(res, 500, { error: "CLOUD_APP_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 677. PATCH /api/v1/fleet/cloud-apps/catalog/:id/sanction — Update sanction status
+  router.patch('/api/v1/fleet/cloud-apps/catalog/:id/sanction', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.sanctioned_status) {
+        sendJson(res, 400, { error: "MISSING_STATUS", message: "sanctioned_status is required" });
+        return;
+      }
+      const app = CloudAppDiscoveryEngine.updateSanctionStatus(getDb(), req.params.id, req.body.sanctioned_status);
+      if (!app) {
+        sendJson(res, 404, { error: "APP_NOT_FOUND", message: "Cloud application not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, app });
+    } catch (err) {
+      sendJson(res, 400, { error: "CLOUD_APP_SANCTION_ERROR", message: err.message });
+    }
+  });
+
+  // 678. GET /api/v1/fleet/cloud-apps/usage — Query endpoint cloud usage telemetry
+  router.get('/api/v1/fleet/cloud-apps/usage', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const telemetry = CloudAppDiscoveryEngine.getUsageTelemetry(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, telemetry, count: telemetry.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "CLOUD_USAGE_QUERY_ERROR", message: err.message });
+    }
+  });
+
+  // 679. POST /api/v1/fleet/cloud-apps/usage — Ingest endpoint cloud usage telemetry
+  router.post('/api/v1/fleet/cloud-apps/usage', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.app_id || !req.body?.device_id) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "app_id and device_id are required" });
+        return;
+      }
+      const entry = CloudAppDiscoveryEngine.recordUsageTelemetry(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, entry });
+    } catch (err) {
+      sendJson(res, 400, { error: "CLOUD_USAGE_RECORD_ERROR", message: err.message });
+    }
+  });
+
+  // 680. GET /api/v1/fleet/cloud-apps/policies — Retrieve cloud access policies
+  router.get('/api/v1/fleet/cloud-apps/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policies = CloudAppDiscoveryEngine.getAccessPolicies(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, policies, count: policies.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "CLOUD_POLICIES_QUERY_ERROR", message: err.message });
+    }
+  });
+
+  // 681. POST /api/v1/fleet/cloud-apps/policies — Create cloud access policy
+  router.post('/api/v1/fleet/cloud-apps/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.name) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "Policy name is required" });
+        return;
+      }
+      const policy = CloudAppDiscoveryEngine.createAccessPolicy(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, policy });
+    } catch (err) {
+      sendJson(res, 400, { error: "CLOUD_POLICY_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 682. DELETE /api/v1/fleet/cloud-apps/policies/:id — Delete cloud access policy
+  router.delete('/api/v1/fleet/cloud-apps/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const deleted = CloudAppDiscoveryEngine.deleteAccessPolicy(getDb(), req.params.id);
+      if (!deleted) {
+        sendJson(res, 404, { error: "POLICY_NOT_FOUND", message: "Policy not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, deleted: true });
+    } catch (err) {
+      sendJson(res, 500, { error: "CLOUD_POLICY_DELETE_ERROR", message: err.message });
     }
   });
 
