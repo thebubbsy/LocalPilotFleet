@@ -3485,6 +3485,65 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_eea_device ON exploit_endpoint_audits(device_id);
     CREATE INDEX IF NOT EXISTS idx_eea_policy ON exploit_endpoint_audits(policy_id);
     CREATE INDEX IF NOT EXISTS idx_eea_drift ON exploit_endpoint_audits(drift_detected);
+    -- =========================================================================
+    -- ITERATION 60: User & Entity Behavior Analytics (UEBA) & Insider Risk Intelligence
+    -- =========================================================================
+    -- Table 169: ueba_risk_indicators
+    CREATE TABLE IF NOT EXISTS ueba_risk_indicators (
+      id TEXT PRIMARY KEY,
+      indicator_name TEXT NOT NULL UNIQUE,
+      category TEXT NOT NULL CHECK(category IN ('DATA_EXFILTRATION', 'ANOMALOUS_LOGON', 'PRIVILEGE_ABUSE', 'FLIGHT_RISK', 'RESOURCE_SNOOPING')),
+      description TEXT,
+      risk_weight INTEGER NOT NULL DEFAULT 15,
+      threshold_value REAL NOT NULL DEFAULT 3.0,
+      severity TEXT NOT NULL DEFAULT 'MEDIUM' CHECK(severity IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+      is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_uri_category ON ueba_risk_indicators(category);
+    CREATE INDEX IF NOT EXISTS idx_uri_severity ON ueba_risk_indicators(severity);
+
+    -- Table 170: ueba_user_behavior_anomalies
+    CREATE TABLE IF NOT EXISTS ueba_user_behavior_anomalies (
+      id TEXT PRIMARY KEY,
+      user_principal TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      hostname TEXT NOT NULL,
+      indicator_id TEXT NOT NULL,
+      anomaly_type TEXT NOT NULL,
+      observed_value REAL NOT NULL DEFAULT 0.0,
+      baseline_value REAL NOT NULL DEFAULT 0.0,
+      deviation_score REAL NOT NULL DEFAULT 1.0,
+      status TEXT NOT NULL DEFAULT 'OPEN' CHECK(status IN ('OPEN', 'INVESTIGATING', 'RESOLVED', 'DISMISSED')),
+      detected_at TEXT DEFAULT (DATETIME('now')),
+      details_json TEXT NOT NULL DEFAULT '{}',
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(indicator_id) REFERENCES ueba_risk_indicators(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_uuba_user ON ueba_user_behavior_anomalies(user_principal);
+    CREATE INDEX IF NOT EXISTS idx_uuba_device ON ueba_user_behavior_anomalies(device_id);
+    CREATE INDEX IF NOT EXISTS idx_uuba_status ON ueba_user_behavior_anomalies(status);
+
+    -- Table 171: ueba_user_risk_profiles
+    CREATE TABLE IF NOT EXISTS ueba_user_risk_profiles (
+      id TEXT PRIMARY KEY,
+      user_principal TEXT NOT NULL UNIQUE,
+      display_name TEXT,
+      department TEXT DEFAULT 'Enterprise Ops',
+      composite_risk_score INTEGER NOT NULL DEFAULT 0,
+      risk_level TEXT NOT NULL DEFAULT 'LOW' CHECK(risk_level IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+      flight_risk_flag INTEGER NOT NULL DEFAULT 0 CHECK(flight_risk_flag IN (0, 1)),
+      containment_status TEXT NOT NULL DEFAULT 'MONITORED' CHECK(containment_status IN ('MONITORED', 'RESTRICTED', 'CONTAINED', 'REVOKED')),
+      anomalies_count INTEGER NOT NULL DEFAULT 0,
+      last_assessed_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_uurp_score ON ueba_user_risk_profiles(composite_risk_score);
+    CREATE INDEX IF NOT EXISTS idx_uurp_level ON ueba_user_risk_profiles(risk_level);
+    CREATE INDEX IF NOT EXISTS idx_uurp_containment ON ueba_user_risk_profiles(containment_status);
+
 
 
   `);
@@ -8308,6 +8367,104 @@ exit 0`,
       JSON.stringify({
         drifted_apps: ['powershell.exe'],
         drift_reasons: ['powershell.exe: disallow_child_process_creation not enforced in registry']
+      })
+    );
+  }
+
+  // Iteration 60: User & Entity Behavior Analytics (UEBA) Seeds
+  const uebaCount = db.prepare('SELECT COUNT(*) as count FROM ueba_risk_indicators').get().count;
+  if (uebaCount === 0) {
+    const devTarget = db.prepare('SELECT id, hostname FROM devices LIMIT 1').get() || { id: 'dev-01', hostname: 'DESKTOP-CORP-01' };
+
+    const insertUri = db.prepare(`
+      INSERT OR IGNORE INTO ueba_risk_indicators (
+        id, indicator_name, category, description, risk_weight, threshold_value, severity, is_active
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertUri.run(
+      'uri-01',
+      'MASS_FILE_EXFILTRATION_SPIKE',
+      'DATA_EXFILTRATION',
+      'Detects sudden spike in mass file downloads, USB transfers, or cloud uploads exceeding 3x daily baseline.',
+      35, 3.0, 'HIGH', 1
+    );
+
+    insertUri.run(
+      'uri-02',
+      'ANOMALOUS_AFTER_HOURS_LOGON',
+      'ANOMALOUS_LOGON',
+      'Identifies authentication activities between 01:00 and 05:00 from non-standard workstation endpoints.',
+      20, 1.0, 'MEDIUM', 1
+    );
+
+    insertUri.run(
+      'uri-03',
+      'PRIVILEGE_CREEP_ABUSE',
+      'PRIVILEGE_ABUSE',
+      'Flags unauthorized queries to Domain Admin shares or local SAM database access attempts.',
+      30, 1.0, 'CRITICAL', 1
+    );
+
+    insertUri.run(
+      'uri-04',
+      'FLIGHT_RISK_DATA_HARVESTING',
+      'FLIGHT_RISK',
+      'Correlates job board searches with customer CRM database bulk exports prior to potential resignation.',
+      25, 2.0, 'HIGH', 1
+    );
+
+    const insertUurp = db.prepare(`
+      INSERT OR IGNORE INTO ueba_user_risk_profiles (
+        id, user_principal, display_name, department, composite_risk_score, risk_level, flight_risk_flag, containment_status, anomalies_count
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertUurp.run(
+      'uurp-01',
+      'alex.mercer@corp.local',
+      'Alex Mercer',
+      'Engineering & R&D',
+      78,
+      'HIGH',
+      1,
+      'RESTRICTED',
+      2
+    );
+
+    insertUurp.run(
+      'uurp-02',
+      'sarah.connor@corp.local',
+      'Sarah Connor',
+      'SecOps & Cyber Defense',
+      15,
+      'LOW',
+      0,
+      'MONITORED',
+      0
+    );
+
+    const insertUuba = db.prepare(`
+      INSERT OR IGNORE INTO ueba_user_behavior_anomalies (
+        id, user_principal, device_id, hostname, indicator_id, anomaly_type, observed_value, baseline_value, deviation_score, status, details_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertUuba.run(
+      'uuba-01',
+      'alex.mercer@corp.local',
+      devTarget.id,
+      devTarget.hostname,
+      'uri-01',
+      'MASS_FILE_EXFILTRATION_SPIKE',
+      1420.0,
+      120.0,
+      11.8,
+      'OPEN',
+      JSON.stringify({
+        channel: 'REMOVABLE_USB',
+        files_transferred: 412,
+        target_path: 'E:\\confidential_schematics.zip'
       })
     );
   }

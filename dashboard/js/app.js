@@ -243,6 +243,11 @@ const App = {
           window.ExploitProtectionTable.render();
         }
         break;
+      case 'ueba':
+        if (window.UebaTable && typeof window.UebaTable.render === 'function') {
+          window.UebaTable.render();
+        }
+        break;
       case 'itdr':
         if (window.IdentityThreatTable) window.IdentityThreatTable.render();
         break;

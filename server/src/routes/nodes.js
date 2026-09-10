@@ -1,3 +1,4 @@
+import { UebaEngine } from '../services/uebaEngine.js';
 import { ExploitProtectionEngine } from '../services/exploitProtectionEngine.js';
 import { CisBenchmarkEngine } from '../services/cisBenchmarkEngine.js';
 import { DlpEngine } from '../services/dlpEngine.js';
@@ -2690,6 +2691,59 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { success: true, script });
     } catch (err) {
       sendJson(res, 500, { error: "NODE_EXPLOIT_SCRIPT_ERROR", message: err.message });
+    }
+  });
+
+
+  // =========================================================================
+  // ITERATION 60: User & Entity Behavior Analytics (UEBA) Node Routes
+  // =========================================================================
+
+  // 668. GET /api/v1/nodes/:id/ueba/indicators — Node agent pulls active UEBA indicator baseline
+  router.get('/api/v1/nodes/:id/ueba/indicators', (req, res) => {
+    try {
+      const indicators = UebaEngine.getRiskIndicators(getDb(), { is_active: 1 });
+      sendJson(res, 200, { success: true, indicators, count: indicators.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "NODE_UEBA_INDICATORS_ERROR", message: err.message });
+    }
+  });
+
+  // 669. POST /api/v1/nodes/:id/ueba/report-anomaly — Node agent reports local behavioral anomaly
+  router.post('/api/v1/nodes/:id/ueba/report-anomaly', (req, res) => {
+    const { id } = req.params;
+    try {
+      if (!req.body?.user_principal || !req.body?.indicator_id) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "user_principal and indicator_id are required" });
+        return;
+      }
+      const anomaly = UebaEngine.recordBehaviorAnomaly(getDb(), {
+        device_id: id,
+        ...(req.body || {})
+      });
+      sendJson(res, 201, { success: true, anomaly });
+    } catch (err) {
+      sendJson(res, 400, { error: "NODE_UEBA_ANOMALY_REPORT_ERROR", message: err.message });
+    }
+  });
+
+  // 670. GET /api/v1/nodes/:id/ueba/containment-status — Node agent queries user containment state
+  router.get('/api/v1/nodes/:id/ueba/containment-status', (req, res) => {
+    try {
+      const userPrincipal = req.query?.user_principal || '';
+      if (!userPrincipal) {
+        sendJson(res, 400, { error: "MISSING_USER", message: "user_principal query parameter required" });
+        return;
+      }
+      const profile = UebaEngine.getUserRiskProfile(getDb(), userPrincipal.toLowerCase());
+      sendJson(res, 200, {
+        success: true,
+        user_principal: userPrincipal,
+        containment_status: profile?.containment_status || 'MONITORED',
+        composite_risk_score: profile?.composite_risk_score || 0
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: "NODE_UEBA_CONTAINMENT_QUERY_ERROR", message: err.message });
     }
   });
 

@@ -1,3 +1,4 @@
+import { UebaEngine } from '../services/uebaEngine.js';
 import { ExploitProtectionEngine } from '../services/exploitProtectionEngine.js';
 import { CisBenchmarkEngine } from '../services/cisBenchmarkEngine.js';
 import { DlpEngine } from '../services/dlpEngine.js';
@@ -9752,6 +9753,183 @@ try {
       sendJson(res, 200, { success: true, script });
     } catch (err) {
       sendJson(res, 500, { error: "EXPLOIT_SCRIPT_GENERATE_ERROR", message: err.message });
+    }
+  });
+
+
+  // =========================================================================
+  // ITERATION 60: User & Entity Behavior Analytics (UEBA) & Insider Risk Routes
+  // =========================================================================
+
+  // 656. GET /api/v1/fleet/ueba/stats — Fleet-wide UEBA & insider risk statistics
+  router.get('/api/v1/fleet/ueba/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = UebaEngine.getUebaStats(getDb());
+      sendJson(res, 200, { success: true, stats });
+    } catch (err) {
+      sendJson(res, 500, { error: "UEBA_STATS_ERROR", message: err.message });
+    }
+  });
+
+  // 657. GET /api/v1/fleet/ueba/indicators — Retrieve behavioral risk indicators
+  router.get('/api/v1/fleet/ueba/indicators', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const indicators = UebaEngine.getRiskIndicators(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, indicators, count: indicators.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "UEBA_INDICATORS_ERROR", message: err.message });
+    }
+  });
+
+  // 658. GET /api/v1/fleet/ueba/indicators/:id — Retrieve single risk indicator
+  router.get('/api/v1/fleet/ueba/indicators/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const indicator = UebaEngine.getRiskIndicatorById(getDb(), req.params.id);
+      if (!indicator) {
+        sendJson(res, 404, { error: "INDICATOR_NOT_FOUND", message: "Risk indicator not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, indicator });
+    } catch (err) {
+      sendJson(res, 500, { error: "UEBA_INDICATOR_GET_ERROR", message: err.message });
+    }
+  });
+
+  // 659. POST /api/v1/fleet/ueba/indicators — Register new risk indicator
+  router.post('/api/v1/fleet/ueba/indicators', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.indicator_name || !req.body?.category) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "indicator_name and category are required" });
+        return;
+      }
+      const indicator = UebaEngine.createRiskIndicator(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, indicator });
+    } catch (err) {
+      sendJson(res, 400, { error: "UEBA_INDICATOR_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 660. PUT /api/v1/fleet/ueba/indicators/:id — Update risk indicator weights/thresholds
+  router.put('/api/v1/fleet/ueba/indicators/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const indicator = UebaEngine.updateRiskIndicator(getDb(), req.params.id, req.body || {});
+      if (!indicator) {
+        sendJson(res, 404, { error: "INDICATOR_NOT_FOUND", message: "Risk indicator not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, indicator });
+    } catch (err) {
+      sendJson(res, 400, { error: "UEBA_INDICATOR_UPDATE_ERROR", message: err.message });
+    }
+  });
+
+  // 661. DELETE /api/v1/fleet/ueba/indicators/:id — Delete risk indicator
+  router.delete('/api/v1/fleet/ueba/indicators/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const deleted = UebaEngine.deleteRiskIndicator(getDb(), req.params.id);
+      if (!deleted) {
+        sendJson(res, 404, { error: "INDICATOR_NOT_FOUND", message: "Risk indicator not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, deleted: true });
+    } catch (err) {
+      sendJson(res, 500, { error: "UEBA_INDICATOR_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 662. GET /api/v1/fleet/ueba/anomalies — Retrieve user behavior anomalies stream
+  router.get('/api/v1/fleet/ueba/anomalies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const anomalies = UebaEngine.getBehaviorAnomalies(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, anomalies, count: anomalies.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "UEBA_ANOMALIES_ERROR", message: err.message });
+    }
+  });
+
+  // 663. POST /api/v1/fleet/ueba/anomalies — Ingest behavior anomaly event
+  router.post('/api/v1/fleet/ueba/anomalies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.user_principal || !req.body?.device_id || !req.body?.indicator_id) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "user_principal, device_id, and indicator_id are required" });
+        return;
+      }
+      const anomaly = UebaEngine.recordBehaviorAnomaly(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, anomaly });
+    } catch (err) {
+      sendJson(res, 400, { error: "UEBA_ANOMALY_RECORD_ERROR", message: err.message });
+    }
+  });
+
+  // 664. PATCH /api/v1/fleet/ueba/anomalies/:id — Update anomaly investigation status
+  router.patch('/api/v1/fleet/ueba/anomalies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.status) {
+        sendJson(res, 400, { error: "MISSING_STATUS", message: "status is required" });
+        return;
+      }
+      const anomaly = UebaEngine.updateAnomalyStatus(getDb(), req.params.id, req.body.status, req.body.notes || '');
+      if (!anomaly) {
+        sendJson(res, 404, { error: "ANOMALY_NOT_FOUND", message: "Anomaly not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, anomaly });
+    } catch (err) {
+      sendJson(res, 400, { error: "UEBA_ANOMALY_PATCH_ERROR", message: err.message });
+    }
+  });
+
+  // 665. GET /api/v1/fleet/ueba/profiles — Retrieve user risk profiles
+  router.get('/api/v1/fleet/ueba/profiles', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const profiles = UebaEngine.getUserRiskProfiles(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, profiles, count: profiles.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "UEBA_PROFILES_ERROR", message: err.message });
+    }
+  });
+
+  // 666. GET /api/v1/fleet/ueba/profiles/:userPrincipal — Retrieve single user risk profile
+  router.get('/api/v1/fleet/ueba/profiles/:userPrincipal', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const profile = UebaEngine.getUserRiskProfile(getDb(), req.params.userPrincipal.toLowerCase());
+      if (!profile) {
+        sendJson(res, 404, { error: "USER_PROFILE_NOT_FOUND", message: "User risk profile not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, profile });
+    } catch (err) {
+      sendJson(res, 500, { error: "UEBA_PROFILE_GET_ERROR", message: err.message });
+    }
+  });
+
+  // 667. POST /api/v1/fleet/ueba/contain-user — Execute automated insider containment
+  router.post('/api/v1/fleet/ueba/contain-user', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.user_principal || !req.body?.containment_status) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "user_principal and containment_status are required" });
+        return;
+      }
+      const profile = UebaEngine.updateUserContainment(getDb(), req.body.user_principal.toLowerCase(), req.body.containment_status);
+      if (!profile) {
+        sendJson(res, 404, { error: "USER_PROFILE_NOT_FOUND", message: "User risk profile not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, profile });
+    } catch (err) {
+      sendJson(res, 400, { error: "UEBA_CONTAIN_USER_ERROR", message: err.message });
     }
   });
 
