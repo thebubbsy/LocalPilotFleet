@@ -1,5 +1,6 @@
 import { contentDistributionEngine } from '../services/contentDistributionEngine.js';
 import { VaultSecretsEngine } from '../services/vaultSecretsEngine.js';
+import { LiveQueryEngine } from '../services/liveQueryEngine.js';
 import { mdmCspEngine } from '../services/mdmCspEngine.js';
 import * as supervisorEngine from '../services/supervisorEngine.js';
 import * as realtimePushEngine from '../services/realtimePushEngine.js';
@@ -50,6 +51,19 @@ import * as pkiSigningEngine from '../services/pkiSigningEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
+
+  // POST /api/v1/nodes/:id/queries/:queryId/results — Ingest live query results from node
+  router.post('/api/v1/nodes/:id/queries/:queryId/results', (req, res) => {
+    const { id, queryId } = req.params;
+    const { hostname, data_rows, duration_ms } = req.body || {};
+    try {
+      const engine = new LiveQueryEngine(getDb());
+      const result = engine.ingestQueryResult(queryId, id, hostname || id, data_rows || [], duration_ms || 350);
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: 'QUERY_INGEST_ERROR', message: err.message });
+    }
+  });
 
   // POST /api/v1/nodes/:id/vault/escrow — Workstation DPAPI-NG / BitLocker / LAPS credential escrow
   router.post('/api/v1/nodes/:id/vault/escrow', (req, res) => {

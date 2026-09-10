@@ -1,5 +1,6 @@
 import { multiTenancyEngine } from '../services/multiTenancyEngine.js';
 import { VaultSecretsEngine } from '../services/vaultSecretsEngine.js';
+import { LiveQueryEngine } from '../services/liveQueryEngine.js';
 import { openApiSpecEngine } from '../services/openApiSpecEngine.js';
 import { contentDistributionEngine } from '../services/contentDistributionEngine.js';
 import { mdmCspEngine } from '../services/mdmCspEngine.js';
@@ -7008,6 +7009,113 @@ try {
       res.end(html);
     } catch (err) {
       sendJson(res, 500, { error: 'DOCS_ERROR', message: err.message });
+    }
+  });
+
+  // ══════════════════════════════════════════════════════════════════
+  // LIVE DISTRIBUTED FLEET QUERY ENGINE (CMPIVOT / TANIUM SENSORS) (433–440)
+  // ══════════════════════════════════════════════════════════════════
+
+  // 433. GET /api/v1/fleet/queries/stats
+  router.get('/api/v1/fleet/queries/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new LiveQueryEngine(getDb());
+      sendJson(res, 200, engine.getLiveQueryStats());
+    } catch (err) {
+      sendJson(res, 500, { error: 'QUERY_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 434. GET /api/v1/fleet/queries/entities
+  router.get('/api/v1/fleet/queries/entities', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new LiveQueryEngine(getDb());
+      const entities = engine.getEntities(req.query?.category || null);
+      sendJson(res, 200, { entities, count: entities.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'ENTITIES_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 435. GET /api/v1/fleet/queries/sessions
+  router.get('/api/v1/fleet/queries/sessions', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new LiveQueryEngine(getDb());
+      const sessions = engine.getSessions(parseInt(req.query?.limit || '50', 10));
+      sendJson(res, 200, { sessions, count: sessions.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'SESSIONS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 436. GET /api/v1/fleet/queries/sessions/:id
+  router.get('/api/v1/fleet/queries/sessions/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new LiveQueryEngine(getDb());
+      const session = engine.getSessionById(req.params.id);
+      if (!session) {
+        sendJson(res, 404, { error: 'SESSION_NOT_FOUND', message: 'Query session not found' });
+        return;
+      }
+      sendJson(res, 200, session);
+    } catch (err) {
+      sendJson(res, 500, { error: 'SESSION_GET_ERROR', message: err.message });
+    }
+  });
+
+  // 437. POST /api/v1/fleet/queries/sessions
+  router.post('/api/v1/fleet/queries/sessions', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new LiveQueryEngine(getDb());
+      const created = engine.dispatchLiveQuery(req.body || {}, realtimePushEngine);
+      sendJson(res, 201, created);
+    } catch (err) {
+      sendJson(res, 400, { error: 'QUERY_DISPATCH_ERROR', message: err.message });
+    }
+  });
+
+  // 438. POST /api/v1/fleet/queries/sessions/:id/cancel
+  router.post('/api/v1/fleet/queries/sessions/:id/cancel', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new LiveQueryEngine(getDb());
+      const cancelled = engine.cancelQuery(req.params.id);
+      sendJson(res, 200, { success: cancelled, query_id: req.params.id });
+    } catch (err) {
+      sendJson(res, 400, { error: 'QUERY_CANCEL_ERROR', message: err.message });
+    }
+  });
+
+  // 439. GET /api/v1/fleet/queries/sessions/:id/results
+  router.get('/api/v1/fleet/queries/sessions/:id/results', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new LiveQueryEngine(getDb());
+      const results = engine.getQueryResults(req.params.id, parseInt(req.query?.limit || '500', 10));
+      sendJson(res, 200, { query_id: req.params.id, results, count: results.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'RESULTS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 440. GET /api/v1/fleet/queries/sessions/:id/export
+  router.get('/api/v1/fleet/queries/sessions/:id/export', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new LiveQueryEngine(getDb());
+      const csv = engine.exportResultsToCsv(req.params.id);
+      res.writeHead(200, {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': `attachment; filename="cmpivot_query_${req.params.id}.csv"`
+      });
+      res.end(csv);
+    } catch (err) {
+      sendJson(res, 500, { error: 'EXPORT_ERROR', message: err.message });
     }
   });
 

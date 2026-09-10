@@ -3,7 +3,7 @@
  * Hardware / DPAPI-NG / AES-256-GCM Credential Escrow & API Documentation
  */
 
-export function renderVaultSecretsBlade() {
+function renderVaultSecretsBlade() {
   return `
     <div class="space-y-6">
       <!-- Header Banner -->
@@ -159,7 +159,7 @@ export function renderVaultSecretsBlade() {
   `;
 }
 
-export async function initVaultSecretsBlade(api) {
+async function initVaultSecretsBlade(api) {
   const refreshBtn = document.getElementById('btn-vault-refresh');
   if (refreshBtn) {
     refreshBtn.addEventListener('click', () => loadVaultData(api));
@@ -284,3 +284,25 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
 }
+
+window.VaultSecretsTable = {
+  render: async function() {
+    const container = document.getElementById('tab-vault');
+    if (!container) return;
+    container.innerHTML = renderVaultSecretsBlade();
+    await initVaultSecretsBlade({
+      get: async (url) => {
+        if (typeof window.apiFetch === 'function') {
+          return window.apiFetch(url);
+        }
+        const key = localStorage.getItem('fleet_key') || '';
+        const base = (localStorage.getItem('fleet_server_url') || '').replace(/\/$/, '') || window.location.origin;
+        const res = await fetch(`${base}${url}`, {
+          headers: { 'X-Fleet-Key': key, 'Content-Type': 'application/json' }
+        });
+        return res.json();
+      }
+    });
+  }
+};
+

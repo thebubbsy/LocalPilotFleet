@@ -203,6 +203,12 @@ const App = {
       case 'tenancy':
         if (window.MultiTenancyTable) window.MultiTenancyTable.render();
         break;
+      case 'vault':
+        if (window.VaultSecretsTable) window.VaultSecretsTable.render();
+        break;
+      case 'live-queries':
+        if (window.LiveQueryTable) window.LiveQueryTable.render();
+        break;
       case 'settings':
         this.renderSettings();
         break;

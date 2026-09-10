@@ -2465,6 +2465,51 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_vault_audit_secret ON vault_access_audits(secret_id);
     CREATE INDEX IF NOT EXISTS idx_vault_audit_created ON vault_access_audits(created_at);
 
+    -- 118. LIVE_FLEET_QUERIES — CMPivot / Tanium Real-Time Distributed Query Sessions
+    CREATE TABLE IF NOT EXISTS live_fleet_queries (
+      id TEXT PRIMARY KEY,
+      query_text TEXT NOT NULL,
+      query_type TEXT NOT NULL DEFAULT 'CMPIVOT_KQL' CHECK(query_type IN ('CMPIVOT_KQL', 'OSQUERY_SQL', 'POWERSHELL_CIM', 'FILE_SEARCH', 'REGISTRY_PROBE')),
+      target_scope TEXT NOT NULL DEFAULT 'ALL_FLEET' CHECK(target_scope IN ('ALL_FLEET', 'COLLECTION', 'DEVICE', 'DYNAMIC_GROUP')),
+      target_id TEXT,
+      status TEXT NOT NULL DEFAULT 'STREAMING' CHECK(status IN ('DISPATCHED', 'STREAMING', 'COMPLETED', 'CANCELLED', 'TIMED_OUT')),
+      total_targets INTEGER NOT NULL DEFAULT 1,
+      responded_targets INTEGER NOT NULL DEFAULT 0,
+      initiated_by TEXT NOT NULL DEFAULT 'Global Administrator',
+      created_at TEXT DEFAULT (DATETIME('now')),
+      completed_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_lfq_status ON live_fleet_queries(status);
+    CREATE INDEX IF NOT EXISTS idx_lfq_created ON live_fleet_queries(created_at);
+
+    -- 119. LIVE_QUERY_RESULTS — Ingested Tabular Result Rows from Endpoints
+    CREATE TABLE IF NOT EXISTS live_query_results (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      query_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      hostname TEXT NOT NULL,
+      data_row_json TEXT NOT NULL,
+      execution_duration_ms INTEGER NOT NULL DEFAULT 0,
+      received_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(query_id) REFERENCES live_fleet_queries(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_lqr_query ON live_query_results(query_id);
+    CREATE INDEX IF NOT EXISTS idx_lqr_device ON live_query_results(device_id);
+
+    -- 120. LIVE_QUERY_ENTITIES — CMPivot Entity & Sensor Catalog
+    CREATE TABLE IF NOT EXISTS live_query_entities (
+      entity_name TEXT PRIMARY KEY,
+      category TEXT NOT NULL,
+      description TEXT NOT NULL,
+      sample_query TEXT NOT NULL,
+      powershell_extractor TEXT NOT NULL,
+      created_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_lqe_cat ON live_query_entities(category);
+
 
 
 
@@ -5661,6 +5706,38 @@ exit 0`,
       'abcdef1234567890abcdef12',
       30
     );
+  }
+
+  // 43. Seed Live Distributed Query CMPivot Entities & Default Session
+  const entityCount = db.prepare('SELECT COUNT(*) as count FROM live_query_entities').get().count;
+  if (entityCount === 0) {
+    const insertEntity = db.prepare(`
+      INSERT OR IGNORE INTO live_query_entities (
+        entity_name, category, description, sample_query, powershell_extractor
+      ) VALUES (?, ?, ?, ?, ?)
+    `);
+
+    insertEntity.run('ProcessList', 'Operating System', 'Active running processes with PID, working set memory, and CPU times', 'ProcessList | where WorkingSetMB > 250', 'Get-Process | Select-Object Id, ProcessName, WorkingSet64, CPU, Path');
+    insertEntity.run('ServiceList', 'System Services', 'Windows system services and operational state', 'ServiceList | where State == "Running" and StartMode == "Auto"', 'Get-Service | Select-Object Name, DisplayName, Status, StartType');
+    insertEntity.run('ActiveNetworkConnections', 'Networking', 'TCP/UDP listening ports, foreign connections, and owning PIDs', 'ActiveNetworkConnections | where LocalPort == 443', 'Get-NetTCPConnection | Select-Object LocalAddress, LocalPort, RemoteAddress, RemotePort, State, OwningProcess');
+    insertEntity.run('Registry', 'Configuration', 'Windows registry values, policy subkeys, and system configuration', 'Registry("HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate")', 'Get-ItemProperty -Path $RegistryPath');
+    insertEntity.run('CimInstance', 'Hardware & WMI', 'Direct WMI/CIM class query across root/cimv2 or root/standardcimv2', 'CimInstance("Win32_OperatingSystem")', 'Get-CimInstance -ClassName $CimClass');
+    insertEntity.run('LoggedOnUsers', 'Identity & Access', 'Active interactive and remote desktop logon sessions', 'LoggedOnUsers', 'query user');
+
+    // Seed default historical CMPivot session
+    const insertQuery = db.prepare(`
+      INSERT OR IGNORE INTO live_fleet_queries (
+        id, query_text, query_type, target_scope, status, total_targets, responded_targets, initiated_by, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now'))
+    `);
+    insertQuery.run('qry-default-process-audit', 'ProcessList | where WorkingSetMB > 250', 'CMPIVOT_KQL', 'ALL_FLEET', 'COMPLETED', 1, 1, 'SecOps Lead');
+
+    const insertResult = db.prepare(`
+      INSERT OR IGNORE INTO live_query_results (
+        query_id, device_id, hostname, data_row_json, execution_duration_ms
+      ) VALUES (?, ?, ?, ?, ?)
+    `);
+    insertResult.run('qry-default-process-audit', 'DESKTOP-R0H12DJ', 'DESKTOP-R0H12DJ', JSON.stringify({ ProcessName: 'node', Id: 1904, WorkingSetMB: 285.4, CPU: 12.1 }), 420);
   }
 
 }
