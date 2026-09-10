@@ -2711,3 +2711,67 @@ Created `server/src/services/scepPkiEnrollmentEngine.js` offering 16 core functi
 - **Unit Tests:** 20/20 unit tests passed in `server/tests/scep_pki_enrollment.test.js`.
 - **Full Regression:** 1,413 tests passed across 153 suites with zero failures and zero skipped (`npm test`).
 - **Live Smoke Tests:** 15/15 live API tests verified against running daemon on port 8443.
+
+---
+
+## Iteration 68 — Enterprise VPN & Per-App VPN Profiles Engine (Zero-Trust Micro-Tunneling, Split-Tunneling & On-Demand Rules)
+
+### 1. Architectural Summary & Intune Parity Objectives
+Iteration 68 completes a fundamental enterprise mobility pillar for Microsoft Intune parity: **Zero-Trust Enterprise VPN & Per-App Micro-Tunneling** across Apple macOS/iOS, Android Enterprise, and Windows 10/11 endpoints:
+- **Zero-Trust Per-App Micro-Tunneling:** Socket-level traffic isolation ensuring that only sanctioned corporate managed applications (e.g., Outlook, Teams, Slack) route data through encrypted intranet tunnels, preventing unmanaged personal applications from accessing sensitive intranet subnets.
+- **Multi-Protocol VPN Gateway Integration:** Full configuration schemas for IKEv2 / IPsec, WireGuard, OpenVPN, and L2TP/IPsec tunnels.
+- **Split-Tunnel CIDR Policy Routing:** Fine-grained CIDR inclusion/exclusion routing (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) ensuring corporate tunnels only capture corporate traffic while internet traffic egresses locally.
+- **Dynamic On-Demand Tunnel Rules:** Automated tunnel instantiation based on DNS domain matching (`*.localpilot.corp`, `*.internal.localpilot`) and Wi-Fi SSID context.
+- **Cross-Platform Payload Generation:** Native export of Apple `.mobileconfig` property lists (with `com.apple.vpn.managed` and `com.apple.vpn.managed.appmapping`) and Windows native `VPNv2` CSP XML profiles with `<TrafficFilters>` and `<AppId>` nodes.
+- **Automated SCEP PKI Binding:** Integrates seamlessly with Iteration 67's SCEP device identity certificates for passwordless EAP-TLS authentication.
+
+### 2. Database Schema Expansions (Tables 193–195)
+Added three new relational tables with foreign keys and performance indexes:
+- **Table 193: `enterprise_vpn_profiles`**: Stores tunnel metadata, server endpoints, protocols, auth methods, SCEP certificate bindings, split-tunnel routes, DNS servers, search domains, on-demand rules, and per-app flags.
+- **Table 194: `per_app_vpn_mappings`**: Binds managed application bundle IDs (e.g. `com.microsoft.Office.Outlook`, `com.tinyspeck.slackmacgap`) to specific VPN tunnels with Apple designated code-sign requirements and Windows AppIDs.
+- **Table 195: `vpn_connection_audit_logs`**: Audits tunnel connection sessions, assigned virtual IPs, bytes transferred in/out, session durations, client OS platforms, and disconnect telemetry.
+*Cumulative user tables: 195 native SQLite tables.*
+
+### 3. Backend Engine Service
+Created `server/src/services/enterpriseVpnProfileEngine.js` offering 15 core functions:
+- `getVpnStats(db)`: Aggregates fleet VPN profiles, per-app mappings, active tunnels, and total encrypted bandwidth.
+- `getVpnProfiles(db, filters)` / `getVpnProfile(db, id)`: Profile retrieval and multi-platform filtering.
+- `createVpnProfile(db, params)` / `updateVpnProfile(db, id, params)` / `deleteVpnProfile(db, id)`.
+- `getPerAppMappings(db, filters)` / `addPerAppMapping(db, params)` / `removePerAppMapping(db, id)`.
+- `generateAppleVpnPayload(db, profileId)`: Emits Apple `.mobileconfig` with IKEv2 and per-app `AppMapping` array.
+- `generateWindowsVpnXml(db, profileId)`: Emits Windows `VPNv2` CSP XML with RouteList and TrafficFilters.
+- `logVpnEvent(db, params)` / `getVpnLogs(db, filters)`: Session lifecycle auditing and telemetry ingestion.
+- `getEffectiveDeviceVpn(db, deviceId)` / `getDevicePerAppRules(db, deviceId)`: Dynamic client profile resolution.
+
+### 4. REST Endpoints (Endpoints 776–790 Registered)
+- **Fleet Admin Endpoints (776–787 in `server/src/routes/fleet.js`):**
+  - `GET /api/v1/fleet/vpn/stats` — Fleet-wide VPN metrics and bandwidth telemetry
+  - `GET /api/v1/fleet/vpn/profiles` — List VPN profiles with platform filtering
+  - `POST /api/v1/fleet/vpn/profiles` — Create new Enterprise VPN profile
+  - `GET /api/v1/fleet/vpn/profiles/:id` — Profile details with attached per-app mappings
+  - `PUT /api/v1/fleet/vpn/profiles/:id` — Update profile parameters and split routes
+  - `DELETE /api/v1/fleet/vpn/profiles/:id` — Delete VPN profile and cascade mappings
+  - `GET /api/v1/fleet/vpn/mappings` — List Per-App application bindings
+  - `POST /api/v1/fleet/vpn/mappings` — Bind application bundle ID to VPN profile
+  - `DELETE /api/v1/fleet/vpn/mappings/:id` — Remove application binding
+  - `GET /api/v1/fleet/vpn/profiles/:id/apple-payload` — Download Apple .mobileconfig
+  - `GET /api/v1/fleet/vpn/profiles/:id/windows-xml` — Download Windows VPNv2 XML
+  - `GET /api/v1/fleet/vpn/logs` — Connection audit log stream
+- **Node & Client Endpoints (788–790 in `server/src/routes/nodes.js`):**
+  - `GET /api/v1/nodes/:id/vpn/effective` — Device fetches effective VPN configuration
+  - `GET /api/v1/nodes/:id/vpn/per-app-rules` — Device agent queries per-app routing rules
+  - `POST /api/v1/nodes/:id/vpn/telemetry` — Device reports tunnel connection/disconnect telemetry
+*Cumulative registered endpoints: 790 endpoints.*
+
+### 5. Dashboard Blade (`dashboard/js/components/enterpriseVpnProfilesTable.js`)
+- KPI metric cards: Total VPN Profiles, Per-App Tunnels, Active Tunnels, Encrypted Traffic (MB), Zero-Trust Egress.
+- Sub-tab views: VPN Profiles, Per-App Mappings, and Tunnel Audit Logs.
+- Interactive Create VPN Profile modal with protocol selectors, split-tunnel toggles, and per-app flags.
+- Interactive Map Per-App Application modal with bundle ID and code-sign requirement configuration.
+- 1-click downloads for Apple `.mobileconfig` and Windows `VPNv2` XML payloads.
+- Registered in sidebar navigation (`#vpn` / `Enterprise VPN & Per-App`) in `dashboard/index.html` and routed in `dashboard/js/app.js`.
+
+### 6. Quality Gate Verification
+- **Unit Tests:** 20/20 unit tests passed in `server/tests/enterprise_vpn_profiles.test.js`.
+- **Full Regression:** 1,433 tests passed across 154 suites with zero failures and zero skipped (`npm test`).
+- **Live Smoke Tests:** 15/15 live API tests verified against running daemon on port 8443.

@@ -3968,6 +3968,70 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_wifi_ssid ON wifi_8021x_profiles(ssid);
     CREATE INDEX IF NOT EXISTS idx_wifi_plat ON wifi_8021x_profiles(target_platform);
 
+    -- Table 193: enterprise_vpn_profiles
+    CREATE TABLE IF NOT EXISTS enterprise_vpn_profiles (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      connection_type TEXT NOT NULL DEFAULT 'IKEV2' CHECK(connection_type IN ('IKEV2', 'WIREGUARD', 'OPENVPN', 'L2TP_IPSEC')),
+      server_address TEXT NOT NULL,
+      remote_identifier TEXT,
+      target_platform TEXT NOT NULL DEFAULT 'COMBINED' CHECK(target_platform IN ('COMBINED', 'MACOS', 'IOS', 'ANDROID', 'WINDOWS')),
+      auth_method TEXT NOT NULL DEFAULT 'CERTIFICATE_EAP_TLS' CHECK(auth_method IN ('CERTIFICATE_EAP_TLS', 'MACHINE_CERTIFICATE', 'PRE_SHARED_KEY', 'USER_CREDENTIALS')),
+      scep_cert_id TEXT,
+      split_tunneling INTEGER NOT NULL DEFAULT 1 CHECK(split_tunneling IN (0, 1)),
+      split_tunnel_routes_json TEXT DEFAULT '["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]',
+      dns_servers_json TEXT DEFAULT '["10.200.0.1", "10.200.0.2"]',
+      search_domains_json TEXT DEFAULT '["localpilot.corp", "internal.localpilot"]',
+      on_demand_rules_json TEXT DEFAULT '[{"action":"ConnectIfNeeded","domains":["*.localpilot.corp"]}]',
+      is_per_app_vpn INTEGER NOT NULL DEFAULT 0 CHECK(is_per_app_vpn IN (0, 1)),
+      is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(scep_cert_id) REFERENCES scep_issued_certificates(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_vpn_prof_plat ON enterprise_vpn_profiles(target_platform);
+    CREATE INDEX IF NOT EXISTS idx_vpn_prof_perapp ON enterprise_vpn_profiles(is_per_app_vpn);
+
+    -- Table 194: per_app_vpn_mappings
+    CREATE TABLE IF NOT EXISTS per_app_vpn_mappings (
+      id TEXT PRIMARY KEY,
+      vpn_profile_id TEXT NOT NULL,
+      app_bundle_id TEXT NOT NULL,
+      app_name TEXT NOT NULL,
+      platform TEXT NOT NULL DEFAULT 'COMBINED' CHECK(platform IN ('COMBINED', 'MACOS', 'IOS', 'ANDROID', 'WINDOWS')),
+      designated_requirement TEXT,
+      is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(vpn_profile_id) REFERENCES enterprise_vpn_profiles(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_per_app_vpn_prof ON per_app_vpn_mappings(vpn_profile_id);
+    CREATE INDEX IF NOT EXISTS idx_per_app_bundle ON per_app_vpn_mappings(app_bundle_id);
+
+    -- Table 195: vpn_connection_audit_logs
+    CREATE TABLE IF NOT EXISTS vpn_connection_audit_logs (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      vpn_profile_id TEXT,
+      session_id TEXT NOT NULL,
+      event_type TEXT NOT NULL CHECK(event_type IN ('TUNNEL_ESTABLISHED', 'TUNNEL_DISCONNECTED', 'AUTH_FAILED', 'ROUTE_APPLIED', 'HANDSHAKE_TIMEOUT')),
+      assigned_ip TEXT,
+      bytes_in INTEGER DEFAULT 0,
+      bytes_out INTEGER DEFAULT 0,
+      duration_seconds INTEGER DEFAULT 0,
+      client_os TEXT,
+      details_json TEXT DEFAULT '{}',
+      created_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(vpn_profile_id) REFERENCES enterprise_vpn_profiles(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_vpn_log_dev ON vpn_connection_audit_logs(device_id);
+    CREATE INDEX IF NOT EXISTS idx_vpn_log_event ON vpn_connection_audit_logs(event_type);
+    CREATE INDEX IF NOT EXISTS idx_vpn_log_session ON vpn_connection_audit_logs(session_id);
+
+
 
 
 
@@ -9458,6 +9522,82 @@ exit 0`,
       1,
       1
     );
+
+    // Seed 193-195: Enterprise VPN Profiles & Per-App Mappings (Iteration 68)
+    const insertVpnProf = db.prepare(`
+      INSERT OR IGNORE INTO enterprise_vpn_profiles (
+        id, name, connection_type, server_address, remote_identifier,
+        target_platform, auth_method, scep_cert_id, split_tunneling,
+        split_tunnel_routes_json, dns_servers_json, search_domains_json,
+        on_demand_rules_json, is_per_app_vpn, is_active
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertVpnProf.run(
+      'vpn-prof-01',
+      'Corporate Zero-Trust Intranet Gateway',
+      'IKEV2',
+      'vpn.localpilot.corp',
+      'vpn.localpilot.corp',
+      'COMBINED',
+      'CERTIFICATE_EAP_TLS',
+      'cert-01',
+      1,
+      JSON.stringify(['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']),
+      JSON.stringify(['10.200.0.1', '10.200.0.2']),
+      JSON.stringify(['localpilot.corp', 'internal.localpilot']),
+      JSON.stringify([{ action: 'ConnectIfNeeded', domains: ['*.localpilot.corp', '*.internal.localpilot'] }]),
+      1,
+      1
+    );
+
+    const insertPerApp = db.prepare(`
+      INSERT OR IGNORE INTO per_app_vpn_mappings (
+        id, vpn_profile_id, app_bundle_id, app_name, platform, designated_requirement, is_active
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertPerApp.run(
+      'vpn-map-01',
+      'vpn-prof-01',
+      'com.microsoft.Office.Outlook',
+      'Microsoft Outlook',
+      'COMBINED',
+      'identifier "com.microsoft.Office.Outlook" and anchor apple generic',
+      1
+    );
+
+    insertPerApp.run(
+      'vpn-map-02',
+      'vpn-prof-01',
+      'com.tinyspeck.slackmacgap',
+      'Slack Corporate',
+      'MACOS',
+      'identifier "com.tinyspeck.slackmacgap" and anchor apple generic',
+      1
+    );
+
+    const insertVpnLog = db.prepare(`
+      INSERT OR IGNORE INTO vpn_connection_audit_logs (
+        id, device_id, vpn_profile_id, session_id, event_type,
+        assigned_ip, bytes_in, bytes_out, duration_seconds, client_os, details_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertVpnLog.run(
+      'vpn-log-01',
+      devTarget.id,
+      'vpn-prof-01',
+      'sess-vpn-alpha-01',
+      'TUNNEL_ESTABLISHED',
+      '10.200.1.45',
+      1048576,
+      2097152,
+      3600,
+      'macOS Sonoma 14.5',
+      JSON.stringify({ cipher: 'AES-256-GCM', dh_group: 19, split_routes_count: 3 })
+    );
+
   }
 
 

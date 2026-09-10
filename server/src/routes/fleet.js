@@ -1,3 +1,4 @@
+import { EnterpriseVpnProfileEngine } from '../services/enterpriseVpnProfileEngine.js';
 import { ScepPkiEnrollmentEngine } from '../services/scepPkiEnrollmentEngine.js';
 import { MamAppProtectionEngine } from '../services/mamAppProtectionEngine.js';
 import { MultiPlatformUemEngine } from '../services/multiPlatformUemEngine.js';
@@ -11185,6 +11186,176 @@ try {
       res.end(payload.xml);
     } catch (err) {
       sendJson(res, 500, { error: "WINDOWS_WIFI_XML_ERROR", message: err.message });
+    }
+  });
+
+  // =========================================================================
+  // ITERATION 68: Enterprise VPN & Per-App VPN Profiles Routes
+  // =========================================================================
+
+  // 776. GET /api/v1/fleet/vpn/stats — Fleet-wide VPN metrics
+  router.get('/api/v1/fleet/vpn/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = EnterpriseVpnProfileEngine.getVpnStats(getDb());
+      sendJson(res, 200, { success: true, stats });
+    } catch (err) {
+      sendJson(res, 500, { error: "VPN_STATS_ERROR", message: err.message });
+    }
+  });
+
+  // 777. GET /api/v1/fleet/vpn/profiles — List VPN profiles
+  router.get('/api/v1/fleet/vpn/profiles', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const profiles = EnterpriseVpnProfileEngine.getVpnProfiles(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, profiles, count: profiles.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "VPN_PROFILES_ERROR", message: err.message });
+    }
+  });
+
+  // 778. POST /api/v1/fleet/vpn/profiles — Create VPN profile
+  router.post('/api/v1/fleet/vpn/profiles', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.name || !req.body?.server_address) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "name and server_address are required" });
+        return;
+      }
+      const profile = EnterpriseVpnProfileEngine.createVpnProfile(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, profile });
+    } catch (err) {
+      sendJson(res, 400, { error: "VPN_PROFILE_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 779. GET /api/v1/fleet/vpn/profiles/:id — Single profile details with mappings
+  router.get('/api/v1/fleet/vpn/profiles/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const profile = EnterpriseVpnProfileEngine.getVpnProfile(getDb(), req.params.id);
+      if (!profile) {
+        sendJson(res, 404, { error: "VPN_PROFILE_NOT_FOUND", message: "VPN profile not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, profile });
+    } catch (err) {
+      sendJson(res, 500, { error: "VPN_PROFILE_GET_ERROR", message: err.message });
+    }
+  });
+
+  // 780. PUT /api/v1/fleet/vpn/profiles/:id — Update VPN profile
+  router.put('/api/v1/fleet/vpn/profiles/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const updated = EnterpriseVpnProfileEngine.updateVpnProfile(getDb(), req.params.id, req.body || {});
+      sendJson(res, 200, { success: true, profile: updated });
+    } catch (err) {
+      sendJson(res, 400, { error: "VPN_PROFILE_UPDATE_ERROR", message: err.message });
+    }
+  });
+
+  // 781. DELETE /api/v1/fleet/vpn/profiles/:id — Delete VPN profile
+  router.delete('/api/v1/fleet/vpn/profiles/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const deleted = EnterpriseVpnProfileEngine.deleteVpnProfile(getDb(), req.params.id);
+      if (!deleted) {
+        sendJson(res, 404, { error: "VPN_PROFILE_NOT_FOUND", message: "VPN profile not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, deleted: true });
+    } catch (err) {
+      sendJson(res, 500, { error: "VPN_PROFILE_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 782. GET /api/v1/fleet/vpn/mappings — List Per-App VPN mappings
+  router.get('/api/v1/fleet/vpn/mappings', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const mappings = EnterpriseVpnProfileEngine.getPerAppMappings(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, mappings, count: mappings.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "VPN_MAPPINGS_ERROR", message: err.message });
+    }
+  });
+
+  // 783. POST /api/v1/fleet/vpn/mappings — Add application mapping
+  router.post('/api/v1/fleet/vpn/mappings', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.vpn_profile_id || !req.body?.app_bundle_id || !req.body?.app_name) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "vpn_profile_id, app_bundle_id, and app_name are required" });
+        return;
+      }
+      const mapping = EnterpriseVpnProfileEngine.addPerAppMapping(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, mapping });
+    } catch (err) {
+      sendJson(res, 400, { error: "VPN_MAPPING_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 784. DELETE /api/v1/fleet/vpn/mappings/:id — Remove application mapping
+  router.delete('/api/v1/fleet/vpn/mappings/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const removed = EnterpriseVpnProfileEngine.removePerAppMapping(getDb(), req.params.id);
+      if (!removed) {
+        sendJson(res, 404, { error: "MAPPING_NOT_FOUND", message: "Per-App VPN mapping not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, deleted: true });
+    } catch (err) {
+      sendJson(res, 500, { error: "VPN_MAPPING_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 785. GET /api/v1/fleet/vpn/profiles/:id/apple-payload — Download Apple .mobileconfig
+  router.get('/api/v1/fleet/vpn/profiles/:id/apple-payload', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const payload = EnterpriseVpnProfileEngine.generateAppleVpnPayload(getDb(), req.params.id);
+      if (!payload) {
+        sendJson(res, 404, { error: "VPN_PROFILE_NOT_FOUND", message: "VPN profile not found" });
+        return;
+      }
+      res.setHeader('Content-Type', payload.content_type);
+      res.setHeader('Content-Disposition', `attachment; filename="${payload.filename}"`);
+      res.writeHead(200);
+      res.end(payload.plist_xml);
+    } catch (err) {
+      sendJson(res, 500, { error: "APPLE_VPN_PAYLOAD_ERROR", message: err.message });
+    }
+  });
+
+  // 786. GET /api/v1/fleet/vpn/profiles/:id/windows-xml — Download Windows VPNv2 XML
+  router.get('/api/v1/fleet/vpn/profiles/:id/windows-xml', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const payload = EnterpriseVpnProfileEngine.generateWindowsVpnXml(getDb(), req.params.id);
+      if (!payload) {
+        sendJson(res, 404, { error: "VPN_PROFILE_NOT_FOUND", message: "VPN profile not found" });
+        return;
+      }
+      res.setHeader('Content-Type', payload.content_type);
+      res.setHeader('Content-Disposition', `attachment; filename="${payload.filename}"`);
+      res.writeHead(200);
+      res.end(payload.xml);
+    } catch (err) {
+      sendJson(res, 500, { error: "WINDOWS_VPN_XML_ERROR", message: err.message });
+    }
+  });
+
+  // 787. GET /api/v1/fleet/vpn/logs — Connection audit log stream
+  router.get('/api/v1/fleet/vpn/logs', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const logs = EnterpriseVpnProfileEngine.getVpnLogs(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, logs, count: logs.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "VPN_LOGS_QUERY_ERROR", message: err.message });
     }
   });
 

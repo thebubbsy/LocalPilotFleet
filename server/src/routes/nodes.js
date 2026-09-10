@@ -1,3 +1,4 @@
+import { EnterpriseVpnProfileEngine } from '../services/enterpriseVpnProfileEngine.js';
 import { ScepPkiEnrollmentEngine } from '../services/scepPkiEnrollmentEngine.js';
 import { MamAppProtectionEngine } from '../services/mamAppProtectionEngine.js';
 import { MultiPlatformUemEngine } from '../services/multiPlatformUemEngine.js';
@@ -3104,6 +3105,53 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { success: true, profile });
     } catch (err) {
       sendJson(res, 500, { error: "NODE_WIFI_QUERY_ERROR", message: err.message });
+    }
+  });
+
+  // =========================================================================
+  // ITERATION 68: Enterprise VPN & Per-App Node Routes
+  // =========================================================================
+
+  // 788. GET /api/v1/nodes/:id/vpn/effective — Device fetches effective VPN profile
+  router.get('/api/v1/nodes/:id/vpn/effective', (req, res) => {
+    const node = authenticateNode(req, res);
+    if (!node) return;
+
+    try {
+      const profile = EnterpriseVpnProfileEngine.getEffectiveDeviceVpn(getDb(), req.params.id);
+      sendJson(res, 200, { success: true, profile });
+    } catch (err) {
+      sendJson(res, 500, { error: "NODE_VPN_QUERY_ERROR", message: err.message });
+    }
+  });
+
+  // 789. GET /api/v1/nodes/:id/vpn/per-app-rules — Device agent queries per-app routing rules
+  router.get('/api/v1/nodes/:id/vpn/per-app-rules', (req, res) => {
+    const node = authenticateNode(req, res);
+    if (!node) return;
+
+    try {
+      const rules = EnterpriseVpnProfileEngine.getDevicePerAppRules(getDb(), req.params.id);
+      sendJson(res, 200, { success: true, rules, count: rules.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "NODE_PER_APP_QUERY_ERROR", message: err.message });
+    }
+  });
+
+  // 790. POST /api/v1/nodes/:id/vpn/telemetry — Device reports tunnel connection/disconnect telemetry
+  router.post('/api/v1/nodes/:id/vpn/telemetry', (req, res) => {
+    const node = authenticateNode(req, res);
+    if (!node) return;
+
+    try {
+      const payload = {
+        device_id: req.params.id,
+        ...req.body
+      };
+      const log = EnterpriseVpnProfileEngine.logVpnEvent(getDb(), payload);
+      sendJson(res, 201, { success: true, log });
+    } catch (err) {
+      sendJson(res, 400, { error: "NODE_VPN_TELEMETRY_ERROR", message: err.message });
     }
   });
 

@@ -284,6 +284,11 @@ const App = {
         initScepPkiEnrollmentBlade();
       }
       break;
+    case 'vpn':
+      if (window.EnterpriseVpnProfilesTable && typeof window.EnterpriseVpnProfilesTable.render === 'function') {
+        window.EnterpriseVpnProfilesTable.render();
+      }
+      break;
       case 'itdr':
         if (window.IdentityThreatTable) window.IdentityThreatTable.render();
         break;
