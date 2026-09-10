@@ -1997,3 +1997,39 @@ Iteration 49 delivers enterprise Removable Storage & Peripheral Device Control c
    - 20/20 unit tests passed in `server/tests/peripheral_control.test.js`.
    - 1,053/1,053 tests passed across 135 test suites in `npm test`.
    - Git Commit: `e0a0015` pushed to `origin main` and mirrored to OneDrive.
+
+## Iteration 50: Endpoint Tamper Protection & Antivirus Exclusion Governance Engine
+
+### Overview
+Iteration 50 delivers enterprise Endpoint Tamper Protection and Antivirus Exclusion Governance equivalent to Microsoft Defender for Endpoint Tamper Protection and Intune Endpoint Security Antivirus Exclusions. It prevents unauthorized disablement of security features (Real-time monitoring, Behavior monitoring, Script scanning), locks security service state, prevents safe-mode evasion, strictly governs AV exclusions with mandatory justifications and risk tiers (Path, Folder, Extension, Process), and emits forensic audit streams on unauthorized registry/service tamper attempts with automated CRITICAL alarm dispatch.
+
+### Key Deliverables & Database Schema
+1. **Database Schema (Tables 139-141 in SQLite):**
+   - `tamper_protection_policies` (Table 139): Configures anti-tampering postures (`ENFORCED`, `AUDIT_ONLY`, `DISABLED`), security service locks, exclusion protection, and safe-mode bypass prevention.
+   - `antivirus_exclusion_rules` (Table 140): Governed AV exclusions categorized by type (`PATH`, `FOLDER`, `EXTENSION`, `PROCESS`), assigned risk tiers (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`), and tracking approval metadata.
+   - `tamper_audit_events` (Table 141): Real-time forensic telemetry stream tracking `REGISTRY_TAMPER_ATTEMPT`, `SERVICE_STOP_ATTEMPT`, `UNAUTHORIZED_EXCLUSION_INJECTED`, `DRIVER_UNLOAD_ATTEMPT`, and `RTP_DISABLE_ATTEMPT`.
+2. **Backend Engine (`server/src/services/tamperProtectionEngine.js`):**
+   - 10 static methods providing policy CRUD, governed exclusion management, forensic audit logging, automated CRITICAL security alarm dispatch on tampering attempts, and native Windows PowerShell/Registry (`HKLM:\SOFTWARE\Microsoft\Windows Defender\Features\TamperProtection`) script generation.
+3. **REST Endpoints (513-524 in `fleet.js` & `nodes.js`):**
+   - `GET /api/v1/fleet/tamper-protection/stats`
+   - `GET /api/v1/fleet/tamper-protection/policies`
+   - `POST /api/v1/fleet/tamper-protection/policies`
+   - `GET /api/v1/fleet/tamper-protection/policies/:id`
+   - `PATCH /api/v1/fleet/tamper-protection/policies/:id`
+   - `DELETE /api/v1/fleet/tamper-protection/policies/:id`
+   - `GET /api/v1/fleet/tamper-protection/exclusions`
+   - `POST /api/v1/fleet/tamper-protection/exclusions`
+   - `DELETE /api/v1/fleet/tamper-protection/exclusions/:id`
+   - `GET /api/v1/fleet/tamper-protection/events`
+   - `POST /api/v1/fleet/tamper-protection/events`
+   - `GET /api/v1/fleet/tamper-protection/script/:deviceId`
+   - `POST /api/v1/nodes/:id/tamper-protection/events`
+4. **Dashboard Blade (`dashboard/js/components/tamperProtectionTable.js`):**
+   - KPI metric cards (Active Policies, Governed Exclusions, High-Risk Exclusions, Thwarted Attacks).
+   - Anti-tampering baseline manager with PowerShell enforcement script triggers.
+   - Governed AV exclusion manager with risk tier badges and deletion actions.
+   - Forensic tampering audit stream with live search and filter.
+5. **Quality Gate Verification:**
+   - 20/20 unit tests passed in `server/tests/tamper_protection.test.js`.
+   - 1,073/1,073 tests passed across 136 test suites in `npm test`.
+   - Git Commit: `b4b699d` pushed to `origin main` and mirrored to OneDrive.
