@@ -1,3 +1,4 @@
+import { VulnerabilityManagementEngine } from '../services/vulnerabilityManagementEngine.js';
 import { ThreatIntelEngine } from '../services/threatIntelEngine.js';
 import { IncidentCorrelationEngine } from '../services/incidentCorrelationEngine.js';
 import { LiveResponseEngine } from '../services/liveResponseEngine.js';
@@ -2469,6 +2470,28 @@ export function registerNodeRoutes(router) {
       sendJson(res, 201, { success: true, event });
     } catch (err) {
       sendJson(res, 400, { error: "NODE_MATCH_LOG_ERROR", message: err.message });
+    }
+  });
+
+  // 594. GET /api/v1/nodes/:id/tvm/findings — Node agent queries active vulnerability findings
+  router.get('/api/v1/nodes/:id/tvm/findings', (req, res) => {
+    const { id } = req.params;
+    try {
+      const findings = VulnerabilityManagementEngine.getFindings(getDb(), { device_id: id, remediation_status: 'ACTIVE' });
+      sendJson(res, 200, { findings, count: findings.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "NODE_FINDINGS_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 595. POST /api/v1/nodes/:id/tvm/scan — Node agent triggers vulnerability scan against local inventory
+  router.post('/api/v1/nodes/:id/tvm/scan', (req, res) => {
+    const { id } = req.params;
+    try {
+      const result = VulnerabilityManagementEngine.scanDeviceSoftware(getDb(), id);
+      sendJson(res, 200, { success: true, result });
+    } catch (err) {
+      sendJson(res, 400, { error: "NODE_TVM_SCAN_ERROR", message: err.message });
     }
   });
 }

@@ -3177,6 +3177,70 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_time_device ON threat_intel_match_events(device_id);
     CREATE INDEX IF NOT EXISTS idx_time_val ON threat_intel_match_events(matched_value);
     CREATE INDEX IF NOT EXISTS idx_time_timestamp ON threat_intel_match_events(timestamp DESC);
+  
+    -- 154. CVE_VULNERABILITIES_CATALOG — Threat & Vulnerability Management (TVM) CVE Catalog (Iteration 55)
+    CREATE TABLE IF NOT EXISTS cve_vulnerabilities_catalog (
+      cve_id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      description TEXT,
+      cvss_score REAL NOT NULL DEFAULT 5.0 CHECK(cvss_score >= 0.0 AND cvss_score <= 10.0),
+      severity TEXT NOT NULL DEFAULT 'MEDIUM' CHECK(severity IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+      affected_vendor TEXT NOT NULL,
+      affected_product TEXT NOT NULL,
+      fixed_version TEXT,
+      exploit_maturity TEXT NOT NULL DEFAULT 'UNPROVEN' CHECK(exploit_maturity IN ('UNPROVEN', 'POC_EXISTS', 'ACTIVE_IN_THE_WILD')),
+      epss_score REAL NOT NULL DEFAULT 0.05 CHECK(epss_score >= 0.0 AND epss_score <= 1.0),
+      cisa_kev INTEGER NOT NULL DEFAULT 0 CHECK(cisa_kev IN (0, 1)),
+      published_date TEXT DEFAULT (DATETIME('now')),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_cvc_severity ON cve_vulnerabilities_catalog(severity);
+    CREATE INDEX IF NOT EXISTS idx_cvc_product ON cve_vulnerabilities_catalog(affected_product);
+    CREATE INDEX IF NOT EXISTS idx_cvc_kev ON cve_vulnerabilities_catalog(cisa_kev);
+
+    -- 155. ENDPOINT_VULNERABILITY_FINDINGS — Host Vulnerability Exposure Audit (Iteration 55)
+    CREATE TABLE IF NOT EXISTS endpoint_vulnerability_findings (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      hostname TEXT NOT NULL,
+      cve_id TEXT NOT NULL,
+      software_component TEXT NOT NULL,
+      installed_version TEXT NOT NULL,
+      fixed_version TEXT,
+      remediation_status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(remediation_status IN ('ACTIVE', 'PATCH_PENDING', 'EXCEPTION_APPROVED', 'REMEDIATED')),
+      detection_date TEXT DEFAULT (DATETIME('now')),
+      remediated_at TEXT,
+      notes TEXT,
+      FOREIGN KEY(cve_id) REFERENCES cve_vulnerabilities_catalog(cve_id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_evf_device ON endpoint_vulnerability_findings(device_id);
+    CREATE INDEX IF NOT EXISTS idx_evf_cve ON endpoint_vulnerability_findings(cve_id);
+    CREATE INDEX IF NOT EXISTS idx_evf_status ON endpoint_vulnerability_findings(remediation_status);
+
+    -- 156. VULNERABILITY_REMEDIATION_TASKS — Actionable Security Recommendations (Iteration 55)
+    CREATE TABLE IF NOT EXISTS vulnerability_remediation_tasks (
+      id TEXT PRIMARY KEY,
+      cve_id TEXT NOT NULL,
+      priority TEXT NOT NULL DEFAULT 'HIGH' CHECK(priority IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+      title TEXT NOT NULL,
+      remediation_action TEXT NOT NULL,
+      impacted_device_count INTEGER NOT NULL DEFAULT 1,
+      exposed_user_count INTEGER NOT NULL DEFAULT 1,
+      assigned_admin TEXT NOT NULL DEFAULT 'SecOps Vulnerability Team',
+      status TEXT NOT NULL DEFAULT 'OPEN' CHECK(status IN ('OPEN', 'IN_PROGRESS', 'COMPLETED')),
+      due_date TEXT,
+      completed_at TEXT,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(cve_id) REFERENCES cve_vulnerabilities_catalog(cve_id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_vrt_cve ON vulnerability_remediation_tasks(cve_id);
+    CREATE INDEX IF NOT EXISTS idx_vrt_status ON vulnerability_remediation_tasks(status);
+    CREATE INDEX IF NOT EXISTS idx_vrt_priority ON vulnerability_remediation_tasks(priority);
   `);
 
   // Schema migrations for existing databases
@@ -7470,6 +7534,113 @@ exit 0`,
         'BLOCKED',
         'CRITICAL',
         'Outbound connection to Cobalt Strike C2 dropped by LocalPilot Threat Intel Filter'
+      );
+    }
+  }
+
+
+  // 55. Seed Threat & Vulnerability Management (TVM) (Iteration 55)
+  const tvmCount = db.prepare('SELECT COUNT(*) as count FROM cve_vulnerabilities_catalog').get().count;
+  if (tvmCount === 0) {
+    const insertCvc = db.prepare(`
+      INSERT OR IGNORE INTO cve_vulnerabilities_catalog (
+        cve_id, title, description, cvss_score, severity,
+        affected_vendor, affected_product, fixed_version,
+        exploit_maturity, epss_score, cisa_kev, published_date
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', '-30 days'))
+    `);
+
+    insertCvc.run(
+      'CVE-2024-38077',
+      'Windows Remote Desktop Licensing Service Remote Code Execution Vulnerability (MadLicense)',
+      'Unauthenticated RCE vulnerability in Windows Remote Desktop Licensing service allowing full SYSTEM takeover.',
+      9.8,
+      'CRITICAL',
+      'Microsoft',
+      'Windows Remote Desktop Services',
+      'KB5040442',
+      'ACTIVE_IN_THE_WILD',
+      0.89,
+      1
+    );
+
+    insertCvc.run(
+      'CVE-2024-30078',
+      'Windows Wi-Fi Driver Remote Code Execution Vulnerability',
+      'Proximity-based unauthenticated RCE via crafted Wi-Fi network packets processed by the Windows Wi-Fi driver stack.',
+      8.8,
+      'HIGH',
+      'Microsoft',
+      'Windows Wi-Fi Driver Stack',
+      'KB5039212',
+      'POC_EXISTS',
+      0.42,
+      0
+    );
+
+    insertCvc.run(
+      'CVE-2023-36884',
+      'Microsoft Office and Windows HTML Remote Code Execution Vulnerability (RomCom)',
+      'Exploited in targeted attacks via weaponized Office documents to execute arbitrary code with privileges of caller.',
+      8.3,
+      'HIGH',
+      'Microsoft',
+      'Microsoft Office 365 ProPlus',
+      '16.0.16501.20210',
+      'ACTIVE_IN_THE_WILD',
+      0.94,
+      1
+    );
+
+    const devTarget = db.prepare("SELECT id, hostname FROM devices WHERE hostname = 'DESKTOP-R0H12DJ' LIMIT 1").get()
+      || db.prepare("SELECT id, hostname FROM devices LIMIT 1").get();
+
+    if (devTarget) {
+      const insertEvf = db.prepare(`
+        INSERT OR IGNORE INTO endpoint_vulnerability_findings (
+          id, device_id, hostname, cve_id, software_component,
+          installed_version, fixed_version, remediation_status, detection_date
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', '-3 days'))
+      `);
+
+      insertEvf.run(
+        'evf-01',
+        devTarget.id,
+        devTarget.hostname,
+        'CVE-2024-38077',
+        'Remote Desktop Services',
+        '10.0.26100.1150',
+        'KB5040442',
+        'ACTIVE'
+      );
+
+      insertEvf.run(
+        'evf-02',
+        devTarget.id,
+        devTarget.hostname,
+        'CVE-2023-36884',
+        'Microsoft Office 365 ProPlus',
+        '16.0.16327.20248',
+        '16.0.16501.20210',
+        'PATCH_PENDING'
+      );
+
+      const insertVrt = db.prepare(`
+        INSERT OR IGNORE INTO vulnerability_remediation_tasks (
+          id, cve_id, priority, title, remediation_action,
+          impacted_device_count, exposed_user_count, assigned_admin, status, due_date
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', DATETIME('now', '+3 days'))
+      `);
+
+      insertVrt.run(
+        'vrt-01',
+        'CVE-2024-38077',
+        'CRITICAL',
+        'Deploy Cumulative Security Update KB5040442 to Mitigate MadLicense RCE',
+        'Apply Windows Security Update KB5040442 and restart host to eliminate unauthenticated RCE risk.',
+        3,
+        5,
+        'SecOps Patch Governance Lead'
       );
     }
   }

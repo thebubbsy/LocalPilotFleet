@@ -1,3 +1,4 @@
+import { VulnerabilityManagementEngine } from '../services/vulnerabilityManagementEngine.js';
 import { ThreatIntelEngine } from '../services/threatIntelEngine.js';
 import { IncidentCorrelationEngine } from '../services/incidentCorrelationEngine.js';
 import { LiveResponseEngine } from '../services/liveResponseEngine.js';
@@ -8942,6 +8943,169 @@ try {
       sendJson(res, 201, { success: true, event });
     } catch (err) {
       sendJson(res, 400, { error: "MATCH_LOG_ERROR", message: err.message });
+    }
+  });
+
+  // 581. GET /api/v1/fleet/tvm/cve-stats — Fleet-wide TVM exposure & vulnerability statistics
+  router.get('/api/v1/fleet/tvm/cve-stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = VulnerabilityManagementEngine.getTvmStats(getDb());
+      sendJson(res, 200, { success: true, stats });
+    } catch (err) {
+      sendJson(res, 500, { error: "TVM_STATS_ERROR", message: err.message });
+    }
+  });
+
+  // 582. GET /api/v1/fleet/tvm/cves — Retrieve CVE vulnerability catalog
+  router.get('/api/v1/fleet/tvm/cves', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const cves = VulnerabilityManagementEngine.getCveCatalog(getDb(), req.query || {});
+      sendJson(res, 200, { cves, count: cves.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "TVM_CVES_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 583. GET /api/v1/fleet/tvm/cves/:id — Retrieve single CVE with finding exposures
+  router.get('/api/v1/fleet/tvm/cves/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const cve = VulnerabilityManagementEngine.getCveById(getDb(), req.params.id);
+      if (!cve) {
+        sendJson(res, 404, { error: "CVE_NOT_FOUND", message: "CVE vulnerability not found in catalog" });
+        return;
+      }
+      sendJson(res, 200, { cve });
+    } catch (err) {
+      sendJson(res, 500, { error: "TVM_CVE_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 584. POST /api/v1/fleet/tvm/cves — Ingest/register new CVE into catalog
+  router.post('/api/v1/fleet/tvm/cves', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.cve_id || !req.body?.title) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "cve_id and title are required" });
+        return;
+      }
+      const cve = VulnerabilityManagementEngine.createCve(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, cve });
+    } catch (err) {
+      sendJson(res, 400, { error: "TVM_CVE_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 585. PUT /api/v1/fleet/tvm/cves/:id — Update CVE catalog entry
+  router.put('/api/v1/fleet/tvm/cves/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const updated = VulnerabilityManagementEngine.updateCve(getDb(), req.params.id, req.body || {});
+      if (!updated) {
+        sendJson(res, 404, { error: "CVE_NOT_FOUND", message: "CVE not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, cve: updated });
+    } catch (err) {
+      sendJson(res, 400, { error: "TVM_CVE_UPDATE_ERROR", message: err.message });
+    }
+  });
+
+  // 586. DELETE /api/v1/fleet/tvm/cves/:id — Remove CVE from catalog
+  router.delete('/api/v1/fleet/tvm/cves/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const success = VulnerabilityManagementEngine.deleteCve(getDb(), req.params.id);
+      sendJson(res, 200, { success });
+    } catch (err) {
+      sendJson(res, 500, { error: "TVM_CVE_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 587. GET /api/v1/fleet/tvm/findings — Query endpoint vulnerability findings
+  router.get('/api/v1/fleet/tvm/findings', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const findings = VulnerabilityManagementEngine.getFindings(getDb(), req.query || {});
+      sendJson(res, 200, { findings, count: findings.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "TVM_FINDINGS_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 588. POST /api/v1/fleet/tvm/findings — Record a vulnerability finding
+  router.post('/api/v1/fleet/tvm/findings', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.device_id || !req.body?.cve_id) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "device_id and cve_id are required" });
+        return;
+      }
+      const finding = VulnerabilityManagementEngine.createFinding(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, finding });
+    } catch (err) {
+      sendJson(res, 400, { error: "TVM_FINDING_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 589. PUT /api/v1/fleet/tvm/findings/:id — Update finding remediation status
+  router.put('/api/v1/fleet/tvm/findings/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const updated = VulnerabilityManagementEngine.updateFindingStatus(getDb(), req.params.id, req.body?.status, req.body?.notes);
+      sendJson(res, 200, { success: true, finding: updated });
+    } catch (err) {
+      sendJson(res, 400, { error: "TVM_FINDING_UPDATE_ERROR", message: err.message });
+    }
+  });
+
+  // 590. GET /api/v1/fleet/tvm/tasks — Retrieve vulnerability remediation tasks
+  router.get('/api/v1/fleet/tvm/tasks', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const tasks = VulnerabilityManagementEngine.getRemediationTasks(getDb(), req.query || {});
+      sendJson(res, 200, { tasks, count: tasks.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "TVM_TASKS_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 591. POST /api/v1/fleet/tvm/tasks — Create a vulnerability remediation task
+  router.post('/api/v1/fleet/tvm/tasks', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.cve_id || !req.body?.title) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "cve_id and title are required" });
+        return;
+      }
+      const task = VulnerabilityManagementEngine.createRemediationTask(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, task });
+    } catch (err) {
+      sendJson(res, 400, { error: "TVM_TASK_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 592. POST /api/v1/fleet/tvm/tasks/:id/complete — Mark remediation task complete
+  router.post('/api/v1/fleet/tvm/tasks/:id/complete', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const task = VulnerabilityManagementEngine.completeRemediationTask(getDb(), req.params.id, req.body?.notes);
+      sendJson(res, 200, { success: true, task });
+    } catch (err) {
+      sendJson(res, 400, { error: "TVM_TASK_COMPLETE_ERROR", message: err.message });
+    }
+  });
+
+  // 593. POST /api/v1/fleet/tvm/scan/:deviceId — Sweep host against CVE catalog
+  router.post('/api/v1/fleet/tvm/scan/:deviceId', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const result = VulnerabilityManagementEngine.scanDeviceSoftware(getDb(), req.params.deviceId);
+      sendJson(res, 200, { success: true, result });
+    } catch (err) {
+      sendJson(res, 400, { error: "TVM_SCAN_ERROR", message: err.message });
     }
   });
 }
