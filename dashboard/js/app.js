@@ -273,6 +273,11 @@ const App = {
           window.MultiPlatformUemTable.render();
         }
         break;
+      case 'mam':
+        if (window.MamAppProtectionTable && typeof window.MamAppProtectionTable.render === 'function') {
+          window.MamAppProtectionTable.render();
+        }
+        break;
       case 'itdr':
         if (window.IdentityThreatTable) window.IdentityThreatTable.render();
         break;

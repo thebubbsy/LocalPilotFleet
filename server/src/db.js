@@ -3844,6 +3844,64 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_mdc_dev ON mobile_device_commands(device_id);
     CREATE INDEX IF NOT EXISTS idx_mdc_status ON mobile_device_commands(status);
     CREATE INDEX IF NOT EXISTS idx_mdc_platform ON mobile_device_commands(platform);
+    -- =========================================================================
+    -- ITERATION 66: Mobile Application Management (MAM) & App Protection Policies
+    -- =========================================================================
+    -- Table 187: mam_app_protection_policies
+    CREATE TABLE IF NOT EXISTS mam_app_protection_policies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      platform TEXT NOT NULL DEFAULT 'COMBINED' CHECK(platform IN ('IOS', 'ANDROID', 'WINDOWS', 'COMBINED')),
+      allowed_data_storage TEXT NOT NULL DEFAULT 'MANAGED_STORAGE_ONLY' CHECK(allowed_data_storage IN ('LOCAL_STORAGE_BLOCKED', 'MANAGED_STORAGE_ONLY', 'ANY_STORAGE')),
+      prevent_save_as INTEGER NOT NULL DEFAULT 1 CHECK(prevent_save_as IN (0, 1)),
+      clipboard_sharing_mode TEXT NOT NULL DEFAULT 'POLICY_MANAGED_APPS_ONLY' CHECK(clipboard_sharing_mode IN ('BLOCKED', 'POLICY_MANAGED_APPS_ONLY', 'POLICY_MANAGED_WITH_PASTE_IN', 'ANY_APP')),
+      prevent_screen_capture INTEGER NOT NULL DEFAULT 1 CHECK(prevent_screen_capture IN (0, 1)),
+      require_pin_or_biometrics INTEGER NOT NULL DEFAULT 1 CHECK(require_pin_or_biometrics IN (0, 1)),
+      min_pin_length INTEGER NOT NULL DEFAULT 6,
+      max_offline_grace_minutes INTEGER NOT NULL DEFAULT 720,
+      block_jailbroken_rooted INTEGER NOT NULL DEFAULT 1 CHECK(block_jailbroken_rooted IN (0, 1)),
+      is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mam_pol_platform ON mam_app_protection_policies(platform);
+    CREATE INDEX IF NOT EXISTS idx_mam_pol_active ON mam_app_protection_policies(is_active);
+
+    -- Table 188: mam_managed_apps_catalog
+    CREATE TABLE IF NOT EXISTS mam_managed_apps_catalog (
+      id TEXT PRIMARY KEY,
+      policy_id TEXT NOT NULL,
+      app_name TEXT NOT NULL,
+      bundle_id TEXT NOT NULL,
+      platform TEXT NOT NULL DEFAULT 'IOS' CHECK(platform IN ('IOS', 'ANDROID', 'WINDOWS')),
+      is_enlightened INTEGER NOT NULL DEFAULT 1 CHECK(is_enlightened IN (0, 1)),
+      min_app_version TEXT DEFAULT '1.0.0',
+      is_blocked INTEGER NOT NULL DEFAULT 0 CHECK(is_blocked IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(policy_id) REFERENCES mam_app_protection_policies(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mam_app_bundle ON mam_managed_apps_catalog(bundle_id);
+    CREATE INDEX IF NOT EXISTS idx_mam_app_policy ON mam_managed_apps_catalog(policy_id);
+
+    -- Table 189: mam_selective_wipe_requests
+    CREATE TABLE IF NOT EXISTS mam_selective_wipe_requests (
+      id TEXT PRIMARY KEY,
+      target_user_email TEXT NOT NULL,
+      target_device_id TEXT,
+      wipe_reason TEXT NOT NULL DEFAULT 'ADMIN_REQUEST' CHECK(wipe_reason IN ('USER_OFFBOARDED', 'DEVICE_LOST', 'COMPROMISED', 'ADMIN_REQUEST', 'POLICY_NON_COMPLIANT')),
+      status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'DISPATCHED', 'COMPLETED', 'CANCELLED')),
+      issued_by TEXT NOT NULL DEFAULT 'MAM Security Administrator',
+      issued_at TEXT DEFAULT (DATETIME('now')),
+      completed_at TEXT,
+      details_json TEXT DEFAULT '{}'
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mam_wipe_user ON mam_selective_wipe_requests(target_user_email);
+    CREATE INDEX IF NOT EXISTS idx_mam_wipe_status ON mam_selective_wipe_requests(status);
+
 
 
 
@@ -9225,6 +9283,53 @@ exit 0`,
       'SecOps Admin'
     );
   }
+  // Iteration 66: Mobile Application Management (MAM) Seeds
+  const mamPolCount = db.prepare('SELECT COUNT(*) as count FROM mam_app_protection_policies').get().count;
+  if (mamPolCount === 0) {
+    const insertMamPol = db.prepare(`
+      INSERT OR IGNORE INTO mam_app_protection_policies (
+        id, name, description, platform, allowed_data_storage, prevent_save_as,
+        clipboard_sharing_mode, prevent_screen_capture, require_pin_or_biometrics,
+        min_pin_length, max_offline_grace_minutes, block_jailbroken_rooted, is_active
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertMamPol.run(
+      'mam-pol-01',
+      'Enterprise Corporate Mobile Baseline (iOS & Android)',
+      'Enforces strict corporate data sandboxing, clipboard isolation, and biometric authentication.',
+      'COMBINED',
+      'MANAGED_STORAGE_ONLY',
+      1,
+      'POLICY_MANAGED_APPS_ONLY',
+      1,
+      1,
+      6,
+      720,
+      1,
+      1
+    );
+
+    const insertMamApp = db.prepare(`
+      INSERT OR IGNORE INTO mam_managed_apps_catalog (
+        id, policy_id, app_name, bundle_id, platform, is_enlightened, min_app_version, is_blocked
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertMamApp.run('mam-app-01', 'mam-pol-01', 'Microsoft Outlook', 'com.microsoft.Office.Outlook', 'IOS', 1, '4.2400.0', 0);
+    insertMamApp.run('mam-app-02', 'mam-pol-01', 'Microsoft Teams', 'com.microsoft.skype.teams', 'IOS', 1, '6.15.0', 0);
+    insertMamApp.run('mam-app-03', 'mam-pol-01', 'Microsoft Outlook Android', 'com.microsoft.office.outlook', 'ANDROID', 1, '4.2400.0', 0);
+    insertMamApp.run('mam-app-04', 'mam-pol-01', 'LocalPilot Secure Portal', 'corp.localpilot.portal', 'COMBINED', 1, '1.0.0', 0);
+
+    const insertWipe = db.prepare(`
+      INSERT OR IGNORE INTO mam_selective_wipe_requests (
+        id, target_user_email, target_device_id, wipe_reason, status, issued_by
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    insertWipe.run('wipe-01', 'contractor.temp@localpilot.corp', null, 'USER_OFFBOARDED', 'COMPLETED', 'SecOps Lead');
+  }
+
 
 
 

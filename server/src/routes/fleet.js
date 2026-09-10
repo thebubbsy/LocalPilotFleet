@@ -1,3 +1,4 @@
+import { MamAppProtectionEngine } from '../services/mamAppProtectionEngine.js';
 import { MultiPlatformUemEngine } from '../services/multiPlatformUemEngine.js';
 import { HardwareAttestationEngine } from '../services/hardwareAttestationEngine.js';
 import { LicenseOptimizationEngine } from '../services/licenseOptimizationEngine.js';
@@ -10845,6 +10846,185 @@ try {
       sendJson(res, 201, { success: true, ...result });
     } catch (err) {
       sendJson(res, 400, { error: "MOBILE_ENROLLMENT_ERROR", message: err.message });
+    }
+  });
+
+  // =========================================================================
+  // ITERATION 66: Mobile Application Management (MAM) & App Protection Routes
+  // =========================================================================
+
+  // 746. GET /api/v1/fleet/mam/stats — Fleet-wide MAM statistics and KPI metrics
+  router.get('/api/v1/fleet/mam/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = MamAppProtectionEngine.getMamStats(getDb());
+      sendJson(res, 200, { success: true, stats });
+    } catch (err) {
+      sendJson(res, 500, { error: "MAM_STATS_ERROR", message: err.message });
+    }
+  });
+
+  // 747. GET /api/v1/fleet/mam/policies — List all MAM App Protection Policies
+  router.get('/api/v1/fleet/mam/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policies = MamAppProtectionEngine.getPolicies(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, policies, count: policies.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "MAM_POLICIES_ERROR", message: err.message });
+    }
+  });
+
+  // 748. POST /api/v1/fleet/mam/policies — Create new MAM App Protection Policy
+  router.post('/api/v1/fleet/mam/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.name) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "Policy name is required" });
+        return;
+      }
+      const policy = MamAppProtectionEngine.createPolicy(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, policy });
+    } catch (err) {
+      sendJson(res, 400, { error: "MAM_POLICY_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 749. GET /api/v1/fleet/mam/policies/:id — Get single MAM policy details and targeted apps
+  router.get('/api/v1/fleet/mam/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policy = MamAppProtectionEngine.getPolicy(getDb(), req.params.id);
+      if (!policy) {
+        sendJson(res, 404, { error: "POLICY_NOT_FOUND", message: "MAM policy not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, policy });
+    } catch (err) {
+      sendJson(res, 500, { error: "MAM_POLICY_GET_ERROR", message: err.message });
+    }
+  });
+
+  // 750. PUT /api/v1/fleet/mam/policies/:id — Update MAM policy parameters
+  router.put('/api/v1/fleet/mam/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const updated = MamAppProtectionEngine.updatePolicy(getDb(), req.params.id, req.body || {});
+      sendJson(res, 200, { success: true, policy: updated });
+    } catch (err) {
+      sendJson(res, 400, { error: "MAM_POLICY_UPDATE_ERROR", message: err.message });
+    }
+  });
+
+  // 751. DELETE /api/v1/fleet/mam/policies/:id — Delete MAM policy
+  router.delete('/api/v1/fleet/mam/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const deleted = MamAppProtectionEngine.deletePolicy(getDb(), req.params.id);
+      if (!deleted) {
+        sendJson(res, 404, { error: "POLICY_NOT_FOUND", message: "MAM policy not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, deleted: true });
+    } catch (err) {
+      sendJson(res, 500, { error: "MAM_POLICY_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 752. GET /api/v1/fleet/mam/apps — List managed corporate apps catalog
+  router.get('/api/v1/fleet/mam/apps', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const apps = MamAppProtectionEngine.getManagedApps(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, apps, count: apps.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "MAM_APPS_GET_ERROR", message: err.message });
+    }
+  });
+
+  // 753. POST /api/v1/fleet/mam/apps — Register app into MAM catalog
+  router.post('/api/v1/fleet/mam/apps', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.policy_id || !req.body?.app_name || !req.body?.bundle_id) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "policy_id, app_name, and bundle_id are required" });
+        return;
+      }
+      const app = MamAppProtectionEngine.registerManagedApp(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, app });
+    } catch (err) {
+      sendJson(res, 400, { error: "MAM_APP_REGISTER_ERROR", message: err.message });
+    }
+  });
+
+  // 754. DELETE /api/v1/fleet/mam/apps/:id — Remove app from MAM catalog
+  router.delete('/api/v1/fleet/mam/apps/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const deleted = MamAppProtectionEngine.deleteManagedApp(getDb(), req.params.id);
+      if (!deleted) {
+        sendJson(res, 404, { error: "APP_NOT_FOUND", message: "Managed app not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, deleted: true });
+    } catch (err) {
+      sendJson(res, 500, { error: "MAM_APP_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 755. GET /api/v1/fleet/mam/selective-wipes — List selective wipe orders
+  router.get('/api/v1/fleet/mam/selective-wipes', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const wipes = MamAppProtectionEngine.getSelectiveWipes(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, wipes, count: wipes.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "MAM_WIPES_GET_ERROR", message: err.message });
+    }
+  });
+
+  // 756. POST /api/v1/fleet/mam/selective-wipes — Issue selective wipe order
+  router.post('/api/v1/fleet/mam/selective-wipes', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.target_user_email) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "target_user_email is required" });
+        return;
+      }
+      const wipe = MamAppProtectionEngine.requestSelectiveWipe(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, wipe });
+    } catch (err) {
+      sendJson(res, 400, { error: "MAM_WIPE_REQUEST_ERROR", message: err.message });
+    }
+  });
+
+  // 757. POST /api/v1/fleet/mam/selective-wipes/:id/cancel — Cancel pending selective wipe
+  router.post('/api/v1/fleet/mam/selective-wipes/:id/cancel', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const cancelled = MamAppProtectionEngine.cancelSelectiveWipe(getDb(), req.params.id);
+      if (!cancelled) {
+        sendJson(res, 404, { error: "WIPE_NOT_FOUND_OR_NOT_PENDING", message: "Wipe request not found or not in PENDING state" });
+        return;
+      }
+      sendJson(res, 200, { success: true, cancelled: true });
+    } catch (err) {
+      sendJson(res, 500, { error: "MAM_WIPE_CANCEL_ERROR", message: err.message });
+    }
+  });
+
+  // 758. GET /api/v1/fleet/mam/policies/:id/config — Export mobile SDK configuration payload
+  router.get('/api/v1/fleet/mam/policies/:id/config', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const config = MamAppProtectionEngine.generateMamClientConfig(getDb(), req.params.id);
+      if (!config) {
+        sendJson(res, 404, { error: "POLICY_NOT_FOUND", message: "MAM policy not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, config });
+    } catch (err) {
+      sendJson(res, 500, { error: "MAM_CONFIG_EXPORT_ERROR", message: err.message });
     }
   });
 

@@ -1,3 +1,4 @@
+import { MamAppProtectionEngine } from '../services/mamAppProtectionEngine.js';
 import { MultiPlatformUemEngine } from '../services/multiPlatformUemEngine.js';
 import { HardwareAttestationEngine } from '../services/hardwareAttestationEngine.js';
 import { LicenseOptimizationEngine } from '../services/licenseOptimizationEngine.js';
@@ -3013,6 +3014,44 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { success: true, command: updated });
     } catch (err) {
       sendJson(res, 400, { error: "COMMAND_ACKNOWLEDGE_ERROR", message: err.message });
+    }
+  });
+
+  // =========================================================================
+  // ITERATION 66: Mobile Application Management (MAM) Node Endpoints
+  // =========================================================================
+
+  // 759. GET /api/v1/nodes/:id/mam/wipe-orders — Mobile client checks for pending selective wipe orders
+  router.get('/api/v1/nodes/:id/mam/wipe-orders', (req, res) => {
+    const node = authenticateNode(req, res);
+    if (!node) return;
+
+    try {
+      const userEmail = req.query?.user_email || node.primary_user;
+      const wipes = MamAppProtectionEngine.getPendingWipesForNodeOrUser(getDb(), {
+        userEmail,
+        deviceId: req.params.id
+      });
+      sendJson(res, 200, { success: true, pending_wipes: wipes, count: wipes.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "MAM_WIPE_QUERY_ERROR", message: err.message });
+    }
+  });
+
+  // 760. POST /api/v1/nodes/:id/mam/evaluate — Mobile app reports posture and evaluates MAM compliance
+  router.post('/api/v1/nodes/:id/mam/evaluate', (req, res) => {
+    const node = authenticateNode(req, res);
+    if (!node) return;
+
+    try {
+      const evaluation = MamAppProtectionEngine.evaluateAppCompliance(getDb(), {
+        ...(req.body || {}),
+        device_id: req.params.id,
+        user_email: req.body?.user_email || node.primary_user
+      });
+      sendJson(res, 200, { success: true, evaluation });
+    } catch (err) {
+      sendJson(res, 400, { error: "MAM_EVALUATE_ERROR", message: err.message });
     }
   });
 
