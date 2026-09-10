@@ -1961,3 +1961,39 @@ Iteration 48 delivers a complete enterprise Web Content Filtering (WCF) and Netw
    - 20/20 unit tests passed in `server/tests/web_protection.test.js`.
    - 1,033/1,033 tests passed across 134 test suites in `npm test`.
    - Git Commit: `6a901c2` pushed to `origin main` and mirrored to OneDrive.
+
+## Iteration 49: USB & Peripheral Device Control Engine (Hardware Restrictions & Whitelisting)
+
+### Overview
+Iteration 49 delivers enterprise Removable Storage & Peripheral Device Control capabilities equivalent to Microsoft Defender for Endpoint Device Control and Intune Endpoint Security Device Control policies. It provides hardware-enforced restrictions on USB mass storage devices (Allow, Read-Only, Block), Bluetooth tethering controls, detailed Plug and Play auditing, a granular hardware exception whitelist (matching Vendor ID, Product ID, Serial Number, or Interface GUIDs), and forensic connection and blocked write telemetry.
+
+### Key Deliverables & Database Schema
+1. **Database Schema (Tables 136-138 in SQLite):**
+   - `usb_device_control_policies` (Table 136): Configures removable storage access postures (`ALLOW`, `READ_ONLY`, `BLOCK`), Bluetooth restrictions (`ALLOWED`, `RESTRICTED`, `DISABLED`), printer protection modes, and audit levels.
+   - `usb_device_exceptions` (Table 137): Granular hardware whitelist rules matching friendly names, VID, PID, Serial Numbers, and Interface GUIDs with action overrides (`ALLOW`, `AUDIT_ONLY`, `BLOCK`).
+   - `peripheral_audit_events` (Table 138): Forensic peripheral activity stream tracking `USB_ATTACH`, `USB_DETACH`, `WRITE_BLOCKED`, `READ_ONLY_ENFORCED`, `BLUETOOTH_RESTRICTED`, and `PRINT_AUDITED`.
+2. **Backend Engine (`server/src/services/peripheralControlEngine.js`):**
+   - 10 static methods providing policy CRUD, hardware exception evaluations, forensic event logging, automated HIGH security alarm dispatch on blocked exfiltration attempts, and native Windows PowerShell/Registry (`HKLM:\SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices`) script generation.
+3. **REST Endpoints (501-512 in `fleet.js` & `nodes.js`):**
+   - `GET /api/v1/fleet/peripheral-control/stats`
+   - `GET /api/v1/fleet/peripheral-control/policies`
+   - `POST /api/v1/fleet/peripheral-control/policies`
+   - `GET /api/v1/fleet/peripheral-control/policies/:id`
+   - `PATCH /api/v1/fleet/peripheral-control/policies/:id`
+   - `DELETE /api/v1/fleet/peripheral-control/policies/:id`
+   - `GET /api/v1/fleet/peripheral-control/exceptions`
+   - `POST /api/v1/fleet/peripheral-control/exceptions`
+   - `DELETE /api/v1/fleet/peripheral-control/exceptions/:id`
+   - `GET /api/v1/fleet/peripheral-control/events`
+   - `POST /api/v1/fleet/peripheral-control/events`
+   - `GET /api/v1/fleet/peripheral-control/script/:deviceId`
+   - `POST /api/v1/nodes/:id/peripheral-control/events`
+4. **Dashboard Blade (`dashboard/js/components/peripheralControlTable.js`):**
+   - Real-time KPI metric cards (Active Policies, Whitelist Rules, Blocked Writes, Total Connects).
+   - Interactive policy manager with PowerShell script generation triggers.
+   - Hardware whitelist exception manager with VID/PID/SN badges.
+   - Forensic connection audit stream with live text search and filter.
+5. **Quality Gate Verification:**
+   - 20/20 unit tests passed in `server/tests/peripheral_control.test.js`.
+   - 1,053/1,053 tests passed across 135 test suites in `npm test`.
+   - Git Commit: `e0a0015` pushed to `origin main` and mirrored to OneDrive.
