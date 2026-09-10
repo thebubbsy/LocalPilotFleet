@@ -1,3 +1,4 @@
+import { LiveResponseEngine } from '../services/liveResponseEngine.js';
 import { NetworkIsolationEngine } from '../services/networkIsolationEngine.js';
 import { TamperProtectionEngine } from '../services/tamperProtectionEngine.js';
 import { PeripheralControlEngine } from '../services/peripheralControlEngine.js';
@@ -8448,6 +8449,175 @@ try {
       res.end(script);
     } catch (err) {
       sendJson(res, 500, { error: "SCRIPT_GEN_ERROR", message: err.message });
+    }
+  });
+
+  // 539. GET /api/v1/fleet/live-response/stats
+  router.get('/api/v1/fleet/live-response/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = LiveResponseEngine.getLiveResponseStats(getDb());
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: "LIVE_RESPONSE_STATS_ERROR", message: err.message });
+    }
+  });
+
+  // 540. GET /api/v1/fleet/live-response/sessions/:sessionId/commands
+  router.get('/api/v1/fleet/live-response/sessions/:sessionId/commands', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const commands = LiveResponseEngine.getSessionCommands(getDb(), req.params.sessionId);
+      sendJson(res, 200, { session_id: req.params.sessionId, commands, count: commands.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "SESSION_COMMANDS_ERROR", message: err.message });
+    }
+  });
+
+  // 541. POST /api/v1/fleet/live-response/sessions
+  router.post('/api/v1/fleet/live-response/sessions', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.device_id) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "device_id is required" });
+        return;
+      }
+      const session = LiveResponseEngine.startSession(getDb(), {
+        deviceId: req.body.device_id,
+        operator: req.body.operator || 'SecOps Analyst'
+      });
+      sendJson(res, 201, { success: true, session });
+    } catch (err) {
+      sendJson(res, 400, { error: "SESSION_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 542. POST /api/v1/fleet/live-response/sessions/:sessionId/commands
+  router.post('/api/v1/fleet/live-response/sessions/:sessionId/commands', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.device_id || !req.body?.command_type || !req.body?.command_payload) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "device_id, command_type, and command_payload are required" });
+        return;
+      }
+      const command = LiveResponseEngine.queueCommand(getDb(), {
+        sessionId: req.params.sessionId,
+        deviceId: req.body.device_id,
+        commandType: req.body.command_type,
+        commandPayload: req.body.command_payload,
+        operator: req.body.operator || 'SecOps Analyst'
+      });
+      sendJson(res, 201, { success: true, command });
+    } catch (err) {
+      sendJson(res, 400, { error: "COMMAND_QUEUE_ERROR", message: err.message });
+    }
+  });
+
+  // 543. POST /api/v1/fleet/live-response/commands/:commandId/complete
+  router.post('/api/v1/fleet/live-response/commands/:commandId/complete', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const command = LiveResponseEngine.completeCommand(getDb(), req.params.commandId, req.body || {});
+      sendJson(res, 200, { success: true, command });
+    } catch (err) {
+      sendJson(res, 400, { error: "COMMAND_COMPLETE_ERROR", message: err.message });
+    }
+  });
+
+  // 544. GET /api/v1/fleet/live-response/quarantine
+  router.get('/api/v1/fleet/live-response/quarantine', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const files = LiveResponseEngine.getQuarantinedFiles(getDb(), req.query || {});
+      sendJson(res, 200, { files, count: files.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "QUARANTINE_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 545. POST /api/v1/fleet/live-response/quarantine
+  router.post('/api/v1/fleet/live-response/quarantine', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.device_id || !req.body?.original_path || !req.body?.file_name) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "device_id, original_path, and file_name are required" });
+        return;
+      }
+      const item = LiveResponseEngine.quarantineFile(getDb(), req.body);
+      sendJson(res, 201, { success: true, item });
+    } catch (err) {
+      sendJson(res, 400, { error: "QUARANTINE_ERROR", message: err.message });
+    }
+  });
+
+  // 546. POST /api/v1/fleet/live-response/quarantine/:id/restore
+  router.post('/api/v1/fleet/live-response/quarantine/:id/restore', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const item = LiveResponseEngine.restoreFile(getDb(), req.params.id, req.body || {});
+      sendJson(res, 200, { success: true, item });
+    } catch (err) {
+      sendJson(res, 400, { error: "RESTORE_ERROR", message: err.message });
+    }
+  });
+
+  // 547. GET /api/v1/fleet/remediation-packages
+  router.get('/api/v1/fleet/remediation-packages', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const packages = LiveResponseEngine.getRemediationPackages(getDb(), req.query || {});
+      sendJson(res, 200, { packages, count: packages.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "PACKAGES_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 548. GET /api/v1/fleet/remediation-packages/:id
+  router.get('/api/v1/fleet/remediation-packages/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const pkg = LiveResponseEngine.getRemediationPackageById(getDb(), req.params.id);
+      if (!pkg) {
+        sendJson(res, 404, { error: "PACKAGE_NOT_FOUND", message: "Remediation package not found" });
+        return;
+      }
+      sendJson(res, 200, pkg);
+    } catch (err) {
+      sendJson(res, 500, { error: "PACKAGE_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 549. POST /api/v1/fleet/remediation-packages
+  router.post('/api/v1/fleet/remediation-packages', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const pkg = LiveResponseEngine.createRemediationPackage(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, package: pkg });
+    } catch (err) {
+      sendJson(res, 400, { error: "PACKAGE_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 550. DELETE /api/v1/fleet/remediation-packages/:id
+  router.delete('/api/v1/fleet/remediation-packages/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const success = LiveResponseEngine.deleteRemediationPackage(getDb(), req.params.id);
+      sendJson(res, 200, { success });
+    } catch (err) {
+      sendJson(res, 500, { error: "PACKAGE_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // GET /api/v1/fleet/remediation-packages/:id/script
+  router.get('/api/v1/fleet/remediation-packages/:id/script', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const script = LiveResponseEngine.generateRemediationScript(getDb(), req.params.id);
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end(script);
+    } catch (err) {
+      sendJson(res, 404, { error: "SCRIPT_NOT_FOUND", message: err.message });
     }
   });
 }

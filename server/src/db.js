@@ -2992,6 +2992,73 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_ial_device ON isolation_audit_logs(device_id);
     CREATE INDEX IF NOT EXISTS idx_ial_type ON isolation_audit_logs(transition_type);
     CREATE INDEX IF NOT EXISTS idx_ial_time ON isolation_audit_logs(timestamp DESC);
+  
+    -- 145. CUSTOM_REMEDIATION_PACKAGES — Automated Detection & Script Remediation Playbooks (Iteration 52)
+    CREATE TABLE IF NOT EXISTS custom_remediation_packages (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      category TEXT NOT NULL DEFAULT 'SYSTEM_HEALTH' CHECK(category IN ('SECURITY_HARDENING', 'SYSTEM_HEALTH', 'MALWARE_REMEDIATION', 'CONFIG_DRIFT', 'SOFTWARE_REMOVAL', 'CUSTOM')),
+      target_scope TEXT NOT NULL DEFAULT 'ALL_FLEET' CHECK(target_scope IN ('ALL_FLEET', 'DYNAMIC_GROUP', 'DEVICE', 'ORGANIZATION')),
+      target_id TEXT,
+      detection_script TEXT NOT NULL,
+      remediation_script TEXT NOT NULL,
+      script_type TEXT NOT NULL DEFAULT 'POWERSHELL' CHECK(script_type IN ('POWERSHELL', 'BASH', 'PYTHON', 'CMD')),
+      execution_timeout INTEGER NOT NULL DEFAULT 300,
+      run_frequency TEXT NOT NULL DEFAULT 'DAILY' CHECK(run_frequency IN ('ON_DEMAND', 'HOURLY', 'DAILY', 'WEEKLY', 'MONTHLY')),
+      run_as_account TEXT NOT NULL DEFAULT 'SYSTEM' CHECK(run_as_account IN ('SYSTEM', 'CURRENT_USER', 'LOCAL_SERVICE')),
+      enforce_signature_check INTEGER NOT NULL DEFAULT 0 CHECK(enforce_signature_check IN (0, 1)),
+      is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_crp_active ON custom_remediation_packages(is_active);
+    CREATE INDEX IF NOT EXISTS idx_crp_category ON custom_remediation_packages(category);
+
+    -- 146. LIVE_RESPONSE_COMMAND_SESSIONS — Real-Time Remote Investigation & Command Queue (Iteration 52)
+    CREATE TABLE IF NOT EXISTS live_response_command_sessions (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      hostname TEXT NOT NULL,
+      operator TEXT NOT NULL DEFAULT 'SecOps Analyst',
+      command_type TEXT NOT NULL CHECK(command_type IN ('EXEC_POWERSHELL', 'EXEC_CMD', 'GET_FILE', 'PUT_FILE', 'TERMINATE_PROCESS', 'ISOLATE_HOST', 'RESTORE_HOST', 'LIST_DIRECTORY', 'PROCESS_DUMP', 'REGISTRY_QUERY')),
+      command_payload TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'QUEUED' CHECK(status IN ('QUEUED', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'TIMED_OUT', 'CANCELLED')),
+      output TEXT,
+      exit_code INTEGER,
+      queued_at TEXT DEFAULT (DATETIME('now')),
+      executed_at TEXT,
+      completed_at TEXT,
+      duration_ms INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_lrcs_session ON live_response_command_sessions(session_id);
+    CREATE INDEX IF NOT EXISTS idx_lrcs_device ON live_response_command_sessions(device_id);
+    CREATE INDEX IF NOT EXISTS idx_lrcs_status ON live_response_command_sessions(status);
+
+    -- 147. QUARANTINED_FILES_INVENTORY — Endpoint Malware Vault & File Forensics (Iteration 52)
+    CREATE TABLE IF NOT EXISTS quarantined_files_inventory (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      hostname TEXT NOT NULL,
+      original_path TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      sha256_hash TEXT NOT NULL,
+      file_size_bytes INTEGER NOT NULL DEFAULT 0,
+      threat_name TEXT NOT NULL DEFAULT 'Suspicious.Generic',
+      quarantined_by TEXT NOT NULL DEFAULT 'SecOps Analyst',
+      quarantine_vault_path TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'QUARANTINED' CHECK(status IN ('QUARANTINED', 'RESTORED', 'DELETED', 'ANALYSIS_PENDING')),
+      quarantined_at TEXT DEFAULT (DATETIME('now')),
+      restored_at TEXT,
+      notes TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_qfi_device ON quarantined_files_inventory(device_id);
+    CREATE INDEX IF NOT EXISTS idx_qfi_hash ON quarantined_files_inventory(sha256_hash);
+    CREATE INDEX IF NOT EXISTS idx_qfi_status ON quarantined_files_inventory(status);
   `);
 
   // Schema migrations for existing databases
@@ -7012,6 +7079,163 @@ exit 0`,
         'HIGH'
       );
     }
+
+  }
+
+  // 52. Seed Custom Remediation Packages & Live Response (Iteration 52)
+  const remediationCount = db.prepare('SELECT COUNT(*) as count FROM custom_remediation_packages').get().count;
+  if (remediationCount === 0) {
+    const insertCrp = db.prepare(`
+      INSERT OR IGNORE INTO custom_remediation_packages (
+        id, name, description, category, target_scope, target_id,
+        detection_script, remediation_script, script_type, execution_timeout,
+        run_frequency, run_as_account, enforce_signature_check, is_active
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertCrp.run(
+      'crp-printspooler',
+      'Auto-Remediate PrintSpooler Remote Execution Vulnerability',
+      'Detects if the legacy Print Spooler service is running on workstations and automatically stops/disables it.',
+      'SECURITY_HARDENING',
+      'ALL_FLEET',
+      null,
+      '\$svc = Get-Service -Name Spooler -ErrorAction SilentlyContinue; if (\$svc.StartType -ne "Disabled") { exit 1 } else { exit 0 }',
+      'Stop-Service -Name Spooler -Force -ErrorAction SilentlyContinue; Set-Service -Name Spooler -StartupType Disabled; Write-Output "Print Spooler disabled."',
+      'POWERSHELL',
+      180,
+      'DAILY',
+      'SYSTEM',
+      0,
+      1
+    );
+
+    insertCrp.run(
+      'crp-temp-prune',
+      'Automated System Temp & Crash Dump Sanitizer',
+      'Checks if temporary user and system folders exceed 1GB and performs automated safe cleanup.',
+      'SYSTEM_HEALTH',
+      'ALL_FLEET',
+      null,
+      '\$size = (Get-ChildItem -Path \$env:TEMP -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum; if (\$size -gt 1073741824) { exit 1 } else { exit 0 }',
+      'Remove-Item -Path "\$env:TEMP\\*" -Recurse -Force -ErrorAction SilentlyContinue; Write-Output "Stale temporary files purged."',
+      'POWERSHELL',
+      300,
+      'WEEKLY',
+      'SYSTEM',
+      0,
+      1
+    );
+
+    insertCrp.run(
+      'crp-guest-account',
+      'Disable Built-In Windows Guest Account',
+      'Ensures the default local Guest account is permanently disabled to meet CIS benchmarks.',
+      'CONFIG_DRIFT',
+      'ALL_FLEET',
+      null,
+      '\$guest = Get-LocalUser -Name "Guest" -ErrorAction SilentlyContinue; if (\$guest.Enabled) { exit 1 } else { exit 0 }',
+      'Disable-LocalUser -Name "Guest"; Write-Output "CIS Benchmark: Guest user account disabled."',
+      'POWERSHELL',
+      120,
+      'DAILY',
+      'SYSTEM',
+      0,
+      1
+    );
+
+    const devTarget = db.prepare("SELECT id, hostname FROM devices WHERE hostname = 'DESKTOP-R0H12DJ' LIMIT 1").get()
+      || db.prepare("SELECT id, hostname FROM devices LIMIT 1").get();
+
+    if (devTarget) {
+      const insertLrcs = db.prepare(`
+        INSERT OR IGNORE INTO live_response_command_sessions (
+          id, session_id, device_id, hostname, operator, command_type,
+          command_payload, status, output, exit_code, duration_ms, completed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', '-10 minutes'))
+      `);
+
+      insertLrcs.run(
+        'lrc-01',
+        'lrs-session-77',
+        devTarget.id,
+        devTarget.hostname,
+        'SecOps Lead Analyst',
+        'LIST_DIRECTORY',
+        'C:\\Windows\\System32\\drivers\\etc',
+        'COMPLETED',
+        'hosts\r\nlmhosts.sam\r\nnetworks\r\nprotocol\r\nservices',
+        0,
+        145
+      );
+
+      insertLrcs.run(
+        'lrc-02',
+        'lrs-session-77',
+        devTarget.id,
+        devTarget.hostname,
+        'SecOps Lead Analyst',
+        'EXEC_POWERSHELL',
+        'Get-Process | Sort-Object CPU -Descending | Select-Object -First 5 ProcessName,Id,CPU',
+        'COMPLETED',
+        'ProcessName Id CPU\n----------- -- ---\nSystem 4 214.5\nLocalPilotAgent 3480 45.2',
+        0,
+        320
+      );
+
+      insertLrcs.run(
+        'lrc-03',
+        'lrs-session-77',
+        devTarget.id,
+        devTarget.hostname,
+        'SecOps Lead Analyst',
+        'TERMINATE_PROCESS',
+        'pid:9944 /name:suspicious_miner.exe',
+        'QUEUED',
+        null,
+        null,
+        null
+      );
+
+      const insertQfi = db.prepare(`
+        INSERT OR IGNORE INTO quarantined_files_inventory (
+          id, device_id, hostname, original_path, file_name,
+          sha256_hash, file_size_bytes, threat_name, quarantined_by,
+          quarantine_vault_path, status, notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      insertQfi.run(
+        'qfi-01',
+        devTarget.id,
+        devTarget.hostname,
+        'C:\\Users\\Tony\\Downloads\\mimikatz_trunk.zip',
+        'mimikatz_trunk.zip',
+        'a35b88c7d91e4f501867c2934098492083419082340918230914820934812093',
+        1428500,
+        'HackTool:Win32/Mimikatz.A!dha',
+        'IncidentResponseBot',
+        'C:\\ProgramData\\LocalPilotFleet\\Quarantine\\a35b88c7d91e4f50.vault',
+        'QUARANTINED',
+        'Automated quarantine triggered by memory injection detection'
+      );
+
+      insertQfi.run(
+        'qfi-02',
+        devTarget.id,
+        devTarget.hostname,
+        'C:\\Windows\\Temp\\invoice_oct_macro.xlsm',
+        'invoice_oct_macro.xlsm',
+        'f6b7891234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+        48920,
+        'TrojanDownloader:O97M/Donoff',
+        'SecOps Analyst',
+        'C:\\ProgramData\\LocalPilotFleet\\Quarantine\\f6b7891234567890.vault',
+        'QUARANTINED',
+        'Obfuscated VBA macro auto-dropped payload'
+      );
+    }
+
   }
 
 }

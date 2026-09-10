@@ -1,3 +1,4 @@
+import { LiveResponseEngine } from '../services/liveResponseEngine.js';
 import { NetworkIsolationEngine } from '../services/networkIsolationEngine.js';
 import { TamperProtectionEngine } from '../services/tamperProtectionEngine.js';
 import { PeripheralControlEngine } from '../services/peripheralControlEngine.js';
@@ -2385,6 +2386,37 @@ export function registerNodeRoutes(router) {
       sendJson(res, 201, { success: true, log });
     } catch (err) {
       sendJson(res, 400, { error: "NODE_ISOLATION_LOG_ERROR", message: err.message });
+    }
+  });
+
+  // 551. GET /api/v1/nodes/:id/live-response/poll — Node agent polls for pending live response commands
+  router.get('/api/v1/nodes/:id/live-response/poll', (req, res) => {
+    const { id } = req.params;
+    try {
+      const commands = LiveResponseEngine.getPendingCommandsForDevice(getDb(), id);
+      sendJson(res, 200, { device_id: id, commands, count: commands.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "NODE_COMMAND_POLL_ERROR", message: err.message });
+    }
+  });
+
+  // 552. POST /api/v1/nodes/:id/live-response/results — Node agent reports command execution results
+  router.post('/api/v1/nodes/:id/live-response/results', (req, res) => {
+    const { id } = req.params;
+    try {
+      if (!req.body?.command_id) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "command_id is required" });
+        return;
+      }
+      const command = LiveResponseEngine.completeCommand(getDb(), req.body.command_id, {
+        output: req.body.output,
+        exitCode: req.body.exit_code,
+        status: req.body.status,
+        durationMs: req.body.duration_ms
+      });
+      sendJson(res, 200, { success: true, command });
+    } catch (err) {
+      sendJson(res, 400, { error: "NODE_COMMAND_RESULT_ERROR", message: err.message });
     }
   });
 }
