@@ -2566,6 +2566,66 @@ export function initDb(dbOrPath, options = {}) {
 
     CREATE INDEX IF NOT EXISTS idx_ftp_device ON forensic_triage_packages(device_id);
     CREATE INDEX IF NOT EXISTS idx_ftp_status ON forensic_triage_packages(status);
+
+    -- 124. DEVICE_HEALTH_ATTESTATION_POLICIES — Zero-Trust Hardware Root-of-Trust & Measured Boot Standards
+    CREATE TABLE IF NOT EXISTS device_health_attestation_policies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      require_secure_boot INTEGER NOT NULL DEFAULT 1 CHECK(require_secure_boot IN (0, 1)),
+      require_bitlocker INTEGER NOT NULL DEFAULT 1 CHECK(require_bitlocker IN (0, 1)),
+      require_virtualization_based_security INTEGER NOT NULL DEFAULT 1 CHECK(require_virtualization_based_security IN (0, 1)),
+      require_hypervisor_enforced_code_integrity INTEGER NOT NULL DEFAULT 1 CHECK(require_hypervisor_enforced_code_integrity IN (0, 1)),
+      require_elam_driver INTEGER NOT NULL DEFAULT 1 CHECK(require_elam_driver IN (0, 1)),
+      allowed_pcr_hashes_json TEXT NOT NULL DEFAULT '{"pcr0":"","pcr2":"","pcr4":"","pcr11":""}',
+      target_scope TEXT NOT NULL DEFAULT 'ALL_FLEET' CHECK(target_scope IN ('ALL_FLEET', 'DYNAMIC_GROUP', 'ORGANIZATION')),
+      target_id TEXT,
+      is_enabled INTEGER NOT NULL DEFAULT 1 CHECK(is_enabled IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_dhap_enabled ON device_health_attestation_policies(is_enabled);
+
+    -- 125. DEVICE_HEALTH_ATTESTATION_REPORTS — Endpoint TPM 2.0 PCR Measured Boot & Integrity Audits
+    CREATE TABLE IF NOT EXISTS device_health_attestation_reports (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      hostname TEXT NOT NULL,
+      attestation_status TEXT NOT NULL DEFAULT 'COMPLIANT' CHECK(attestation_status IN ('COMPLIANT', 'TAMPERED', 'OUT_OF_DATE', 'FAILED')),
+      secure_boot_enabled INTEGER NOT NULL DEFAULT 1 CHECK(secure_boot_enabled IN (0, 1)),
+      bitlocker_status TEXT NOT NULL DEFAULT 'PROTECTION_ON' CHECK(bitlocker_status IN ('PROTECTION_ON', 'PROTECTION_OFF', 'ENCRYPTING')),
+      vbs_status TEXT NOT NULL DEFAULT 'RUNNING' CHECK(vbs_status IN ('RUNNING', 'NOT_ENABLED', 'NOT_SUPPORTED')),
+      hvci_status TEXT NOT NULL DEFAULT 'STRICT_ENFORCEMENT' CHECK(hvci_status IN ('STRICT_ENFORCEMENT', 'AUDIT_MODE', 'DISABLED')),
+      bootkit_detected INTEGER NOT NULL DEFAULT 0 CHECK(bootkit_detected IN (0, 1)),
+      tpm_pcr_measurements_json TEXT NOT NULL DEFAULT '{}',
+      tcg_event_log_summary TEXT,
+      verified_at TEXT DEFAULT (DATETIME('now')),
+      expires_at TEXT,
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_dhar_device ON device_health_attestation_reports(device_id);
+    CREATE INDEX IF NOT EXISTS idx_dhar_status ON device_health_attestation_reports(attestation_status);
+
+    -- 126. MICROSEGMENTATION_NETWORK_POLICIES — Zero-Trust Software-Defined Perimeter & WFP Enforcement
+    CREATE TABLE IF NOT EXISTS microsegmentation_network_policies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      source_group_id TEXT,
+      destination_cidr TEXT NOT NULL DEFAULT '0.0.0.0/0',
+      allowed_ports_json TEXT NOT NULL DEFAULT '["443"]',
+      protocol TEXT NOT NULL DEFAULT 'TCP' CHECK(protocol IN ('TCP', 'UDP', 'ICMP', 'ANY')),
+      action TEXT NOT NULL DEFAULT 'ALLOW' CHECK(action IN ('ALLOW', 'BLOCK', 'REQUIRE_DHA_COMPLIANCE')),
+      enforcement_mode TEXT NOT NULL DEFAULT 'ENFORCING' CHECK(enforcement_mode IN ('AUDIT_ONLY', 'ENFORCING')),
+      is_enabled INTEGER NOT NULL DEFAULT 1 CHECK(is_enabled IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mnp_enabled ON microsegmentation_network_policies(is_enabled);
+    CREATE INDEX IF NOT EXISTS idx_mnp_action ON microsegmentation_network_policies(action);
   `);
 
   // Schema migrations for existing databases
@@ -5862,6 +5922,83 @@ exit 0`,
         850
       );
     }
+  }
+
+  // 45. Seed Device Health Attestation Policies & Microsegmentation
+  const dhaPolicyCount = db.prepare('SELECT COUNT(*) as count FROM device_health_attestation_policies').get().count;
+  if (dhaPolicyCount === 0) {
+    const insertPolicy = db.prepare(`
+      INSERT OR IGNORE INTO device_health_attestation_policies (
+        id, name, description, require_secure_boot, require_bitlocker, require_virtualization_based_security,
+        require_hypervisor_enforced_code_integrity, require_elam_driver, allowed_pcr_hashes_json, target_scope, is_enabled
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertPolicy.run(
+      'dha-policy-corporate-baseline',
+      'Corporate Hardware Root-of-Trust & Measured Boot Baseline',
+      'Enforces Secure Boot, BitLocker with TPM protector, VBS, and HVCI strict enforcement.',
+      1, 1, 1, 1, 1,
+      JSON.stringify({ pcr0: 'a1b2c3d4e5f6', pcr2: 'b2c3d4e5f6a1', pcr4: 'c3d4e5f6a1b2', pcr11: 'd4e5f6a1b2c3' }),
+      'ALL_FLEET',
+      1
+    );
+
+    const sampleDevice = db.prepare("SELECT id, hostname FROM devices WHERE hostname = 'DESKTOP-R0H12DJ' LIMIT 1").get()
+      || db.prepare("SELECT id, hostname FROM devices LIMIT 1").get();
+
+    if (sampleDevice) {
+      const insertReport = db.prepare(`
+        INSERT OR IGNORE INTO device_health_attestation_reports (
+          id, device_id, hostname, attestation_status, secure_boot_enabled, bitlocker_status,
+          vbs_status, hvci_status, bootkit_detected, tpm_pcr_measurements_json, tcg_event_log_summary, expires_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', '+24 hours'))
+      `);
+
+      insertReport.run(
+        'dha-rep-baseline-r0h12dj',
+        sampleDevice.id,
+        sampleDevice.hostname,
+        'COMPLIANT',
+        1,
+        'PROTECTION_ON',
+        'RUNNING',
+        'STRICT_ENFORCEMENT',
+        0,
+        JSON.stringify({ pcr0: 'a1b2c3d4e5f6', pcr2: 'b2c3d4e5f6a1', pcr4: 'c3d4e5f6a1b2', pcr7: 'e5f6a1b2c3d4', pcr11: 'd4e5f6a1b2c3' }),
+        'TCG Log verified: UEFI 2.8, SecureBoot certificates loaded, Windows Boot Manager SHA-256 match, ELAM driver loaded.'
+      );
+    }
+
+    const insertMsp = db.prepare(`
+      INSERT OR IGNORE INTO microsegmentation_network_policies (
+        id, name, description, destination_cidr, allowed_ports_json, protocol, action, enforcement_mode, is_enabled
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertMsp.run(
+      'msp-isolate-unattested-db',
+      'Quarantine Non-Attested Endpoints from Core Database Subnet',
+      'Requires valid Device Health Attestation before allowing port 5432 / 1433 database access.',
+      '10.0.10.0/24',
+      JSON.stringify(['5432', '1433']),
+      'TCP',
+      'REQUIRE_DHA_COMPLIANCE',
+      'ENFORCING',
+      1
+    );
+
+    insertMsp.run(
+      'msp-allow-fleet-mgmt',
+      'Allow LocalPilot Fleet Agent Management',
+      'Always allow management communications to LocalPilot master server and Cloudflare Tunnel.',
+      '0.0.0.0/0',
+      JSON.stringify(['8443', '443']),
+      'TCP',
+      'ALLOW',
+      'ENFORCING',
+      1
+    );
   }
 
 }

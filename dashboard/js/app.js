@@ -212,6 +212,9 @@ const App = {
       case 'incident-response':
         if (window.IncidentResponseTable) window.IncidentResponseTable.render();
         break;
+      case 'dha':
+        if (window.DeviceHealthAttestationTable) window.DeviceHealthAttestationTable.render();
+        break;
       case 'settings':
         this.renderSettings();
         break;

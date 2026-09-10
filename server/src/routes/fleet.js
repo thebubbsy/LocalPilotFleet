@@ -1,3 +1,4 @@
+import { DeviceHealthAttestationEngine } from '../services/deviceHealthAttestationEngine.js';
 import { incidentResponseEngine, IncidentResponseEngine } from '../services/incidentResponseEngine.js';
 import { multiTenancyEngine } from '../services/multiTenancyEngine.js';
 import { VaultSecretsEngine } from '../services/vaultSecretsEngine.js';
@@ -7290,6 +7291,183 @@ try {
       sendJson(res, 500, { error: 'DOWNLOAD_ERROR', message: err.message });
     }
   });
+
+  // 453. GET /api/v1/fleet/dha/stats
+  router.get('/api/v1/fleet/dha/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = DeviceHealthAttestationEngine.getAttestationStats(getDb());
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'DHA_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 454. GET /api/v1/fleet/dha/policies
+  router.get('/api/v1/fleet/dha/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policies = DeviceHealthAttestationEngine.getPolicies(getDb());
+      sendJson(res, 200, { policies, count: policies.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DHA_POLICIES_ERROR', message: err.message });
+    }
+  });
+
+  // 455. POST /api/v1/fleet/dha/policies
+  router.post('/api/v1/fleet/dha/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.name) {
+        sendJson(res, 400, { error: 'NAME_REQUIRED', message: 'Policy name is required' });
+        return;
+      }
+      const policy = DeviceHealthAttestationEngine.createPolicy(getDb(), req.body);
+      sendJson(res, 201, { success: true, policy });
+    } catch (err) {
+      sendJson(res, 400, { error: 'POLICY_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 456. GET /api/v1/fleet/dha/policies/:id
+  router.get('/api/v1/fleet/dha/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policy = DeviceHealthAttestationEngine.getPolicyById(getDb(), req.params.id);
+      if (!policy) {
+        sendJson(res, 404, { error: 'POLICY_NOT_FOUND', message: 'DHA policy not found' });
+        return;
+      }
+      sendJson(res, 200, policy);
+    } catch (err) {
+      sendJson(res, 500, { error: 'POLICY_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 457. PATCH /api/v1/fleet/dha/policies/:id
+  router.patch('/api/v1/fleet/dha/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policy = DeviceHealthAttestationEngine.updatePolicy(getDb(), req.params.id, req.body || {});
+      if (!policy) {
+        sendJson(res, 404, { error: 'POLICY_NOT_FOUND', message: 'DHA policy not found' });
+        return;
+      }
+      sendJson(res, 200, { success: true, policy });
+    } catch (err) {
+      sendJson(res, 400, { error: 'POLICY_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 458. DELETE /api/v1/fleet/dha/policies/:id
+  router.delete('/api/v1/fleet/dha/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const ok = DeviceHealthAttestationEngine.deletePolicy(getDb(), req.params.id);
+      if (!ok) {
+        sendJson(res, 404, { error: 'POLICY_NOT_FOUND', message: 'DHA policy not found' });
+        return;
+      }
+      sendJson(res, 200, { success: true, message: 'Policy deleted' });
+    } catch (err) {
+      sendJson(res, 500, { error: 'POLICY_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 459. GET /api/v1/fleet/dha/reports
+  router.get('/api/v1/fleet/dha/reports', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const { device_id, status } = req.query || {};
+      const reports = DeviceHealthAttestationEngine.getReports(getDb(), { deviceId: device_id, status });
+      sendJson(res, 200, { reports, count: reports.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'DHA_REPORTS_ERROR', message: err.message });
+    }
+  });
+
+  // 460. GET /api/v1/fleet/devices/:id/dha/report
+  router.get('/api/v1/fleet/devices/:id/dha/report', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const report = DeviceHealthAttestationEngine.getReportByDeviceId(getDb(), req.params.id);
+      if (!report) {
+        sendJson(res, 404, { error: 'REPORT_NOT_FOUND', message: 'No DHA report found for device' });
+        return;
+      }
+      sendJson(res, 200, report);
+    } catch (err) {
+      sendJson(res, 500, { error: 'REPORT_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 461. GET /api/v1/fleet/dha/microsegmentation
+  router.get('/api/v1/fleet/dha/microsegmentation', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policies = DeviceHealthAttestationEngine.getMicrosegmentationPolicies(getDb());
+      sendJson(res, 200, { policies, count: policies.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'MSP_POLICIES_ERROR', message: err.message });
+    }
+  });
+
+  // 462. POST /api/v1/fleet/dha/microsegmentation
+  router.post('/api/v1/fleet/dha/microsegmentation', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.name) {
+        sendJson(res, 400, { error: 'NAME_REQUIRED', message: 'Microsegmentation rule name is required' });
+        return;
+      }
+      const policy = DeviceHealthAttestationEngine.createMicrosegmentationPolicy(getDb(), req.body);
+      sendJson(res, 201, { success: true, policy });
+    } catch (err) {
+      sendJson(res, 400, { error: 'MSP_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 463. PATCH /api/v1/fleet/dha/microsegmentation/:id
+  router.patch('/api/v1/fleet/dha/microsegmentation/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policy = DeviceHealthAttestationEngine.updateMicrosegmentationPolicy(getDb(), req.params.id, req.body || {});
+      if (!policy) {
+        sendJson(res, 404, { error: 'POLICY_NOT_FOUND', message: 'Microsegmentation policy not found' });
+        return;
+      }
+      sendJson(res, 200, { success: true, policy });
+    } catch (err) {
+      sendJson(res, 400, { error: 'MSP_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 464. DELETE /api/v1/fleet/dha/microsegmentation/:id
+  router.delete('/api/v1/fleet/dha/microsegmentation/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const ok = DeviceHealthAttestationEngine.deleteMicrosegmentationPolicy(getDb(), req.params.id);
+      if (!ok) {
+        sendJson(res, 404, { error: 'POLICY_NOT_FOUND', message: 'Microsegmentation policy not found' });
+        return;
+      }
+      sendJson(res, 200, { success: true, message: 'Policy deleted' });
+    } catch (err) {
+      sendJson(res, 500, { error: 'MSP_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 465. GET /api/v1/fleet/devices/:id/dha/firewall-rules
+  router.get('/api/v1/fleet/devices/:id/dha/firewall-rules', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const rules = DeviceHealthAttestationEngine.generateHostFirewallRules(getDb(), req.params.id);
+      sendJson(res, 200, rules);
+    } catch (err) {
+      sendJson(res, 500, { error: 'FIREWALL_RULES_ERROR', message: err.message });
+    }
+  });
+
 }
 
 export default registerFleetRoutes;

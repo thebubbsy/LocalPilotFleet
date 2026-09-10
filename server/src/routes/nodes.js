@@ -1,3 +1,4 @@
+import { DeviceHealthAttestationEngine } from '../services/deviceHealthAttestationEngine.js';
 import { incidentResponseEngine, IncidentResponseEngine } from '../services/incidentResponseEngine.js';
 import { contentDistributionEngine } from '../services/contentDistributionEngine.js';
 import { VaultSecretsEngine } from '../services/vaultSecretsEngine.js';
@@ -2269,6 +2270,18 @@ export function registerNodeRoutes(router) {
       sendJson(res, 500, { error: 'TRIAGE_INGEST_ERROR', message: err.message });
     }
   });
+
+  // POST /api/v1/nodes/:id/dha/attest — Agent submits TPM 2.0 quote and measured boot telemetry
+  router.post('/api/v1/nodes/:id/dha/attest', (req, res) => {
+    const { id } = req.params;
+    try {
+      const report = DeviceHealthAttestationEngine.verifyAttestationQuote(getDb(), id, req.body || {});
+      sendJson(res, 200, { success: true, report });
+    } catch (err) {
+      sendJson(res, 400, { error: 'DHA_ATTESTATION_ERROR', message: err.message });
+    }
+  });
+
 }
 
 export default registerNodeRoutes;
