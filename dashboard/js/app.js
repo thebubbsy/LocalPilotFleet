@@ -221,6 +221,9 @@ const App = {
       case 'sandbox-detonation':
         if (window.SandboxDetonationTable) window.SandboxDetonationTable.render();
         break;
+      case 'web-protection':
+        if (window.WebProtectionTable) window.WebProtectionTable.render();
+        break;
       case 'settings':
         this.renderSettings();
         break;

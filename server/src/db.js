@@ -2757,6 +2757,69 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_bte_detonation ON behavioral_telemetry_events(detonation_id);
     CREATE INDEX IF NOT EXISTS idx_bte_category ON behavioral_telemetry_events(event_category);
     CREATE INDEX IF NOT EXISTS idx_bte_severity ON behavioral_telemetry_events(severity);
+    -- 133. WEB_CONTENT_FILTERING_POLICIES — Microsoft Defender Web Protection & Filtering Baselines
+    CREATE TABLE IF NOT EXISTS web_content_filtering_policies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      target_scope TEXT NOT NULL DEFAULT 'ALL_FLEET' CHECK(target_scope IN ('ALL_FLEET', 'DYNAMIC_GROUP', 'ORGANIZATION')),
+      target_id TEXT,
+      block_adult_content INTEGER NOT NULL DEFAULT 1 CHECK(block_adult_content IN (0, 1)),
+      block_high_liability INTEGER NOT NULL DEFAULT 1 CHECK(block_high_liability IN (0, 1)),
+      block_legal_liability INTEGER NOT NULL DEFAULT 1 CHECK(block_legal_liability IN (0, 1)),
+      block_bandwidth_loss INTEGER NOT NULL DEFAULT 0 CHECK(block_bandwidth_loss IN (0, 1)),
+      block_unrated INTEGER NOT NULL DEFAULT 0 CHECK(block_unrated IN (0, 1)),
+      smartscreen_mode TEXT NOT NULL DEFAULT 'BLOCK' CHECK(smartscreen_mode IN ('DISABLED', 'WARN', 'BLOCK')),
+      allow_user_bypass INTEGER NOT NULL DEFAULT 0 CHECK(allow_user_bypass IN (0, 1)),
+      network_protection_mode TEXT NOT NULL DEFAULT 'BLOCK' CHECK(network_protection_mode IN ('DISABLED', 'AUDIT', 'BLOCK')),
+      is_enabled INTEGER NOT NULL DEFAULT 1 CHECK(is_enabled IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_wcfp_enabled ON web_content_filtering_policies(is_enabled);
+    CREATE INDEX IF NOT EXISTS idx_wcfp_smartscreen ON web_content_filtering_policies(smartscreen_mode);
+
+    -- 134. WEB_INDICATOR_RULES — Custom Domain, URL, FQDN & IP Indicator Overrides
+    CREATE TABLE IF NOT EXISTS web_indicator_rules (
+      id TEXT PRIMARY KEY,
+      policy_id TEXT,
+      indicator_type TEXT NOT NULL CHECK(indicator_type IN ('DOMAIN', 'URL', 'IP_ADDRESS', 'CIDR_SUBNET')),
+      indicator_value TEXT NOT NULL,
+      action TEXT NOT NULL DEFAULT 'BLOCK' CHECK(action IN ('ALLOW', 'WARN', 'BLOCK', 'REDIRECT_PORTAL')),
+      category TEXT DEFAULT 'Custom Security Rule',
+      redirect_url TEXT,
+      expiration_date TEXT,
+      is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(policy_id) REFERENCES web_content_filtering_policies(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_wir_val ON web_indicator_rules(indicator_value);
+    CREATE INDEX IF NOT EXISTS idx_wir_action ON web_indicator_rules(action);
+    CREATE INDEX IF NOT EXISTS idx_wir_policy ON web_indicator_rules(policy_id);
+
+    -- 135. WEB_PROTECTION_AUDIT_EVENTS — Network Threat Intercepts & SmartScreen Events
+    CREATE TABLE IF NOT EXISTS web_protection_audit_events (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      hostname TEXT NOT NULL,
+      username TEXT NOT NULL DEFAULT 'System',
+      event_type TEXT NOT NULL CHECK(event_type IN ('URL_BLOCKED', 'PHISHING_ATTEMPT_DETECTED', 'MALWARE_DROP_BLOCKED', 'SMARTSCREEN_WARNING_BYPASS', 'DNS_SINKHOLE_TRIGGERED')),
+      url TEXT NOT NULL,
+      domain TEXT NOT NULL,
+      ip_address TEXT,
+      category TEXT NOT NULL,
+      action_taken TEXT NOT NULL DEFAULT 'BLOCKED' CHECK(action_taken IN ('BLOCKED', 'WARNED', 'ALLOWED_BY_RULE', 'USER_BYPASSED')),
+      browser_process TEXT NOT NULL DEFAULT 'msedge.exe',
+      severity TEXT NOT NULL DEFAULT 'MEDIUM' CHECK(severity IN ('INFO', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+      timestamp TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_wpae_device ON web_protection_audit_events(device_id);
+    CREATE INDEX IF NOT EXISTS idx_wpae_type ON web_protection_audit_events(event_type);
+    CREATE INDEX IF NOT EXISTS idx_wpae_time ON web_protection_audit_events(timestamp DESC);
   `);
 
   // Schema migrations for existing databases
@@ -6340,6 +6403,95 @@ exit 0`,
       'HIGH',
       'T1547.001'
     );
+  }
+  // 48. Seed Web Content Filtering & SmartScreen Policies
+  const wcfCount = db.prepare('SELECT COUNT(*) as count FROM web_content_filtering_policies').get().count;
+  if (wcfCount === 0) {
+    const insertWcf = db.prepare(`
+      INSERT OR IGNORE INTO web_content_filtering_policies (
+        id, name, description, target_scope, target_id, block_adult_content, block_high_liability,
+        block_legal_liability, block_bandwidth_loss, block_unrated, smartscreen_mode,
+        allow_user_bypass, network_protection_mode, is_enabled
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertWcf.run(
+      'wcf-enterprise-strict',
+      'Enterprise Strict Web Protection & SmartScreen Baseline',
+      'Blocks Adult, High Liability, Legal Liability, and unapproved P2P categories with zero bypass.',
+      'ALL_FLEET',
+      null,
+      1, 1, 1, 1, 0,
+      'BLOCK',
+      0,
+      'BLOCK',
+      1
+    );
+
+    insertWcf.run(
+      'wcf-developer-balanced',
+      'Developer Workstation Balanced Web Filter',
+      'Permits liability research while strictly blocking phishing domains and malicious drops.',
+      'DYNAMIC_GROUP',
+      'grp-workstations',
+      1, 1, 0, 0, 0,
+      'WARN',
+      1,
+      'BLOCK',
+      1
+    );
+
+    const insertIndicator = db.prepare(`
+      INSERT OR IGNORE INTO web_indicator_rules (
+        id, policy_id, indicator_type, indicator_value, action, category, is_active
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertIndicator.run('wir-block-phish-domain', 'wcf-enterprise-strict', 'DOMAIN', 'secure-login-attempt-verify.com', 'BLOCK', 'Phishing & Credential Theft', 1);
+    insertIndicator.run('wir-block-c2-ip', 'wcf-enterprise-strict', 'IP_ADDRESS', '198.51.100.99', 'BLOCK', 'Malware C2 Gateway', 1);
+    insertIndicator.run('wir-allow-corp-portal', 'wcf-enterprise-strict', 'DOMAIN', 'localpilot.internal', 'ALLOW', 'Internal Corporate Portal', 1);
+
+    const sampleDevice = db.prepare("SELECT id, hostname FROM devices WHERE hostname = 'DESKTOP-R0H12DJ' LIMIT 1").get()
+      || db.prepare("SELECT id, hostname FROM devices LIMIT 1").get();
+
+    if (sampleDevice) {
+      const insertWpae = db.prepare(`
+        INSERT OR IGNORE INTO web_protection_audit_events (
+          id, device_id, hostname, username, event_type, url, domain, ip_address, category,
+          action_taken, browser_process, severity, timestamp
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', '-30 minutes'))
+      `);
+
+      insertWpae.run(
+        'wpae-01',
+        sampleDevice.id,
+        sampleDevice.hostname,
+        'Tony',
+        'PHISHING_ATTEMPT_DETECTED',
+        'https://secure-login-attempt-verify.com/auth/login.html',
+        'secure-login-attempt-verify.com',
+        '198.51.100.99',
+        'Phishing & Credential Theft',
+        'BLOCKED',
+        'msedge.exe',
+        'CRITICAL'
+      );
+
+      insertWpae.run(
+        'wpae-02',
+        sampleDevice.id,
+        sampleDevice.hostname,
+        'Tony',
+        'URL_BLOCKED',
+        'https://gambling-poker-betting.net/games',
+        'gambling-poker-betting.net',
+        '203.0.113.55',
+        'High Liability',
+        'BLOCKED',
+        'chrome.exe',
+        'MEDIUM'
+      );
+    }
   }
 
 }

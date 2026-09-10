@@ -1,3 +1,4 @@
+import { WebProtectionEngine } from '../services/webProtectionEngine.js';
 import { SandboxDetonationEngine } from '../services/sandboxDetonationEngine.js';
 import { ThreatHuntingEngine } from '../services/threatHuntingEngine.js';
 import { DeviceHealthAttestationEngine } from '../services/deviceHealthAttestationEngine.js';
@@ -7773,6 +7774,163 @@ try {
         return;
       }
       sendJson(res, 200, scriptPayload);
+    } catch (err) {
+      sendJson(res, 500, { error: 'SCRIPT_GEN_ERROR', message: err.message });
+    }
+  });
+
+  // 489. GET /api/v1/fleet/web-protection/stats
+  router.get('/api/v1/fleet/web-protection/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = WebProtectionEngine.getWebProtectionStats(getDb());
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'WEB_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 490. GET /api/v1/fleet/web-protection/policies
+  router.get('/api/v1/fleet/web-protection/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policies = WebProtectionEngine.getPolicies(getDb(), req.query || {});
+      sendJson(res, 200, { policies, count: policies.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'WEB_POLICIES_ERROR', message: err.message });
+    }
+  });
+
+  // 491. POST /api/v1/fleet/web-protection/policies
+  router.post('/api/v1/fleet/web-protection/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.name) {
+        sendJson(res, 400, { error: 'MISSING_FIELDS', message: 'name is required' });
+        return;
+      }
+      const policy = WebProtectionEngine.createPolicy(getDb(), req.body);
+      sendJson(res, 201, { success: true, policy });
+    } catch (err) {
+      sendJson(res, 400, { error: 'WEB_POLICY_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 492. GET /api/v1/fleet/web-protection/policies/:id
+  router.get('/api/v1/fleet/web-protection/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policy = WebProtectionEngine.getPolicyById(getDb(), req.params.id);
+      if (!policy) {
+        sendJson(res, 404, { error: 'POLICY_NOT_FOUND', message: 'Policy not found' });
+        return;
+      }
+      sendJson(res, 200, policy);
+    } catch (err) {
+      sendJson(res, 500, { error: 'POLICY_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 493. PATCH /api/v1/fleet/web-protection/policies/:id
+  router.patch('/api/v1/fleet/web-protection/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policy = WebProtectionEngine.updatePolicy(getDb(), req.params.id, req.body || {});
+      if (!policy) {
+        sendJson(res, 404, { error: 'POLICY_NOT_FOUND', message: 'Policy not found' });
+        return;
+      }
+      sendJson(res, 200, { success: true, policy });
+    } catch (err) {
+      sendJson(res, 400, { error: 'POLICY_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 494. DELETE /api/v1/fleet/web-protection/policies/:id
+  router.delete('/api/v1/fleet/web-protection/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const ok = WebProtectionEngine.deletePolicy(getDb(), req.params.id);
+      if (!ok) {
+        sendJson(res, 404, { error: 'POLICY_NOT_FOUND', message: 'Policy not found' });
+        return;
+      }
+      sendJson(res, 200, { success: true, message: 'Policy deleted' });
+    } catch (err) {
+      sendJson(res, 500, { error: 'POLICY_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 495. GET /api/v1/fleet/web-protection/indicators
+  router.get('/api/v1/fleet/web-protection/indicators', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const indicators = WebProtectionEngine.getIndicatorRules(getDb(), req.query || {});
+      sendJson(res, 200, { indicators, count: indicators.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'INDICATORS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 496. POST /api/v1/fleet/web-protection/indicators
+  router.post('/api/v1/fleet/web-protection/indicators', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.indicator_value) {
+        sendJson(res, 400, { error: 'MISSING_FIELDS', message: 'indicator_value is required' });
+        return;
+      }
+      const indicator = WebProtectionEngine.createIndicatorRule(getDb(), req.body);
+      sendJson(res, 201, { success: true, indicator });
+    } catch (err) {
+      sendJson(res, 400, { error: 'INDICATOR_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 497. DELETE /api/v1/fleet/web-protection/indicators/:id
+  router.delete('/api/v1/fleet/web-protection/indicators/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const ok = WebProtectionEngine.deleteIndicatorRule(getDb(), req.params.id);
+      if (!ok) {
+        sendJson(res, 404, { error: 'INDICATOR_NOT_FOUND', message: 'Indicator not found' });
+        return;
+      }
+      sendJson(res, 200, { success: true, message: 'Indicator deleted' });
+    } catch (err) {
+      sendJson(res, 500, { error: 'INDICATOR_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 498. GET /api/v1/fleet/web-protection/events
+  router.get('/api/v1/fleet/web-protection/events', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const events = WebProtectionEngine.getWebProtectionEvents(getDb(), req.query || {});
+      sendJson(res, 200, { events, count: events.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'EVENTS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 499. POST /api/v1/fleet/web-protection/events
+  router.post('/api/v1/fleet/web-protection/events', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const event = WebProtectionEngine.logWebProtectionEvent(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, event });
+    } catch (err) {
+      sendJson(res, 400, { error: 'EVENT_LOG_ERROR', message: err.message });
+    }
+  });
+
+  // 500. GET /api/v1/fleet/web-protection/script/:deviceId
+  router.get('/api/v1/fleet/web-protection/script/:deviceId', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const script = WebProtectionEngine.generateWebProtectionScript(getDb(), req.params.deviceId);
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end(script);
     } catch (err) {
       sendJson(res, 500, { error: 'SCRIPT_GEN_ERROR', message: err.message });
     }

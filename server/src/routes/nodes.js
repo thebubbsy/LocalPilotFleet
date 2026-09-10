@@ -1,3 +1,4 @@
+import { WebProtectionEngine } from '../services/webProtectionEngine.js';
 import { SandboxDetonationEngine } from '../services/sandboxDetonationEngine.js';
 import { ThreatHuntingEngine } from '../services/threatHuntingEngine.js';
 import { DeviceHealthAttestationEngine } from '../services/deviceHealthAttestationEngine.js';
@@ -2324,6 +2325,20 @@ export function registerNodeRoutes(router) {
       sendJson(res, 201, { success: true, node });
     } catch (err) {
       sendJson(res, 400, { error: 'NODE_LINEAGE_LOG_ERROR', message: err.message });
+    }
+  });
+
+  // POST /api/v1/nodes/:id/web-protection/events — Agent reports web intercept or SmartScreen event
+  router.post('/api/v1/nodes/:id/web-protection/events', (req, res) => {
+    const { id } = req.params;
+    try {
+      const event = WebProtectionEngine.logWebProtectionEvent(getDb(), {
+        device_id: id,
+        ...(req.body || {})
+      });
+      sendJson(res, 201, { success: true, event });
+    } catch (err) {
+      sendJson(res, 400, { error: 'NODE_WEB_EVENT_ERROR', message: err.message });
     }
   });
 
