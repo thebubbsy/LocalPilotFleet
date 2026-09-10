@@ -215,6 +215,9 @@ const App = {
       case 'dha':
         if (window.DeviceHealthAttestationTable) window.DeviceHealthAttestationTable.render();
         break;
+      case 'threat-hunting':
+        if (window.ThreatHuntingTable) window.ThreatHuntingTable.render();
+        break;
       case 'settings':
         this.renderSettings();
         break;

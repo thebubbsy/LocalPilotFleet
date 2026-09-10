@@ -1,3 +1,4 @@
+import { ThreatHuntingEngine } from '../services/threatHuntingEngine.js';
 import { DeviceHealthAttestationEngine } from '../services/deviceHealthAttestationEngine.js';
 import { incidentResponseEngine, IncidentResponseEngine } from '../services/incidentResponseEngine.js';
 import { multiTenancyEngine } from '../services/multiTenancyEngine.js';
@@ -7465,6 +7466,169 @@ try {
       sendJson(res, 200, rules);
     } catch (err) {
       sendJson(res, 500, { error: 'FIREWALL_RULES_ERROR', message: err.message });
+    }
+  });
+
+
+  // 466. GET /api/v1/fleet/hunting/stats
+  router.get('/api/v1/fleet/hunting/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = ThreatHuntingEngine.getHuntingStats(getDb());
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: 'HUNTING_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 467. GET /api/v1/fleet/hunting/campaigns
+  router.get('/api/v1/fleet/hunting/campaigns', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const { status, hunt_type } = req.query || {};
+      const campaigns = ThreatHuntingEngine.getCampaigns(getDb(), { status, hunt_type });
+      sendJson(res, 200, { campaigns, count: campaigns.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'HUNTING_CAMPAIGNS_ERROR', message: err.message });
+    }
+  });
+
+  // 468. POST /api/v1/fleet/hunting/campaigns
+  router.post('/api/v1/fleet/hunting/campaigns', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.name || !req.body?.pattern_definition) {
+        sendJson(res, 400, { error: 'MISSING_FIELDS', message: 'Name and pattern_definition are required' });
+        return;
+      }
+      const campaign = ThreatHuntingEngine.createCampaign(getDb(), req.body);
+      sendJson(res, 201, { success: true, campaign });
+    } catch (err) {
+      sendJson(res, 400, { error: 'CAMPAIGN_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 469. GET /api/v1/fleet/hunting/campaigns/:id
+  router.get('/api/v1/fleet/hunting/campaigns/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const campaign = ThreatHuntingEngine.getCampaignById(getDb(), req.params.id);
+      if (!campaign) {
+        sendJson(res, 404, { error: 'HUNT_NOT_FOUND', message: 'Threat hunt campaign not found' });
+        return;
+      }
+      sendJson(res, 200, campaign);
+    } catch (err) {
+      sendJson(res, 500, { error: 'CAMPAIGN_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 470. POST /api/v1/fleet/hunting/campaigns/:id/cancel
+  router.post('/api/v1/fleet/hunting/campaigns/:id/cancel', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const ok = ThreatHuntingEngine.cancelCampaign(getDb(), req.params.id);
+      if (!ok) {
+        sendJson(res, 404, { error: 'HUNT_NOT_FOUND', message: 'Threat hunt campaign not found' });
+        return;
+      }
+      sendJson(res, 200, { success: true, message: 'Campaign cancelled' });
+    } catch (err) {
+      sendJson(res, 500, { error: 'CAMPAIGN_CANCEL_ERROR', message: err.message });
+    }
+  });
+
+  // 471. DELETE /api/v1/fleet/hunting/campaigns/:id
+  router.delete('/api/v1/fleet/hunting/campaigns/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const ok = ThreatHuntingEngine.deleteCampaign(getDb(), req.params.id);
+      if (!ok) {
+        sendJson(res, 404, { error: 'HUNT_NOT_FOUND', message: 'Threat hunt campaign not found' });
+        return;
+      }
+      sendJson(res, 200, { success: true, message: 'Campaign deleted' });
+    } catch (err) {
+      sendJson(res, 500, { error: 'CAMPAIGN_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 472. GET /api/v1/fleet/hunting/matches
+  router.get('/api/v1/fleet/hunting/matches', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const { hunt_id, device_id } = req.query || {};
+      const matches = ThreatHuntingEngine.getMatches(getDb(), { huntId: hunt_id, deviceId: device_id });
+      sendJson(res, 200, { matches, count: matches.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'MATCHES_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 473. GET /api/v1/fleet/hunting/campaigns/:id/matches
+  router.get('/api/v1/fleet/hunting/campaigns/:id/matches', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const matches = ThreatHuntingEngine.getMatches(getDb(), { huntId: req.params.id });
+      sendJson(res, 200, { matches, count: matches.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'HUNT_MATCHES_ERROR', message: err.message });
+    }
+  });
+
+  // 474. GET /api/v1/fleet/hunting/iocs
+  router.get('/api/v1/fleet/hunting/iocs', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const iocs = ThreatHuntingEngine.getWatchlistIndicators(getDb());
+      sendJson(res, 200, { iocs, count: iocs.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'IOCS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 475. POST /api/v1/fleet/hunting/iocs
+  router.post('/api/v1/fleet/hunting/iocs', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.indicator_value || !req.body?.threat_name) {
+        sendJson(res, 400, { error: 'MISSING_FIELDS', message: 'indicator_value and threat_name are required' });
+        return;
+      }
+      const ioc = ThreatHuntingEngine.createWatchlistIndicator(getDb(), req.body);
+      sendJson(res, 201, { success: true, ioc });
+    } catch (err) {
+      sendJson(res, 400, { error: 'IOC_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 476. DELETE /api/v1/fleet/hunting/iocs/:id
+  router.delete('/api/v1/fleet/hunting/iocs/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const ok = ThreatHuntingEngine.deleteWatchlistIndicator(getDb(), req.params.id);
+      if (!ok) {
+        sendJson(res, 404, { error: 'IOC_NOT_FOUND', message: 'Indicator not found' });
+        return;
+      }
+      sendJson(res, 200, { success: true, message: 'Indicator deleted' });
+    } catch (err) {
+      sendJson(res, 500, { error: 'IOC_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 477. GET /api/v1/fleet/hunting/campaigns/:id/script
+  router.get('/api/v1/fleet/hunting/campaigns/:id/script', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const scriptPayload = ThreatHuntingEngine.generateHuntScript(getDb(), req.params.id);
+      if (!scriptPayload) {
+        sendJson(res, 404, { error: 'HUNT_NOT_FOUND', message: 'Campaign not found' });
+        return;
+      }
+      sendJson(res, 200, scriptPayload);
+    } catch (err) {
+      sendJson(res, 500, { error: 'SCRIPT_GEN_ERROR', message: err.message });
     }
   });
 

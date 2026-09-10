@@ -2626,6 +2626,65 @@ export function initDb(dbOrPath, options = {}) {
 
     CREATE INDEX IF NOT EXISTS idx_mnp_enabled ON microsegmentation_network_policies(is_enabled);
     CREATE INDEX IF NOT EXISTS idx_mnp_action ON microsegmentation_network_policies(action);
+
+    -- 127. THREAT_HUNT_CAMPAIGNS — Distributed Fleet Threat Hunting & IoC Sweeps
+    CREATE TABLE IF NOT EXISTS threat_hunt_campaigns (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      hunt_type TEXT NOT NULL CHECK(hunt_type IN ('YARA_SCAN', 'SIGMA_RULE', 'FILE_HASH_SWEEP', 'MUTEX_NAMED_PIPE', 'REGISTRY_PERSISTENCE')),
+      target_scope TEXT NOT NULL DEFAULT 'ALL_FLEET' CHECK(target_scope IN ('ALL_FLEET', 'DYNAMIC_GROUP', 'ORGANIZATION')),
+      target_id TEXT,
+      pattern_definition TEXT NOT NULL,
+      severity TEXT NOT NULL DEFAULT 'HIGH' CHECK(severity IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+      mitre_technique TEXT DEFAULT 'T1059',
+      action_on_match TEXT NOT NULL DEFAULT 'ALERT' CHECK(action_on_match IN ('ALERT', 'CONTAIN_HOST', 'KILL_PROCESS')),
+      status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('QUEUED', 'ACTIVE', 'COMPLETED', 'CANCELLED')),
+      nodes_targeted INTEGER NOT NULL DEFAULT 0,
+      nodes_completed INTEGER NOT NULL DEFAULT 0,
+      matches_detected INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_thc_status ON threat_hunt_campaigns(status);
+    CREATE INDEX IF NOT EXISTS idx_thc_type ON threat_hunt_campaigns(hunt_type);
+
+    -- 128. THREAT_HUNT_MATCHES — Endpoint IoC Detections & Evidence Ledger
+    CREATE TABLE IF NOT EXISTS threat_hunt_matches (
+      id TEXT PRIMARY KEY,
+      hunt_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      hostname TEXT NOT NULL,
+      match_type TEXT NOT NULL,
+      matched_item TEXT NOT NULL,
+      file_path TEXT,
+      sha256_hash TEXT,
+      evidence_snippet_json TEXT NOT NULL DEFAULT '{}',
+      mitre_technique TEXT,
+      action_taken TEXT DEFAULT 'ALERTED',
+      detected_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(hunt_id) REFERENCES threat_hunt_campaigns(id) ON DELETE CASCADE,
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_thm_hunt ON threat_hunt_matches(hunt_id);
+    CREATE INDEX IF NOT EXISTS idx_thm_device ON threat_hunt_matches(device_id);
+
+    -- 129. IOC_WATCHLIST_INDICATORS — Threat Intelligence Feeds & File Hash Watchlists
+    CREATE TABLE IF NOT EXISTS ioc_watchlist_indicators (
+      id TEXT PRIMARY KEY,
+      indicator_type TEXT NOT NULL CHECK(indicator_type IN ('SHA256', 'MD5', 'DOMAIN', 'IP', 'MUTEX', 'FILE_PATH', 'REGISTRY_KEY')),
+      indicator_value TEXT NOT NULL,
+      threat_name TEXT NOT NULL,
+      confidence TEXT NOT NULL DEFAULT 'HIGH' CHECK(confidence IN ('LOW', 'MEDIUM', 'HIGH')),
+      action_on_match TEXT NOT NULL DEFAULT 'ALERT' CHECK(action_on_match IN ('ALERT', 'CONTAIN_HOST', 'KILL_PROCESS')),
+      is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_iwi_val ON ioc_watchlist_indicators(indicator_value);
+    CREATE INDEX IF NOT EXISTS idx_iwi_active ON ioc_watchlist_indicators(is_active);
   `);
 
   // Schema migrations for existing databases
@@ -5999,6 +6058,55 @@ exit 0`,
       'ENFORCING',
       1
     );
+  }
+
+  // 46. Seed Threat Hunting Campaigns & IoC Watchlist
+  const huntCount = db.prepare('SELECT COUNT(*) as count FROM threat_hunt_campaigns').get().count;
+  if (huntCount === 0) {
+    const insertHunt = db.prepare(`
+      INSERT OR IGNORE INTO threat_hunt_campaigns (
+        id, name, description, hunt_type, target_scope, pattern_definition, severity,
+        mitre_technique, action_on_match, status, nodes_targeted, nodes_completed, matches_detected
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertHunt.run(
+      'hunt-cobalt-strike-beacon',
+      'Cobalt Strike Stager & Malleable C2 YARA Hunt',
+      'Detects known Cobalt Strike reflective loader byte sequences and named pipe beacons.',
+      'YARA_SCAN',
+      'ALL_FLEET',
+      'rule CobaltStrike_Beacon { strings: $s1 = "ReflectiveLoader" $s2 = "beacon.dll" condition: any of them }',
+      'CRITICAL',
+      'T1055',
+      'CONTAIN_HOST',
+      'ACTIVE',
+      1, 1, 0
+    );
+
+    insertHunt.run(
+      'hunt-sigma-mimikatz-lsass',
+      'Mimikatz LSASS Handle Access Sigma Rule',
+      'Alerts on Event 10 (ProcessAccess) requesting PROCESS_VM_READ against lsass.exe.',
+      'SIGMA_RULE',
+      'ALL_FLEET',
+      'title: Mimikatz LSASS Access\nlogsource:\n  product: windows\n  service: sysmon\ndetection:\n  selection:\n    EventID: 10\n    TargetImage|endswith: \\lsass.exe\n  condition: selection',
+      'CRITICAL',
+      'T1003.001',
+      'ALERT',
+      'ACTIVE',
+      1, 1, 0
+    );
+
+    const insertIoc = db.prepare(`
+      INSERT OR IGNORE INTO ioc_watchlist_indicators (
+        id, indicator_type, indicator_value, threat_name, confidence, action_on_match, is_active
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertIoc.run('ioc-lockbit-sha256', 'SHA256', 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', 'LockBit 3.0 Ransomware Encryptor', 'HIGH', 'CONTAIN_HOST', 1);
+    insertIoc.run('ioc-c2-ip', 'IP', '198.51.100.42', 'APT29 Command & Control Server', 'HIGH', 'ALERT', 1);
+    insertIoc.run('ioc-cobalt-pipe', 'MUTEX', '\\\\.\\pipe\\msagent_c2', 'Cobalt Strike Default Named Pipe', 'HIGH', 'KILL_PROCESS', 1);
   }
 
 }

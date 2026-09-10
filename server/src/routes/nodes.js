@@ -1,3 +1,4 @@
+import { ThreatHuntingEngine } from '../services/threatHuntingEngine.js';
 import { DeviceHealthAttestationEngine } from '../services/deviceHealthAttestationEngine.js';
 import { incidentResponseEngine, IncidentResponseEngine } from '../services/incidentResponseEngine.js';
 import { contentDistributionEngine } from '../services/contentDistributionEngine.js';
@@ -2279,6 +2280,21 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { success: true, report });
     } catch (err) {
       sendJson(res, 400, { error: 'DHA_ATTESTATION_ERROR', message: err.message });
+    }
+  });
+
+
+  // POST /api/v1/nodes/:id/hunting/matches — Agent reports threat hunt match findings
+  router.post('/api/v1/nodes/:id/hunting/matches', (req, res) => {
+    const { id } = req.params;
+    try {
+      const match = ThreatHuntingEngine.ingestMatch(getDb(), {
+        device_id: id,
+        ...req.body
+      });
+      sendJson(res, 201, { success: true, match });
+    } catch (err) {
+      sendJson(res, 400, { error: 'MATCH_INGEST_ERROR', message: err.message });
     }
   });
 
