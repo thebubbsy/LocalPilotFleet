@@ -107,6 +107,12 @@
               </svg>
               Hardware &amp; TPM Attestation
             </a>
+            <a href="#uem" data-tab="uem" class="nav-item flex items-center px-3 py-2 text-sm font-medium rounded-md text-gray-300 hover:text-white hover:bg-gray-800 transition">
+              <svg class="w-5 h-5 mr-3 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+              </svg>
+              Multi-Platform UEM (Mac/iOS/Android)
+            </a>
     <div class="nav-tree">
       <div class="nav-item active" data-tab="overview">
         <span class="nav-icon">🏠</span>
@@ -128,6 +134,18 @@
       <div class="nav-sub-item active" data-tab="devices" style="padding-left:36px;">
         <span class="nav-icon">🪟</span>
         <span class="nav-label">Windows devices</span>
+      </div>
+      <div class="nav-sub-item" data-tab="uem" style="padding-left:36px;">
+        <span class="nav-icon">🍏</span>
+        <span class="nav-label">macOS devices</span>
+      </div>
+      <div class="nav-sub-item" data-tab="uem" style="padding-left:36px;">
+        <span class="nav-icon">📱</span>
+        <span class="nav-label">iOS &amp; iPadOS devices</span>
+      </div>
+      <div class="nav-sub-item" data-tab="uem" style="padding-left:36px;">
+        <span class="nav-icon">🤖</span>
+        <span class="nav-label">Android devices</span>
       </div>
 
       <div class="nav-item" data-tab="software">
@@ -870,6 +888,7 @@
   <script src="/js/components/ransomwareCanaryTable.js"></script>
   <script src="/js/components/licenseOptimizationTable.js"></script>
   <script src="/js/components/hardwareAttestationTable.js"></script>
+  <script src="/js/components/multiPlatformUemTable.js"></script>
 <script src="/js/components/identityThreatTable.js"></script>
 <script src="/js/components/vulnerabilityManagementTable.js"></script>
 <script src="/js/components/threatIntelTable.js"></script>

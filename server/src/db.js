@@ -3783,6 +3783,68 @@ export function initDb(dbOrPath, options = {}) {
     );
 
     CREATE INDEX IF NOT EXISTS idx_hap_active ON hardware_attestation_policies(is_active);
+    -- =========================================================================
+    -- ITERATION 65: Unified Endpoint Management (UEM) Multi-Platform Engine (macOS, iOS, Android)
+    -- =========================================================================
+    -- Table 184: apple_mdm_enrollment_profiles
+    CREATE TABLE IF NOT EXISTS apple_mdm_enrollment_profiles (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      target_platform TEXT NOT NULL DEFAULT 'COMBINED' CHECK(target_platform IN ('MACOS', 'IOS', 'COMBINED')),
+      organization_name TEXT NOT NULL DEFAULT 'LocalPilot Enterprise',
+      payload_identifier TEXT NOT NULL,
+      payload_uuid TEXT NOT NULL UNIQUE,
+      passcode_policy_json TEXT NOT NULL DEFAULT '{}',
+      filevault_enabled INTEGER NOT NULL DEFAULT 1 CHECK(filevault_enabled IN (0, 1)),
+      filevault_escrow_enabled INTEGER NOT NULL DEFAULT 1 CHECK(filevault_escrow_enabled IN (0, 1)),
+      wifi_ssid TEXT,
+      wifi_encryption_type TEXT DEFAULT 'WPA2',
+      is_supervised INTEGER NOT NULL DEFAULT 1 CHECK(is_supervised IN (0, 1)),
+      is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_amep_platform ON apple_mdm_enrollment_profiles(target_platform);
+    CREATE INDEX IF NOT EXISTS idx_amep_active ON apple_mdm_enrollment_profiles(is_active);
+
+    -- Table 185: android_enterprise_profiles
+    CREATE TABLE IF NOT EXISTS android_enterprise_profiles (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      enrollment_mode TEXT NOT NULL DEFAULT 'FULLY_MANAGED' CHECK(enrollment_mode IN ('WORK_PROFILE_BYOD', 'FULLY_MANAGED', 'DEDICATED_KIOSK', 'COPE')),
+      enrollment_token TEXT NOT NULL UNIQUE,
+      qr_code_payload_json TEXT NOT NULL,
+      camera_disabled INTEGER NOT NULL DEFAULT 0 CHECK(camera_disabled IN (0, 1)),
+      screen_capture_disabled INTEGER NOT NULL DEFAULT 0 CHECK(screen_capture_disabled IN (0, 1)),
+      usb_debugging_disabled INTEGER NOT NULL DEFAULT 1 CHECK(usb_debugging_disabled IN (0, 1)),
+      storage_encryption_required INTEGER NOT NULL DEFAULT 1 CHECK(storage_encryption_required IN (0, 1)),
+      minimum_android_version TEXT DEFAULT '12.0',
+      is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_aep_mode ON android_enterprise_profiles(enrollment_mode);
+    CREATE INDEX IF NOT EXISTS idx_aep_token ON android_enterprise_profiles(enrollment_token);
+
+    -- Table 186: mobile_device_commands
+    CREATE TABLE IF NOT EXISTS mobile_device_commands (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      platform TEXT NOT NULL CHECK(platform IN ('MACOS', 'IOS', 'ANDROID', 'LINUX')),
+      command_type TEXT NOT NULL CHECK(command_type IN ('DEVICE_LOCK', 'REMOTE_WIPE', 'PASSCODE_RESET', 'LOST_MODE_ENABLE', 'LOST_MODE_DISABLE', 'DEVICE_RESTART', 'PROFILE_INSTALL', 'ROTATE_FILEVAULT_KEY')),
+      command_params_json TEXT DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'SENT', 'ACKNOWLEDGED', 'FAILED', 'EXPIRED')),
+      issued_by TEXT NOT NULL DEFAULT 'Enterprise Security Administrator',
+      issued_at TEXT DEFAULT (DATETIME('now')),
+      executed_at TEXT,
+      result_details_json TEXT DEFAULT '{}',
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mdc_dev ON mobile_device_commands(device_id);
+    CREATE INDEX IF NOT EXISTS idx_mdc_status ON mobile_device_commands(status);
+    CREATE INDEX IF NOT EXISTS idx_mdc_platform ON mobile_device_commands(platform);
+
 
 
 
@@ -9080,6 +9142,90 @@ exit 0`,
       1
     );
   }
+
+  // Iteration 65: Unified Endpoint Management (macOS, iOS, Android) Seeds
+  const amepCount = db.prepare('SELECT COUNT(*) as count FROM apple_mdm_enrollment_profiles').get().count;
+  if (amepCount === 0) {
+    const devTarget = db.prepare('SELECT id, hostname FROM devices LIMIT 1').get() || { id: 'dev-01', hostname: 'DESKTOP-CORP-01' };
+
+    // Insert Apple Profile seed
+    const insertAmep = db.prepare(`
+      INSERT OR IGNORE INTO apple_mdm_enrollment_profiles (
+        id, name, target_platform, organization_name, payload_identifier,
+        payload_uuid, passcode_policy_json, filevault_enabled, filevault_escrow_enabled,
+        wifi_ssid, wifi_encryption_type, is_supervised, is_active
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertAmep.run(
+      'amp-01',
+      'Corporate macOS & iOS Baseline Security Configuration',
+      'COMBINED',
+      'LocalPilot Enterprise Fleet',
+      'corp.localpilot.mdm.baseline',
+      '3FA484B7-8C08-4B2E-9213-9E1A3348123A',
+      JSON.stringify({
+        minLength: 8,
+        requireAlphanumeric: true,
+        maxFailedAttempts: 5,
+        maxInactivityMinutes: 10
+      }),
+      1,
+      1,
+      'CORP-SECURE-WIFI',
+      'WPA2',
+      1,
+      1
+    );
+
+    // Insert Android Enterprise Profile seed
+    const insertAep = db.prepare(`
+      INSERT OR IGNORE INTO android_enterprise_profiles (
+        id, name, enrollment_mode, enrollment_token, qr_code_payload_json,
+        camera_disabled, screen_capture_disabled, usb_debugging_disabled,
+        storage_encryption_required, minimum_android_version, is_active
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertAep.run(
+      'aep-01',
+      'Corporate Fully Managed Android Fleet (COBO)',
+      'FULLY_MANAGED',
+      'LP-AND-CORP-2026-TOKEN',
+      JSON.stringify({
+        "android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME": "corp.localpilot.mdm/.DeviceAdminReceiver",
+        "android.app.extra.PROVISIONING_DEVICE_ADMIN_PACKAGE_NAME": "corp.localpilot.mdm",
+        "android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE": {
+          "server_url": "https://fleet.localpilot.internal:8443",
+          "enrollment_token": "LP-AND-CORP-2026-TOKEN"
+        }
+      }),
+      0,
+      0,
+      1,
+      1,
+      '12.0',
+      1
+    );
+
+    // Insert Sample Command seed
+    const insertMdc = db.prepare(`
+      INSERT OR IGNORE INTO mobile_device_commands (
+        id, device_id, platform, command_type, command_params_json, status, issued_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertMdc.run(
+      'mdc-01',
+      devTarget.id,
+      'MACOS',
+      'DEVICE_LOCK',
+      JSON.stringify({ message: 'Security lock requested by admin' }),
+      'PENDING',
+      'SecOps Admin'
+    );
+  }
+
 
 
 

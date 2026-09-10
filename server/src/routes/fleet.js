@@ -1,3 +1,4 @@
+import { MultiPlatformUemEngine } from '../services/multiPlatformUemEngine.js';
 import { HardwareAttestationEngine } from '../services/hardwareAttestationEngine.js';
 import { LicenseOptimizationEngine } from '../services/licenseOptimizationEngine.js';
 import { RansomwareCanaryEngine } from '../services/ransomwareCanaryEngine.js';
@@ -49,6 +50,7 @@ import { bitlockerEngine } from '../services/bitlockerEngine.js';
 import { lapsEngine } from '../services/lapsEngine.js';
 import * as epmEngine from '../services/epmEngine.js';
 import fs from 'node:fs';
+import path from 'node:path';
 import * as autopilotEngine from '../services/autopilotEngine.js';
 import * as remoteActionEngine from '../services/remoteActionEngine.js';
 import * as firewallEngine from '../services/firewallEngine.js';
@@ -10608,6 +10610,241 @@ try {
       sendJson(res, 200, { success: true, evaluation });
     } catch (err) {
       sendJson(res, 500, { error: "ATTESTATION_EVALUATE_ERROR", message: err.message });
+    }
+  });
+
+
+  // =========================================================================
+  // ITERATION 65: Unified Endpoint Management (UEM) Multi-Platform Routes
+  // =========================================================================
+
+  // 731. GET /api/v1/fleet/uem/stats — Fleet-wide multi-platform UEM statistics
+  router.get('/api/v1/fleet/uem/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = MultiPlatformUemEngine.getPlatformStats(getDb());
+      sendJson(res, 200, { success: true, stats });
+    } catch (err) {
+      sendJson(res, 500, { error: "UEM_STATS_ERROR", message: err.message });
+    }
+  });
+
+  // 732. GET /api/v1/fleet/uem/devices — Query multi-platform devices
+  router.get('/api/v1/fleet/uem/devices', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const devices = MultiPlatformUemEngine.getMultiplatformDevices(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, devices, count: devices.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "UEM_DEVICES_ERROR", message: err.message });
+    }
+  });
+
+  // 733. GET /api/v1/fleet/uem/apple/profiles — List Apple MDM configuration profiles
+  router.get('/api/v1/fleet/uem/apple/profiles', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const profiles = MultiPlatformUemEngine.getAppleProfiles(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, profiles, count: profiles.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "APPLE_PROFILES_ERROR", message: err.message });
+    }
+  });
+
+  // 734. POST /api/v1/fleet/uem/apple/profiles — Create Apple MDM configuration profile
+  router.post('/api/v1/fleet/uem/apple/profiles', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.name) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "Profile name is required" });
+        return;
+      }
+      const profile = MultiPlatformUemEngine.createAppleProfile(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, profile });
+    } catch (err) {
+      sendJson(res, 400, { error: "APPLE_PROFILE_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 735. GET /api/v1/fleet/uem/apple/profiles/:id/download — Download Apple .mobileconfig Property List XML
+  router.get('/api/v1/fleet/uem/apple/profiles/:id/download', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const payload = MultiPlatformUemEngine.generateAppleMdmProfile(getDb(), req.params.id);
+      if (!payload) {
+        sendJson(res, 404, { error: "PROFILE_NOT_FOUND", message: "Apple MDM profile not found" });
+        return;
+      }
+      res.setHeader('Content-Type', 'application/x-apple-aspen-config');
+      res.setHeader('Content-Disposition', `attachment; filename="${payload.filename}"`);
+      res.writeHead(200);
+      res.end(payload.plist_xml);
+    } catch (err) {
+      sendJson(res, 500, { error: "APPLE_PROFILE_DOWNLOAD_ERROR", message: err.message });
+    }
+  });
+
+  // 736. GET /api/v1/fleet/uem/android/profiles — List Android Enterprise profiles
+  router.get('/api/v1/fleet/uem/android/profiles', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const profiles = MultiPlatformUemEngine.getAndroidProfiles(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, profiles, count: profiles.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "ANDROID_PROFILES_ERROR", message: err.message });
+    }
+  });
+
+  // 737. POST /api/v1/fleet/uem/android/profiles — Create Android Enterprise profile
+  router.post('/api/v1/fleet/uem/android/profiles', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.name) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "Profile name is required" });
+        return;
+      }
+      const profile = MultiPlatformUemEngine.createAndroidProfile(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, profile });
+    } catch (err) {
+      sendJson(res, 400, { error: "ANDROID_PROFILE_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 738. GET /api/v1/fleet/uem/android/qr-payload/:id — Retrieve Android QR provisioning payload
+  router.get('/api/v1/fleet/uem/android/qr-payload/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const payload = MultiPlatformUemEngine.generateAndroidQrPayload(getDb(), req.params.id);
+      if (!payload) {
+        sendJson(res, 404, { error: "PROFILE_NOT_FOUND", message: "Android profile not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, payload });
+    } catch (err) {
+      sendJson(res, 500, { error: "ANDROID_QR_PAYLOAD_ERROR", message: err.message });
+    }
+  });
+
+  // 739. POST /api/v1/fleet/uem/devices/:id/commands — Dispatch remote command
+  router.post('/api/v1/fleet/uem/devices/:id/commands', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.command_type) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "command_type is required" });
+        return;
+      }
+      const command = MultiPlatformUemEngine.dispatchDeviceCommand(getDb(), {
+        ...req.body,
+        device_id: req.params.id
+      });
+      sendJson(res, 201, { success: true, command });
+    } catch (err) {
+      sendJson(res, 400, { error: "UEM_COMMAND_DISPATCH_ERROR", message: err.message });
+    }
+  });
+
+  // 740. GET /api/v1/fleet/uem/devices/:id/commands — Retrieve command history for device
+  router.get('/api/v1/fleet/uem/devices/:id/commands', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const commands = MultiPlatformUemEngine.getDeviceCommands(getDb(), req.params.id);
+      sendJson(res, 200, { success: true, commands, count: commands.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "UEM_COMMANDS_GET_ERROR", message: err.message });
+    }
+  });
+
+  // 741. GET /api/v1/fleet/uem/devices/:id/filevault — Retrieve FileVault recovery key for macOS
+  router.get('/api/v1/fleet/uem/devices/:id/filevault', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const db = getDb();
+      const device = db.prepare('SELECT id, hostname, os_name FROM devices WHERE id = ?').get(req.params.id);
+      if (!device) {
+        sendJson(res, 404, { error: "DEVICE_NOT_FOUND", message: "Device not found" });
+        return;
+      }
+      // Check vault secrets for FileVault key
+      const secret = db.prepare("SELECT secret_value FROM device_vault_secrets WHERE device_id = ? AND secret_type = 'FILEVAULT_RECOVERY_KEY'").get(req.params.id);
+      sendJson(res, 200, {
+        success: true,
+        device_id: device.id,
+        hostname: device.hostname,
+        has_escrowed_key: !!secret,
+        recovery_key: secret ? secret.secret_value : null
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: "FILEVAULT_GET_ERROR", message: err.message });
+    }
+  });
+
+  // 742. POST /api/v1/fleet/uem/devices/:id/evaluate — Evaluate device platform compliance
+  router.post('/api/v1/fleet/uem/devices/:id/evaluate', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const evaluation = MultiPlatformUemEngine.evaluatePlatformCompliance(getDb(), req.params.id, req.body || {});
+      sendJson(res, 200, { success: true, evaluation });
+    } catch (err) {
+      sendJson(res, 500, { error: "UEM_COMPLIANCE_EVAL_ERROR", message: err.message });
+    }
+  });
+
+  // GET /api/v1/fleet/uem/macos/agent.sh — Serve macOS enrollment bash script
+  router.get('/api/v1/fleet/uem/macos/agent.sh', (req, res) => {
+    try {
+      const scriptPath = path.resolve(process.cwd(), 'agent/enroll-macos.sh');
+      if (!fs.existsSync(scriptPath)) {
+        sendJson(res, 404, { error: "SCRIPT_NOT_FOUND", message: "macOS agent script not found" });
+        return;
+      }
+      const script = fs.readFileSync(scriptPath, 'utf8');
+      res.setHeader('Content-Type', 'text/x-shellscript; charset=utf-8');
+      res.writeHead(200);
+      res.end(script);
+    } catch (err) {
+      sendJson(res, 500, { error: "MACOS_AGENT_SERVE_ERROR", message: err.message });
+    }
+  });
+
+  // GET /api/v1/fleet/uem/apple/profiles/:id/mobileconfig — Direct alias for Apple mobileconfig
+  router.get('/api/v1/fleet/uem/apple/profiles/:id/mobileconfig', (req, res) => {
+    try {
+      const payload = MultiPlatformUemEngine.generateAppleMdmProfile(getDb(), req.params.id);
+      if (!payload) {
+        sendJson(res, 404, { error: "PROFILE_NOT_FOUND", message: "Apple MDM profile not found" });
+        return;
+      }
+      res.setHeader('Content-Type', 'application/x-apple-aspen-config');
+      res.setHeader('Content-Disposition', `attachment; filename="${payload.filename}"`);
+      res.writeHead(200);
+      res.end(payload.plist_xml);
+    } catch (err) {
+      sendJson(res, 500, { error: "APPLE_PROFILE_DOWNLOAD_ERROR", message: err.message });
+    }
+  });
+
+  // GET /api/v1/fleet/uem/android/profiles/:id/qr-payload — Direct alias for Android QR payload
+  router.get('/api/v1/fleet/uem/android/profiles/:id/qr-payload', (req, res) => {
+    try {
+      const payload = MultiPlatformUemEngine.generateAndroidQrPayload(getDb(), req.params.id);
+      if (!payload) {
+        sendJson(res, 404, { error: "PROFILE_NOT_FOUND", message: "Android profile not found" });
+        return;
+      }
+      sendJson(res, 200, payload);
+    } catch (err) {
+      sendJson(res, 500, { error: "ANDROID_QR_PAYLOAD_ERROR", message: err.message });
+    }
+  });
+
+  // POST /api/v1/fleet/uem/enroll — Direct enrollment endpoint under fleet namespace
+  router.post('/api/v1/fleet/uem/enroll', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const result = MultiPlatformUemEngine.enrollMobileDevice(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, ...result });
+    } catch (err) {
+      sendJson(res, 400, { error: "MOBILE_ENROLLMENT_ERROR", message: err.message });
     }
   });
 

@@ -268,6 +268,11 @@ const App = {
           window.HardwareAttestationTable.render();
         }
         break;
+      case 'uem':
+        if (window.MultiPlatformUemTable && typeof window.MultiPlatformUemTable.render === 'function') {
+          window.MultiPlatformUemTable.render();
+        }
+        break;
       case 'itdr':
         if (window.IdentityThreatTable) window.IdentityThreatTable.render();
         break;

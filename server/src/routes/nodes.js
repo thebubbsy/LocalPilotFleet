@@ -1,3 +1,4 @@
+import { MultiPlatformUemEngine } from '../services/multiPlatformUemEngine.js';
 import { HardwareAttestationEngine } from '../services/hardwareAttestationEngine.js';
 import { LicenseOptimizationEngine } from '../services/licenseOptimizationEngine.js';
 import { RansomwareCanaryEngine } from '../services/ransomwareCanaryEngine.js';
@@ -72,6 +73,13 @@ import * as pkiSigningEngine from '../services/pkiSigningEngine.js';
 import { broadcastEvent } from './events.js';
 
 export function registerNodeRoutes(router) {
+
+  function authenticateNode(req, res) {
+    if (requireFleetKeyOrNodeToken(req, res)) {
+      return req.device || { id: req.params?.id || 'fleet_admin', hostname: 'authorized' };
+    }
+    return null;
+  }
 
   // POST /api/v1/nodes/:id/queries/:queryId/results — Ingest live query results from node
   router.post('/api/v1/nodes/:id/queries/:queryId/results', (req, res) => {
@@ -2958,6 +2966,53 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { success: true, result });
     } catch (err) {
       sendJson(res, 400, { error: "NODE_COMPONENTS_REPORT_ERROR", message: err.message });
+    }
+  });
+
+
+  // =========================================================================
+  // ITERATION 65: Cross-Platform Mobile & Mac Node Endpoints
+  // =========================================================================
+
+  // 743. POST /api/v1/nodes/enroll/mobile — Dedicated cross-platform enrollment for macOS, iOS, Android
+  router.post('/api/v1/nodes/enroll/mobile', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const result = MultiPlatformUemEngine.enrollMobileDevice(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, enrollment: result });
+    } catch (err) {
+      sendJson(res, 400, { error: "MOBILE_ENROLLMENT_ERROR", message: err.message });
+    }
+  });
+
+  // 744. GET /api/v1/nodes/:id/uem/pending-commands — Mobile client polls for pending commands
+  router.get('/api/v1/nodes/:id/uem/pending-commands', (req, res) => {
+    const node = authenticateNode(req, res);
+    if (!node) return;
+
+    try {
+      const commands = MultiPlatformUemEngine.getPendingCommands(getDb(), req.params.id);
+      sendJson(res, 200, { success: true, commands, count: commands.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "PENDING_COMMANDS_ERROR", message: err.message });
+    }
+  });
+
+  // 745. POST /api/v1/nodes/:id/uem/acknowledge-command — Mobile client reports command execution outcome
+  router.post('/api/v1/nodes/:id/uem/acknowledge-command', (req, res) => {
+    const node = authenticateNode(req, res);
+    if (!node) return;
+
+    try {
+      const commandId = req.body?.command_id;
+      if (!commandId) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "command_id is required" });
+        return;
+      }
+      const updated = MultiPlatformUemEngine.acknowledgeCommand(getDb(), commandId, req.body?.result_details || {});
+      sendJson(res, 200, { success: true, command: updated });
+    } catch (err) {
+      sendJson(res, 400, { error: "COMMAND_ACKNOWLEDGE_ERROR", message: err.message });
     }
   });
 
