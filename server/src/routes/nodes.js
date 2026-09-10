@@ -1,3 +1,4 @@
+import { RansomwareCanaryEngine } from '../services/ransomwareCanaryEngine.js';
 import { CloudAppDiscoveryEngine } from '../services/cloudAppDiscoveryEngine.js';
 import { UebaEngine } from '../services/uebaEngine.js';
 import { ExploitProtectionEngine } from '../services/exploitProtectionEngine.js';
@@ -2788,6 +2789,49 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { success: true, policies, count: policies.length });
     } catch (err) {
       sendJson(res, 500, { error: "NODE_CLOUD_POLICIES_ERROR", message: err.message });
+    }
+  });
+
+
+  // =========================================================================
+  // ITERATION 62: Automated Ransomware Canary Node Routes
+  // =========================================================================
+
+  // 698. GET /api/v1/nodes/:id/ransomware/traps — Node agent pulls active canary files to watch
+  router.get('/api/v1/nodes/:id/ransomware/traps', (req, res) => {
+    try {
+      const traps = RansomwareCanaryEngine.getTraps(getDb(), { status: 'HEALTHY' });
+      sendJson(res, 200, { success: true, traps, count: traps.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "NODE_CANARY_TRAPS_ERROR", message: err.message });
+    }
+  });
+
+  // 699. POST /api/v1/nodes/:id/ransomware/report-tamper — Node agent reports canary trip / encryption attempt
+  router.post('/api/v1/nodes/:id/ransomware/report-tamper', (req, res) => {
+    const { id } = req.params;
+    try {
+      if (!req.body?.trap_id) {
+        sendJson(res, 400, { error: "MISSING_TRAP_ID", message: "trap_id is required" });
+        return;
+      }
+      const detection = RansomwareCanaryEngine.recordTamperDetection(getDb(), {
+        device_id: id,
+        ...(req.body || {})
+      });
+      sendJson(res, 201, { success: true, detection });
+    } catch (err) {
+      sendJson(res, 400, { error: "NODE_REPORT_TAMPER_ERROR", message: err.message });
+    }
+  });
+
+  // 700. GET /api/v1/nodes/:id/ransomware/policy — Node agent pulls active containment policy
+  router.get('/api/v1/nodes/:id/ransomware/policy', (req, res) => {
+    try {
+      const policies = RansomwareCanaryEngine.getPolicies(getDb(), { is_active: 1 });
+      sendJson(res, 200, { success: true, policy: policies[0] || null });
+    } catch (err) {
+      sendJson(res, 500, { error: "NODE_CANARY_POLICY_ERROR", message: err.message });
     }
   });
 

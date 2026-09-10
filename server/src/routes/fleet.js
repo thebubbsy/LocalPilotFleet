@@ -1,3 +1,4 @@
+import { RansomwareCanaryEngine } from '../services/ransomwareCanaryEngine.js';
 import { CloudAppDiscoveryEngine } from '../services/cloudAppDiscoveryEngine.js';
 import { UebaEngine } from '../services/uebaEngine.js';
 import { ExploitProtectionEngine } from '../services/exploitProtectionEngine.js';
@@ -10104,6 +10105,176 @@ try {
       sendJson(res, 200, { success: true, deleted: true });
     } catch (err) {
       sendJson(res, 500, { error: "CLOUD_POLICY_DELETE_ERROR", message: err.message });
+    }
+  });
+
+
+  // =========================================================================
+  // ITERATION 62: Automated Ransomware Canary & Early-Warning Integrity Routes
+  // =========================================================================
+
+  // 686. GET /api/v1/fleet/ransomware/stats — Fleet-wide ransomware canary and containment statistics
+  router.get('/api/v1/fleet/ransomware/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = RansomwareCanaryEngine.getCanaryStats(getDb());
+      sendJson(res, 200, { success: true, stats });
+    } catch (err) {
+      sendJson(res, 500, { error: "RANSOMWARE_STATS_ERROR", message: err.message });
+    }
+  });
+
+  // 687. GET /api/v1/fleet/ransomware/traps — Retrieve canary file traps catalog
+  router.get('/api/v1/fleet/ransomware/traps', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const traps = RansomwareCanaryEngine.getTraps(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, traps, count: traps.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "RANSOMWARE_TRAPS_ERROR", message: err.message });
+    }
+  });
+
+  // 688. GET /api/v1/fleet/ransomware/traps/:id — Retrieve single canary trap with detection history
+  router.get('/api/v1/fleet/ransomware/traps/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const trap = RansomwareCanaryEngine.getTrapById(getDb(), req.params.id);
+      if (!trap) {
+        sendJson(res, 404, { error: "TRAP_NOT_FOUND", message: "Canary trap not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, trap });
+    } catch (err) {
+      sendJson(res, 500, { error: "RANSOMWARE_TRAP_GET_ERROR", message: err.message });
+    }
+  });
+
+  // 689. POST /api/v1/fleet/ransomware/traps — Deploy and register canary trap file
+  router.post('/api/v1/fleet/ransomware/traps', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.filename || !req.body?.directory_path) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "filename and directory_path are required" });
+        return;
+      }
+      const trap = RansomwareCanaryEngine.deployTrap(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, trap });
+    } catch (err) {
+      sendJson(res, 400, { error: "RANSOMWARE_TRAP_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 690. DELETE /api/v1/fleet/ransomware/traps/:id — Remove canary trap
+  router.delete('/api/v1/fleet/ransomware/traps/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const deleted = RansomwareCanaryEngine.deleteTrap(getDb(), req.params.id);
+      if (!deleted) {
+        sendJson(res, 404, { error: "TRAP_NOT_FOUND", message: "Canary trap not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, deleted: true });
+    } catch (err) {
+      sendJson(res, 500, { error: "RANSOMWARE_TRAP_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 691. POST /api/v1/fleet/ransomware/traps/:id/verify — Verify integrity and entropy of canary trap
+  router.post('/api/v1/fleet/ransomware/traps/:id/verify', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const trap = RansomwareCanaryEngine.verifyTrapHealth(
+        getDb(),
+        req.params.id,
+        req.body?.current_sha256,
+        req.body?.current_entropy
+      );
+      if (!trap) {
+        sendJson(res, 404, { error: "TRAP_NOT_FOUND", message: "Canary trap not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, trap });
+    } catch (err) {
+      sendJson(res, 400, { error: "RANSOMWARE_TRAP_VERIFY_ERROR", message: err.message });
+    }
+  });
+
+  // 692. GET /api/v1/fleet/ransomware/detections — Retrieve ransomware tamper detections
+  router.get('/api/v1/fleet/ransomware/detections', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const detections = RansomwareCanaryEngine.getTamperDetections(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, detections, count: detections.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "RANSOMWARE_DETECTIONS_ERROR", message: err.message });
+    }
+  });
+
+  // 693. POST /api/v1/fleet/ransomware/detections — Ingest tamper event and execute containment
+  router.post('/api/v1/fleet/ransomware/detections', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.trap_id || !req.body?.device_id) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "trap_id and device_id are required" });
+        return;
+      }
+      const detection = RansomwareCanaryEngine.recordTamperDetection(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, detection });
+    } catch (err) {
+      sendJson(res, 400, { error: "RANSOMWARE_DETECTION_RECORD_ERROR", message: err.message });
+    }
+  });
+
+  // 694. GET /api/v1/fleet/ransomware/policies — Retrieve containment policies
+  router.get('/api/v1/fleet/ransomware/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policies = RansomwareCanaryEngine.getPolicies(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, policies, count: policies.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "RANSOMWARE_POLICIES_ERROR", message: err.message });
+    }
+  });
+
+  // 695. POST /api/v1/fleet/ransomware/policies — Create containment policy
+  router.post('/api/v1/fleet/ransomware/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.name) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "Policy name is required" });
+        return;
+      }
+      const policy = RansomwareCanaryEngine.createPolicy(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, policy });
+    } catch (err) {
+      sendJson(res, 400, { error: "RANSOMWARE_POLICY_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 696. DELETE /api/v1/fleet/ransomware/policies/:id — Delete containment policy
+  router.delete('/api/v1/fleet/ransomware/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const deleted = RansomwareCanaryEngine.deletePolicy(getDb(), req.params.id);
+      if (!deleted) {
+        sendJson(res, 404, { error: "POLICY_NOT_FOUND", message: "Policy not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, deleted: true });
+    } catch (err) {
+      sendJson(res, 500, { error: "RANSOMWARE_POLICY_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 697. GET /api/v1/fleet/ransomware/deploy-script — Generate PowerShell deployment script
+  router.get('/api/v1/fleet/ransomware/deploy-script', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const script = RansomwareCanaryEngine.generateDeployScript(getDb());
+      sendJson(res, 200, { success: true, script });
+    } catch (err) {
+      sendJson(res, 500, { error: "RANSOMWARE_SCRIPT_GENERATE_ERROR", message: err.message });
     }
   });
 

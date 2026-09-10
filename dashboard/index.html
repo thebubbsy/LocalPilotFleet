@@ -89,6 +89,12 @@
               </svg>
               Cloud App CASB
             </a>
+            <a href="#ransomware" data-tab="ransomware" class="nav-item flex items-center px-3 py-2 text-sm font-medium rounded-md text-gray-300 hover:text-white hover:bg-gray-800 transition">
+              <svg class="w-5 h-5 mr-3 text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              Ransomware Canary Traps
+            </a>
     <div class="nav-tree">
       <div class="nav-item active" data-tab="overview">
         <span class="nav-icon">🏠</span>
@@ -692,6 +698,12 @@
         <div id="cloud-apps-container"></div>
       </section>
 
+
+      <!-- Ransomware Canary Traps Tab -->
+      <section id="tab-ransomware" class="tab-content hidden">
+        <div id="ransomware-container"></div>
+      </section>
+
 </main>
 </div>
 
@@ -831,6 +843,7 @@
   <script src="/js/components/exploitProtectionTable.js"></script>
   <script src="/js/components/uebaTable.js"></script>
   <script src="/js/components/cloudAppDiscoveryTable.js"></script>
+  <script src="/js/components/ransomwareCanaryTable.js"></script>
 <script src="/js/components/identityThreatTable.js"></script>
 <script src="/js/components/vulnerabilityManagementTable.js"></script>
 <script src="/js/components/threatIntelTable.js"></script>

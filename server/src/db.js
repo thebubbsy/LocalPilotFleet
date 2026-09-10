@@ -3602,6 +3602,64 @@ export function initDb(dbOrPath, options = {}) {
 
     CREATE INDEX IF NOT EXISTS idx_caap_action ON cloud_app_access_policies(enforcement_action);
     CREATE INDEX IF NOT EXISTS idx_caap_active ON cloud_app_access_policies(is_active);
+    -- =========================================================================
+    -- ITERATION 62: Automated Ransomware Canary Files & File Integrity Trap Engine
+    -- =========================================================================
+    -- Table 175: ransomware_canary_traps
+    CREATE TABLE IF NOT EXISTS ransomware_canary_traps (
+      id TEXT PRIMARY KEY,
+      filename TEXT NOT NULL,
+      directory_path TEXT NOT NULL,
+      original_sha256 TEXT NOT NULL,
+      original_size_bytes INTEGER NOT NULL DEFAULT 4096,
+      baseline_entropy REAL NOT NULL DEFAULT 4.2,
+      status TEXT NOT NULL DEFAULT 'HEALTHY' CHECK(status IN ('HEALTHY', 'TAMPERED', 'ENCRYPTED', 'DELETED', 'OFFLINE')),
+      last_verified_at TEXT DEFAULT (DATETIME('now')),
+      created_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_rct_status ON ransomware_canary_traps(status);
+    CREATE INDEX IF NOT EXISTS idx_rct_dir ON ransomware_canary_traps(directory_path);
+
+    -- Table 176: ransomware_tamper_detections
+    CREATE TABLE IF NOT EXISTS ransomware_tamper_detections (
+      id TEXT PRIMARY KEY,
+      trap_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      hostname TEXT NOT NULL,
+      tamper_type TEXT NOT NULL CHECK(tamper_type IN ('FILE_RENAME', 'EXTENSION_CHANGE', 'ENTROPY_SPIKE', 'FILE_DELETION', 'CONTENT_CORRUPTION')),
+      detected_extension TEXT,
+      process_id INTEGER NOT NULL DEFAULT 0,
+      process_name TEXT DEFAULT 'unknown.exe',
+      process_command_line TEXT,
+      containment_action TEXT NOT NULL DEFAULT 'NONE' CHECK(containment_action IN ('NONE', 'KILL_PROCESS', 'ISOLATE_HOST', 'QUARANTINE_BINARY', 'AUTO_RESTORED')),
+      severity TEXT NOT NULL DEFAULT 'CRITICAL' CHECK(severity IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+      detected_at TEXT DEFAULT (DATETIME('now')),
+      forensic_details_json TEXT NOT NULL DEFAULT '{}',
+      FOREIGN KEY(trap_id) REFERENCES ransomware_canary_traps(id) ON DELETE CASCADE,
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_rtd_device ON ransomware_tamper_detections(device_id);
+    CREATE INDEX IF NOT EXISTS idx_rtd_trap ON ransomware_tamper_detections(trap_id);
+    CREATE INDEX IF NOT EXISTS idx_rtd_action ON ransomware_tamper_detections(containment_action);
+
+    -- Table 177: ransomware_containment_policies
+    CREATE TABLE IF NOT EXISTS ransomware_containment_policies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      target_scope TEXT NOT NULL DEFAULT 'ALL_FLEET' CHECK(target_scope IN ('ALL_FLEET', 'DYNAMIC_GROUP', 'DEVICE')),
+      target_id TEXT,
+      auto_kill_process INTEGER NOT NULL DEFAULT 1 CHECK(auto_kill_process IN (0, 1)),
+      auto_isolate_network INTEGER NOT NULL DEFAULT 1 CHECK(auto_isolate_network IN (0, 1)),
+      auto_restore_canary INTEGER NOT NULL DEFAULT 1 CHECK(auto_restore_canary IN (0, 1)),
+      entropy_threshold REAL NOT NULL DEFAULT 7.8,
+      is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_rcp_active ON ransomware_containment_policies(is_active);
+
 
 
 
@@ -8626,6 +8684,92 @@ exit 0`,
       1
     );
   }
+
+  // Iteration 62: Automated Ransomware Canary Files & File Integrity Trap Seeds
+  const rctCount = db.prepare('SELECT COUNT(*) as count FROM ransomware_canary_traps').get().count;
+  if (rctCount === 0) {
+    const devTarget = db.prepare('SELECT id, hostname FROM devices LIMIT 1').get() || { id: 'dev-01', hostname: 'DESKTOP-CORP-01' };
+
+    const insertRct = db.prepare(`
+      INSERT OR IGNORE INTO ransomware_canary_traps (
+        id, filename, directory_path, original_sha256, original_size_bytes, baseline_entropy, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertRct.run(
+      'rct-01',
+      'Quarterly_Financial_Statement_2026.xlsx',
+      'C:\\Users\\Public\\Documents',
+      'a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef0123456789abcdef0',
+      8192,
+      4.15,
+      'HEALTHY'
+    );
+
+    insertRct.run(
+      'rct-02',
+      'Executive_Board_Minutes_Confidential.pdf',
+      'C:\\SharedDocs\\Board',
+      'f0e1d2c3b4a5968778695a4b3c2d1e0f0123456789abcdef0123456789abcdef',
+      12480,
+      4.32,
+      'HEALTHY'
+    );
+
+    insertRct.run(
+      'rct-03',
+      'Customer_Vault_Keys_Backup.docx',
+      'C:\\Users\\Tony\\Desktop',
+      'b8c7d6e5f4a3928170615243342516070123456789abcdef0123456789abcdef',
+      6144,
+      3.89,
+      'HEALTHY'
+    );
+
+    const insertRtd = db.prepare(`
+      INSERT OR IGNORE INTO ransomware_tamper_detections (
+        id, trap_id, device_id, hostname, tamper_type, detected_extension,
+        process_id, process_name, process_command_line, containment_action, severity, forensic_details_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertRtd.run(
+      'rtd-01',
+      'rct-01',
+      devTarget.id,
+      devTarget.hostname,
+      'EXTENSION_CHANGE',
+      '.lockbit',
+      4892,
+      'vssadmin_bypass.exe',
+      'vssadmin_bypass.exe -encrypt C:\\Users\\Public\\Documents',
+      'KILL_PROCESS',
+      'CRITICAL',
+      JSON.stringify({
+        entropy_observed: 7.94,
+        tamper_speed_ms: 45,
+        parent_process: 'cmd.exe'
+      })
+    );
+
+    const insertRcp = db.prepare(`
+      INSERT OR IGNORE INTO ransomware_containment_policies (
+        id, name, target_scope, auto_kill_process, auto_isolate_network, auto_restore_canary, entropy_threshold, is_active
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertRcp.run(
+      'rcp-01',
+      'Zero-Tolerance Automated Ransomware Lockdown',
+      'ALL_FLEET',
+      1,
+      1,
+      1,
+      7.8,
+      1
+    );
+  }
+
 
 
 

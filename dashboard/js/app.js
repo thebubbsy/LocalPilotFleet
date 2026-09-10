@@ -253,6 +253,11 @@ const App = {
           window.CloudAppDiscoveryTable.render();
         }
         break;
+      case 'ransomware':
+        if (window.RansomwareCanaryTable && typeof window.RansomwareCanaryTable.render === 'function') {
+          window.RansomwareCanaryTable.render();
+        }
+        break;
       case 'itdr':
         if (window.IdentityThreatTable) window.IdentityThreatTable.render();
         break;
