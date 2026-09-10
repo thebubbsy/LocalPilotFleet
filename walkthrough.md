@@ -1923,3 +1923,41 @@ Implements **Microsoft Intune Windows Update for Business (WUfB) Feature Update 
 
 
 
+
+
+## Iteration 48: Web Content Filtering, Network Protection & SmartScreen Telemetry Engine
+
+### Overview
+Iteration 48 delivers a complete enterprise Web Content Filtering (WCF) and Network Protection system equivalent to Microsoft Defender for Endpoint Web Protection and Microsoft Defender SmartScreen. It provides category-based web filtering (Adult, High Liability, Legal Liability, Bandwidth Loss, Unrated), granular URL/FQDN/IP custom indicators (Allow, Warn, Block, Redirect), real-time interception telemetry, and automated alert dispatch for phishing attempts.
+
+### Key Deliverables & Database Schema
+1. **Database Schema (Tables 133-135 in SQLite):**
+   - `web_content_filtering_policies` (Table 133): Configures web filtering profiles with SmartScreen modes (`BLOCK`, `WARN`, `DISABLED`), Network Protection modes (`BLOCK`, `AUDIT`, `DISABLED`), and category baselines.
+   - `web_indicator_rules` (Table 134): URL, Domain, FQDN, and IPv4 IoC indicators with action overrides (`ALLOW`, `WARN`, `BLOCK`, `REDIRECT_PORTAL`) and expiration controls.
+   - `web_protection_audit_events` (Table 135): Real-time web interception event logs tracking target URLs, categories, processes, and user bypass attempts.
+2. **Backend Engine (`server/src/services/webProtectionEngine.js`):**
+   - 12 static methods for stats calculation, policy management, custom indicator resolution, event auditing, and automated CRITICAL security alert dispatch on phishing detection.
+   - PowerShell Defender Web Protection configuration script generator (`Set-MpPreference -EnableNetworkProtection`).
+3. **REST Endpoints (489-500 in `fleet.js` & `nodes.js`):**
+   - `GET /api/v1/fleet/web-protection/stats`
+   - `GET /api/v1/fleet/web-protection/policies`
+   - `POST /api/v1/fleet/web-protection/policies`
+   - `GET /api/v1/fleet/web-protection/policies/:id`
+   - `PATCH /api/v1/fleet/web-protection/policies/:id`
+   - `DELETE /api/v1/fleet/web-protection/policies/:id`
+   - `GET /api/v1/fleet/web-protection/indicators`
+   - `POST /api/v1/fleet/web-protection/indicators`
+   - `DELETE /api/v1/fleet/web-protection/indicators/:id`
+   - `GET /api/v1/fleet/web-protection/events`
+   - `POST /api/v1/fleet/web-protection/events`
+   - `GET /api/v1/fleet/web-protection/script/:deviceId`
+   - `POST /api/v1/nodes/:id/web-protection/events`
+4. **Dashboard Blade (`dashboard/js/components/webProtectionTable.js`):**
+   - KPI metrics cards for Total Intercepts, Blocked Connections, Phishing Stops, and Active Policies.
+   - Category filtering policy manager with PowerShell script preview modal and action triggers.
+   - Custom indicator IoC manager with type badges and quick deletion.
+   - Real-time audit telemetry log table with live search and filtering.
+5. **Quality Gate Verification:**
+   - 20/20 unit tests passed in `server/tests/web_protection.test.js`.
+   - 1,033/1,033 tests passed across 134 test suites in `npm test`.
+   - Git Commit: `6a901c2` pushed to `origin main` and mirrored to OneDrive.
