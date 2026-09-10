@@ -1,3 +1,4 @@
+import { IncidentCorrelationEngine } from '../services/incidentCorrelationEngine.js';
 import { LiveResponseEngine } from '../services/liveResponseEngine.js';
 import { NetworkIsolationEngine } from '../services/networkIsolationEngine.js';
 import { TamperProtectionEngine } from '../services/tamperProtectionEngine.js';
@@ -8618,6 +8619,170 @@ try {
       res.end(script);
     } catch (err) {
       sendJson(res, 404, { error: "SCRIPT_NOT_FOUND", message: err.message });
+    }
+  });
+
+  // 553. GET /api/v1/fleet/incidents/stats
+  router.get('/api/v1/fleet/incidents/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = IncidentCorrelationEngine.getIncidentStats(getDb());
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: "INCIDENT_STATS_ERROR", message: err.message });
+    }
+  });
+
+  // 554. GET /api/v1/fleet/incidents
+  router.get('/api/v1/fleet/incidents', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const incidents = IncidentCorrelationEngine.getIncidents(getDb(), req.query || {});
+      sendJson(res, 200, { incidents, count: incidents.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "INCIDENTS_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 555. POST /api/v1/fleet/incidents
+  router.post('/api/v1/fleet/incidents', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.title || (!req.body?.primary_device_id && !req.body?.primaryDeviceId)) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "title and primary_device_id are required" });
+        return;
+      }
+      const incident = IncidentCorrelationEngine.createIncident(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, incident });
+    } catch (err) {
+      sendJson(res, 400, { error: "INCIDENT_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 556. GET /api/v1/fleet/incidents/:id
+  router.get('/api/v1/fleet/incidents/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const incident = IncidentCorrelationEngine.getIncidentById(getDb(), req.params.id);
+      if (!incident) {
+        sendJson(res, 404, { error: "INCIDENT_NOT_FOUND", message: "Incident not found" });
+        return;
+      }
+      sendJson(res, 200, incident);
+    } catch (err) {
+      sendJson(res, 500, { error: "INCIDENT_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 557. PATCH /api/v1/fleet/incidents/:id
+  router.patch('/api/v1/fleet/incidents/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const updated = IncidentCorrelationEngine.updateIncident(getDb(), req.params.id, req.body || {});
+      if (!updated) {
+        sendJson(res, 404, { error: "INCIDENT_NOT_FOUND", message: "Incident not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, incident: updated });
+    } catch (err) {
+      sendJson(res, 400, { error: "INCIDENT_UPDATE_ERROR", message: err.message });
+    }
+  });
+
+  // 558. POST /api/v1/fleet/incidents/:id/close
+  router.post('/api/v1/fleet/incidents/:id/close', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const closed = IncidentCorrelationEngine.closeIncident(getDb(), req.params.id, req.body || {});
+      sendJson(res, 200, { success: true, incident: closed });
+    } catch (err) {
+      sendJson(res, 400, { error: "INCIDENT_CLOSE_ERROR", message: err.message });
+    }
+  });
+
+  // 559. GET /api/v1/fleet/incidents/:id/alerts
+  router.get('/api/v1/fleet/incidents/:id/alerts', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const alerts = IncidentCorrelationEngine.getIncidentAlerts(getDb(), req.params.id);
+      sendJson(res, 200, { incident_id: req.params.id, alerts, count: alerts.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "ALERTS_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 560. POST /api/v1/fleet/incidents/:id/alerts
+  router.post('/api/v1/fleet/incidents/:id/alerts', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.alert_source || !req.body?.alert_id || !req.body?.alert_summary) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "alert_source, alert_id, and alert_summary are required" });
+        return;
+      }
+      const assoc = IncidentCorrelationEngine.associateAlert(getDb(), req.params.id, {
+        alertSource: req.body.alert_source,
+        alertId: req.body.alert_id,
+        alertSummary: req.body.alert_summary
+      });
+      sendJson(res, 201, { success: true, association: assoc });
+    } catch (err) {
+      sendJson(res, 400, { error: "ALERT_ASSOCIATE_ERROR", message: err.message });
+    }
+  });
+
+  // 561. GET /api/v1/fleet/incidents/:id/timeline
+  router.get('/api/v1/fleet/incidents/:id/timeline', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const timeline = IncidentCorrelationEngine.getIncidentTimeline(getDb(), req.params.id);
+      sendJson(res, 200, { incident_id: req.params.id, timeline, count: timeline.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "TIMELINE_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 562. POST /api/v1/fleet/incidents/:id/timeline
+  router.post('/api/v1/fleet/incidents/:id/timeline', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.phase_name || !req.body?.milestone_title) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "phase_name and milestone_title are required" });
+        return;
+      }
+      const milestone = IncidentCorrelationEngine.addMilestone(getDb(), {
+        incidentId: req.params.id,
+        phaseName: req.body.phase_name,
+        milestoneTitle: req.body.milestone_title,
+        details: req.body.details,
+        evidenceArtifact: req.body.evidence_artifact,
+        mitreTechniqueId: req.body.mitre_technique_id,
+        occurredAt: req.body.occurred_at
+      });
+      sendJson(res, 201, { success: true, milestone });
+    } catch (err) {
+      sendJson(res, 400, { error: "MILESTONE_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 563. GET /api/v1/fleet/incidents/:id/storyline
+  router.get('/api/v1/fleet/incidents/:id/storyline', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const storyline = IncidentCorrelationEngine.generateAttackStorylineJson(getDb(), req.params.id);
+      sendJson(res, 200, { incident_id: req.params.id, storyline, nodes: storyline.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "STORYLINE_GEN_ERROR", message: err.message });
+    }
+  });
+
+  // 564. POST /api/v1/fleet/incidents/correlate/:deviceId
+  router.post('/api/v1/fleet/incidents/correlate/:deviceId', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const result = IncidentCorrelationEngine.correlateAlerts(getDb(), req.params.deviceId);
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 400, { error: "CORRELATION_ERROR", message: err.message });
     }
   });
 }

@@ -1,3 +1,4 @@
+import { IncidentCorrelationEngine } from '../services/incidentCorrelationEngine.js';
 import { LiveResponseEngine } from '../services/liveResponseEngine.js';
 import { NetworkIsolationEngine } from '../services/networkIsolationEngine.js';
 import { TamperProtectionEngine } from '../services/tamperProtectionEngine.js';
@@ -2417,6 +2418,28 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { success: true, command });
     } catch (err) {
       sendJson(res, 400, { error: "NODE_COMMAND_RESULT_ERROR", message: err.message });
+    }
+  });
+
+  // 565. GET /api/v1/nodes/:id/incidents — Retrieve incidents linked to this node
+  router.get('/api/v1/nodes/:id/incidents', (req, res) => {
+    const { id } = req.params;
+    try {
+      const incidents = IncidentCorrelationEngine.getIncidents(getDb(), { primary_device_id: id });
+      sendJson(res, 200, { device_id: id, incidents, count: incidents.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "NODE_INCIDENTS_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 566. POST /api/v1/nodes/:id/incidents/trigger-correlation — Node agent triggers incident correlation sweep
+  router.post('/api/v1/nodes/:id/incidents/trigger-correlation', (req, res) => {
+    const { id } = req.params;
+    try {
+      const result = IncidentCorrelationEngine.correlateAlerts(getDb(), id);
+      sendJson(res, 200, { success: true, result });
+    } catch (err) {
+      sendJson(res, 400, { error: "NODE_CORRELATION_TRIGGER_ERROR", message: err.message });
     }
   });
 }

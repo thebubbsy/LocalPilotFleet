@@ -3059,6 +3059,61 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_qfi_device ON quarantined_files_inventory(device_id);
     CREATE INDEX IF NOT EXISTS idx_qfi_hash ON quarantined_files_inventory(sha256_hash);
     CREATE INDEX IF NOT EXISTS idx_qfi_status ON quarantined_files_inventory(status);
+  
+    -- 148. INCIDENT_INVESTIGATION_CASES — EDR Incident Correlation & Attack Storylines (Iteration 53)
+    CREATE TABLE IF NOT EXISTS incident_investigation_cases (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      description TEXT,
+      severity TEXT NOT NULL DEFAULT 'MEDIUM' CHECK(severity IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+      status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE', 'UNDER_INVESTIGATION', 'CONTAINED', 'RESOLVED', 'FALSE_POSITIVE')),
+      classification TEXT DEFAULT 'UNCLASSIFIED' CHECK(classification IN ('UNCLASSIFIED', 'TRUE_POSITIVE', 'FALSE_POSITIVE', 'BENIGN_POSITIVE')),
+      risk_score INTEGER NOT NULL DEFAULT 50 CHECK(risk_score >= 0 AND risk_score <= 100),
+      primary_device_id TEXT NOT NULL,
+      primary_hostname TEXT NOT NULL,
+      assigned_analyst TEXT NOT NULL DEFAULT 'Unassigned',
+      root_cause TEXT,
+      attack_storyline_json TEXT,
+      mitre_tactics_json TEXT,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      resolved_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_iic_status ON incident_investigation_cases(status);
+    CREATE INDEX IF NOT EXISTS idx_iic_severity ON incident_investigation_cases(severity);
+    CREATE INDEX IF NOT EXISTS idx_iic_device ON incident_investigation_cases(primary_device_id);
+
+    -- 149. INCIDENT_ALERT_ASSOCIATIONS — Multi-Module Alert Aggregation Mapping (Iteration 53)
+    CREATE TABLE IF NOT EXISTS incident_alert_associations (
+      id TEXT PRIMARY KEY,
+      incident_id TEXT NOT NULL,
+      alert_source TEXT NOT NULL CHECK(alert_source IN ('SECURITY_EVENTS', 'TAMPER_AUDIT', 'ISOLATION_LOGS', 'QUARANTINE_INVENTORY', 'WEB_PROTECTION', 'USB_CONTROL', 'CUSTOM_DETECTION')),
+      alert_id TEXT NOT NULL,
+      alert_summary TEXT NOT NULL,
+      associated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(incident_id) REFERENCES incident_investigation_cases(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_iaa_incident ON incident_alert_associations(incident_id);
+    CREATE INDEX IF NOT EXISTS idx_iaa_alert ON incident_alert_associations(alert_source, alert_id);
+
+    -- 150. INCIDENT_TIMELINE_MILESTONES — Chronological Kill-Chain Attack Milestones (Iteration 53)
+    CREATE TABLE IF NOT EXISTS incident_timeline_milestones (
+      id TEXT PRIMARY KEY,
+      incident_id TEXT NOT NULL,
+      phase_name TEXT NOT NULL CHECK(phase_name IN ('INITIAL_ACCESS', 'EXECUTION', 'PERSISTENCE', 'PRIVILEGE_ESCALATION', 'DEFENSE_EVASION', 'CREDENTIAL_ACCESS', 'DISCOVERY', 'LATERAL_MOVEMENT', 'COLLECTION', 'COMMAND_AND_CONTROL', 'EXFILTRATION', 'IMPACT', 'REMEDIATION')),
+      milestone_title TEXT NOT NULL,
+      details TEXT,
+      evidence_artifact TEXT,
+      mitre_technique_id TEXT,
+      occurred_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(incident_id) REFERENCES incident_investigation_cases(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_itm_incident ON incident_timeline_milestones(incident_id);
+    CREATE INDEX IF NOT EXISTS idx_itm_phase ON incident_timeline_milestones(phase_name);
+    CREATE INDEX IF NOT EXISTS idx_itm_time ON incident_timeline_milestones(occurred_at ASC);
   `);
 
   // Schema migrations for existing databases
@@ -7237,6 +7292,71 @@ exit 0`,
     }
 
   }
+
+  // 53. Seed EDR Incident Correlation & Attack Storylines (Iteration 53)
+  const incidentCount = db.prepare('SELECT COUNT(*) as count FROM incident_investigation_cases').get().count;
+  if (incidentCount === 0) {
+    const devTarget = db.prepare("SELECT id, hostname FROM devices WHERE hostname = 'DESKTOP-R0H12DJ' LIMIT 1").get()
+      || db.prepare("SELECT id, hostname FROM devices LIMIT 1").get();
+
+    if (devTarget) {
+      const insertInc = db.prepare(`
+        INSERT OR IGNORE INTO incident_investigation_cases (
+          id, title, description, severity, status, classification,
+          risk_score, primary_device_id, primary_hostname, assigned_analyst,
+          root_cause, attack_storyline_json, mitre_tactics_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', '-45 minutes'), DATETIME('now', '-5 minutes'))
+      `);
+
+      const storyline = JSON.stringify([
+        { id: "node-1", phase: "INITIAL_ACCESS", title: "Phishing attachment delivered", detail: "invoice_oct_macro.xlsm opened in Excel" },
+        { id: "node-2", phase: "EXECUTION", title: "VBA macro spawned PowerShell", detail: "powershell.exe -enc <base64 payload>" },
+        { id: "node-3", phase: "DEFENSE_EVASION", title: "Tamper Protection tripped", detail: "Set-MpPreference -DisableRealtimeMonitoring attempt blocked" },
+        { id: "node-4", phase: "REMEDIATION", title: "Host Network Isolation Engaged", detail: "WFP containment rule active" }
+      ]);
+
+      const tactics = JSON.stringify(["Initial Access", "Execution", "Defense Evasion", "Command and Control"]);
+
+      insertInc.run(
+        'inc-2026-001',
+        'Multi-Stage Macro Execution & Lateral Movement Attempt',
+        'Malicious Excel macro downloaded staging dropper, attempted AV tamper bypass, triggered host isolation.',
+        'HIGH',
+        'ACTIVE',
+        'TRUE_POSITIVE',
+        88,
+        devTarget.id,
+        devTarget.hostname,
+        'Lead SOC Analyst Sarah',
+        'Phishing email containing weaponized spreadsheet invoice_oct_macro.xlsm',
+        storyline,
+        tactics
+      );
+
+      const insertIaa = db.prepare(`
+        INSERT OR IGNORE INTO incident_alert_associations (
+          id, incident_id, alert_source, alert_id, alert_summary, associated_at
+        ) VALUES (?, ?, ?, ?, ?, DATETIME('now', '-40 minutes'))
+      `);
+
+      insertIaa.run('iaa-01', 'inc-2026-001', 'QUARANTINE_INVENTORY', 'qfi-02', 'TrojanDownloader:O97M/Donoff macro quarantined');
+      insertIaa.run('iaa-02', 'inc-2026-001', 'TAMPER_AUDIT', 'tae-01', 'Unauthorized PowerShell registry disable attempt intercepted');
+      insertIaa.run('iaa-03', 'inc-2026-001', 'ISOLATION_LOGS', 'ial-01', 'Host network quarantine engaged by automated playbook');
+
+      const insertItm = db.prepare(`
+        INSERT OR IGNORE INTO incident_timeline_milestones (
+          id, incident_id, phase_name, milestone_title, details, evidence_artifact, mitre_technique_id, occurred_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, DATETIME('now', '-42 minutes'))
+      `);
+
+      insertItm.run('itm-01', 'inc-2026-001', 'INITIAL_ACCESS', 'Weaponized spreadsheet opened', 'User opened invoice_oct_macro.xlsm from Outlook', 'invoice_oct_macro.xlsm', 'T1566.001');
+      insertItm.run('itm-02', 'inc-2026-001', 'EXECUTION', 'PowerShell payload executed', 'VBA shell command executed hidden PowerShell script', 'powershell.exe -enc ...', 'T1059.001');
+      insertItm.run('itm-03', 'inc-2026-001', 'DEFENSE_EVASION', 'Defender RTP tampering attempted', 'Attempted to stop WinDefend service and disable RTP', 'Set-MpPreference -DisableRealtimeMonitoring', 'T1562.001');
+      insertItm.run('itm-04', 'inc-2026-001', 'REMEDIATION', 'Automated Containment & Isolation', 'Endpoint contained via WFP firewall isolation rule', 'WFP_CONTAIN_ALL', 'T1036');
+    }
+  }
+
+
 
 }
 
