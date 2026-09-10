@@ -1,3 +1,4 @@
+import { incidentResponseEngine, IncidentResponseEngine } from '../services/incidentResponseEngine.js';
 import { contentDistributionEngine } from '../services/contentDistributionEngine.js';
 import { VaultSecretsEngine } from '../services/vaultSecretsEngine.js';
 import { LiveQueryEngine } from '../services/liveQueryEngine.js';
@@ -2247,7 +2248,27 @@ export function registerNodeRoutes(router) {
       sendJson(res, 500, { error: 'P2P_PEERS_ERROR', message: err.message });
     }
   });
-
+  // POST /api/v1/nodes/:id/ir/triage-upload — Agent uploads completed triage package
+  router.post('/api/v1/nodes/:id/ir/triage-upload', (req, res) => {
+    const { id } = req.params;
+    try {
+      const engine = new IncidentResponseEngine(getDb());
+      const { package_id, file_path, file_size_bytes, sha256_hash, execution_time_ms } = req.body || {};
+      if (!package_id) {
+        sendJson(res, 400, { error: 'PACKAGE_ID_REQUIRED', message: 'package_id is required' });
+        return;
+      }
+      const updated = engine.ingestTriagePackage(package_id, {
+        file_path,
+        file_size_bytes,
+        sha256_hash,
+        execution_time_ms
+      });
+      sendJson(res, 200, { success: true, package: updated });
+    } catch (err) {
+      sendJson(res, 500, { error: 'TRIAGE_INGEST_ERROR', message: err.message });
+    }
+  });
 }
 
 export default registerNodeRoutes;

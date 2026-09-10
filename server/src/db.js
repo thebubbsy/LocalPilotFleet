@@ -2510,11 +2510,62 @@ export function initDb(dbOrPath, options = {}) {
 
     CREATE INDEX IF NOT EXISTS idx_lqe_cat ON live_query_entities(category);
 
+    -- 121. INCIDENT_RESPONSE_PLAYBOOKS — Automated IR Containment & Triage Playbooks
+    CREATE TABLE IF NOT EXISTS incident_response_playbooks (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      trigger_event_type TEXT NOT NULL CHECK(trigger_event_type IN ('RANSOMWARE_SUSPECT', 'ROGUE_ADMIN', 'MALWARE_DETECTED', 'BRUTE_FORCE_LOGIN', 'TAMPER_DETECTED', 'PROCESS_INJECTION', 'ALL_CRITICAL')),
+      actions_json TEXT NOT NULL DEFAULT '["ISOLATE_NETWORK", "COLLECT_TRIAGE"]',
+      target_scope TEXT NOT NULL DEFAULT 'ALL_FLEET' CHECK(target_scope IN ('ALL_FLEET', 'DYNAMIC_GROUP', 'ORGANIZATION')),
+      target_id TEXT,
+      require_dual_custody INTEGER NOT NULL DEFAULT 0 CHECK(require_dual_custody IN (0, 1)),
+      is_enabled INTEGER NOT NULL DEFAULT 1 CHECK(is_enabled IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
 
+    CREATE INDEX IF NOT EXISTS idx_irp_trigger ON incident_response_playbooks(trigger_event_type);
+    CREATE INDEX IF NOT EXISTS idx_irp_enabled ON incident_response_playbooks(is_enabled);
 
+    -- 122. HOST_CONTAINMENT_STATES — Network Isolation & Quarantine Ledger
+    CREATE TABLE IF NOT EXISTS host_containment_states (
+      device_id TEXT PRIMARY KEY,
+      containment_status TEXT NOT NULL DEFAULT 'UNCONTAINED' CHECK(containment_status IN ('UNCONTAINED', 'CONTAINED', 'RELEASE_PENDING')),
+      isolation_type TEXT NOT NULL DEFAULT 'ALLOW_FLEET_MANAGEMENT_ONLY' CHECK(isolation_type IN ('ALLOW_FLEET_MANAGEMENT_ONLY', 'TOTAL_AIR_GAP')),
+      isolated_at TEXT,
+      isolated_by TEXT,
+      reason TEXT,
+      playbook_id TEXT,
+      firewall_rule_name TEXT DEFAULT 'LocalPilot-Isolation-Block-All',
+      updated_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(playbook_id) REFERENCES incident_response_playbooks(id) ON DELETE SET NULL
+    );
 
+    CREATE INDEX IF NOT EXISTS idx_hcs_status ON host_containment_states(containment_status);
 
+    -- 123. FORENSIC_TRIAGE_PACKAGES — Forensic Artifact Acquisitions & Memory Snapshots
+    CREATE TABLE IF NOT EXISTS forensic_triage_packages (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      hostname TEXT NOT NULL,
+      package_name TEXT NOT NULL,
+      trigger_source TEXT NOT NULL DEFAULT 'MANUAL_ADMIN' CHECK(trigger_source IN ('MANUAL_ADMIN', 'PLAYBOOK_AUTOMATION', 'SECURITY_EVENT')),
+      trigger_event_id INTEGER,
+      status TEXT NOT NULL DEFAULT 'QUEUED' CHECK(status IN ('QUEUED', 'COLLECTING', 'COMPLETED', 'FAILED')),
+      file_path TEXT,
+      file_size_bytes INTEGER NOT NULL DEFAULT 0,
+      sha256_hash TEXT,
+      artifacts_collected_json TEXT NOT NULL DEFAULT '["ProcessTree", "NetworkConnections", "Prefetch", "EventLogs"]',
+      execution_time_ms INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      completed_at TEXT,
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
 
+    CREATE INDEX IF NOT EXISTS idx_ftp_device ON forensic_triage_packages(device_id);
+    CREATE INDEX IF NOT EXISTS idx_ftp_status ON forensic_triage_packages(status);
   `);
 
   // Schema migrations for existing databases
@@ -5740,4 +5791,78 @@ exit 0`,
     insertResult.run('qry-default-process-audit', 'DESKTOP-R0H12DJ', 'DESKTOP-R0H12DJ', JSON.stringify({ ProcessName: 'node', Id: 1904, WorkingSetMB: 285.4, CPU: 12.1 }), 420);
   }
 
+  // 44. Seed Automated Incident Response Playbooks & Containment State
+  const playbookCount = db.prepare('SELECT COUNT(*) as count FROM incident_response_playbooks').get().count;
+  if (playbookCount === 0) {
+    const insertPlaybook = db.prepare(`
+      INSERT OR IGNORE INTO incident_response_playbooks (
+        id, name, description, trigger_event_type, actions_json, target_scope, require_dual_custody, is_enabled
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertPlaybook.run(
+      'pb-ransomware-contain',
+      'Automated Ransomware Kill & Network Isolation',
+      'Immediately isolates host via Windows Firewall WFP filter, collects forensic triage, and alerts SOC.',
+      'RANSOMWARE_SUSPECT',
+      JSON.stringify(['ISOLATE_NETWORK', 'KILL_PROCESS_TREE', 'COLLECT_TRIAGE', 'DISPATCH_TOAST']),
+      'ALL_FLEET',
+      0, 1
+    );
+
+    insertPlaybook.run(
+      'pb-rogue-admin-triage',
+      'Unauthorized Local Administrator Escalation Triage',
+      'Gathers live memory artifacts, user logon sessions, and security event logs upon Event 4732 / Event 4720.',
+      'ROGUE_ADMIN',
+      JSON.stringify(['COLLECT_TRIAGE', 'FORWARD_SIEM', 'DISPATCH_TOAST']),
+      'ALL_FLEET',
+      0, 1
+    );
+
+    insertPlaybook.run(
+      'pb-credential-dump-contain',
+      'LSASS Memory Dumper Rapid Response',
+      'Quarantines device and terminates malicious process tree on Mimikatz / ProcDump LSASS handle detection.',
+      'PROCESS_INJECTION',
+      JSON.stringify(['ISOLATE_NETWORK', 'COLLECT_TRIAGE', 'TERMINATE_PROCESS']),
+      'ALL_FLEET',
+      1, 1
+    );
+
+    const sampleDevice = db.prepare("SELECT id, hostname FROM devices WHERE hostname = 'DESKTOP-R0H12DJ' LIMIT 1").get()
+      || db.prepare("SELECT id, hostname FROM devices LIMIT 1").get();
+
+    if (sampleDevice) {
+      // Seed sample containment state
+      const insertState = db.prepare(`
+        INSERT OR IGNORE INTO host_containment_states (
+          device_id, containment_status, isolation_type, isolated_at, isolated_by, reason, firewall_rule_name
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      insertState.run(sampleDevice.id, 'UNCONTAINED', 'ALLOW_FLEET_MANAGEMENT_ONLY', null, null, 'Baseline normal state', 'LocalPilot-Isolation-Block-All');
+
+      // Seed sample completed forensic package
+      const insertPkg = db.prepare(`
+        INSERT OR IGNORE INTO forensic_triage_packages (
+          id, device_id, hostname, package_name, trigger_source, status, file_path, file_size_bytes, sha256_hash, artifacts_collected_json, execution_time_ms, completed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', '-1 hours'))
+      `);
+      insertPkg.run(
+        'pkg-baseline-r0h12dj',
+        sampleDevice.id,
+        sampleDevice.hostname,
+        `Triage_${sampleDevice.hostname}_20260910.zip`,
+        'MANUAL_ADMIN',
+        'COMPLETED',
+        `server/data/triage/Triage_${sampleDevice.hostname}_20260910.zip`,
+        2457600,
+        'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+        JSON.stringify(['ProcessTree', 'NetworkConnections', 'Prefetch', 'EventLogs', 'LoadedModules']),
+        850
+      );
+    }
+  }
+
 }
+

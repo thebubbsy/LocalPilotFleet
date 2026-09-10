@@ -209,6 +209,9 @@ const App = {
       case 'live-queries':
         if (window.LiveQueryTable) window.LiveQueryTable.render();
         break;
+      case 'incident-response':
+        if (window.IncidentResponseTable) window.IncidentResponseTable.render();
+        break;
       case 'settings':
         this.renderSettings();
         break;

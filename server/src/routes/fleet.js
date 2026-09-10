@@ -1,3 +1,4 @@
+import { incidentResponseEngine, IncidentResponseEngine } from '../services/incidentResponseEngine.js';
 import { multiTenancyEngine } from '../services/multiTenancyEngine.js';
 import { VaultSecretsEngine } from '../services/vaultSecretsEngine.js';
 import { LiveQueryEngine } from '../services/liveQueryEngine.js';
@@ -7119,6 +7120,177 @@ try {
     }
   });
 
+  // ── INCIDENT RESPONSE & FORENSIC TRIAGE (Endpoints 441–452) ──────────────────
+
+  // 441. GET /api/v1/fleet/ir/stats
+  router.get('/api/v1/fleet/ir/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new IncidentResponseEngine(getDb());
+      sendJson(res, 200, engine.getIncidentResponseStats());
+    } catch (err) {
+      sendJson(res, 500, { error: 'IR_STATS_ERROR', message: err.message });
+    }
+  });
+
+  // 442. GET /api/v1/fleet/ir/playbooks
+  router.get('/api/v1/fleet/ir/playbooks', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new IncidentResponseEngine(getDb());
+      const playbooks = engine.getPlaybooks();
+      sendJson(res, 200, { playbooks, count: playbooks.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'PLAYBOOKS_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 443. POST /api/v1/fleet/ir/playbooks
+  router.post('/api/v1/fleet/ir/playbooks', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new IncidentResponseEngine(getDb());
+      const created = engine.createPlaybook(req.body || {});
+      sendJson(res, 201, created);
+    } catch (err) {
+      sendJson(res, 400, { error: 'PLAYBOOK_CREATE_ERROR', message: err.message });
+    }
+  });
+
+  // 444. GET /api/v1/fleet/ir/playbooks/:id
+  router.get('/api/v1/fleet/ir/playbooks/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new IncidentResponseEngine(getDb());
+      const playbook = engine.getPlaybookById(req.params.id);
+      if (!playbook) {
+        sendJson(res, 404, { error: 'PLAYBOOK_NOT_FOUND', message: 'Playbook not found' });
+        return;
+      }
+      sendJson(res, 200, playbook);
+    } catch (err) {
+      sendJson(res, 500, { error: 'PLAYBOOK_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 445. PATCH /api/v1/fleet/ir/playbooks/:id
+  router.patch('/api/v1/fleet/ir/playbooks/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new IncidentResponseEngine(getDb());
+      const updated = engine.updatePlaybook(req.params.id, req.body || {});
+      if (!updated) {
+        sendJson(res, 404, { error: 'PLAYBOOK_NOT_FOUND', message: 'Playbook not found' });
+        return;
+      }
+      sendJson(res, 200, updated);
+    } catch (err) {
+      sendJson(res, 400, { error: 'PLAYBOOK_UPDATE_ERROR', message: err.message });
+    }
+  });
+
+  // 446. DELETE /api/v1/fleet/ir/playbooks/:id
+  router.delete('/api/v1/fleet/ir/playbooks/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new IncidentResponseEngine(getDb());
+      const deleted = engine.deletePlaybook(req.params.id);
+      if (!deleted) {
+        sendJson(res, 404, { error: 'PLAYBOOK_NOT_FOUND', message: 'Playbook not found' });
+        return;
+      }
+      sendJson(res, 200, { success: true, id: req.params.id });
+    } catch (err) {
+      sendJson(res, 500, { error: 'PLAYBOOK_DELETE_ERROR', message: err.message });
+    }
+  });
+
+  // 447. GET /api/v1/fleet/ir/containment
+  router.get('/api/v1/fleet/ir/containment', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new IncidentResponseEngine(getDb());
+      const states = engine.getAllContainmentStates();
+      sendJson(res, 200, { containment_states: states, count: states.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'CONTAINMENT_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 448. POST /api/v1/fleet/devices/:id/contain
+  router.post('/api/v1/fleet/devices/:id/contain', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new IncidentResponseEngine(getDb());
+      const status = engine.containHost(req.params.id, req.body || {});
+      sendJson(res, 200, { success: true, containment: status });
+    } catch (err) {
+      sendJson(res, 400, { error: 'CONTAIN_HOST_ERROR', message: err.message });
+    }
+  });
+
+  // 449. POST /api/v1/fleet/devices/:id/release
+  router.post('/api/v1/fleet/devices/:id/release', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new IncidentResponseEngine(getDb());
+      const status = engine.releaseHost(req.params.id, req.body || {});
+      sendJson(res, 200, { success: true, containment: status });
+    } catch (err) {
+      sendJson(res, 400, { error: 'RELEASE_HOST_ERROR', message: err.message });
+    }
+  });
+
+  // 450. GET /api/v1/fleet/ir/triage
+  router.get('/api/v1/fleet/ir/triage', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new IncidentResponseEngine(getDb());
+      const packages = engine.getTriagePackages(req.query?.device_id || null);
+      sendJson(res, 200, { packages, count: packages.length });
+    } catch (err) {
+      sendJson(res, 500, { error: 'TRIAGE_FETCH_ERROR', message: err.message });
+    }
+  });
+
+  // 451. POST /api/v1/fleet/devices/:id/triage
+  router.post('/api/v1/fleet/devices/:id/triage', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new IncidentResponseEngine(getDb());
+      const pkg = engine.createTriagePackage({
+        device_id: req.params.id,
+        hostname: req.body?.hostname || req.params.id,
+        trigger_source: req.body?.trigger_source || 'MANUAL_ADMIN',
+        artifacts: req.body?.artifacts
+      });
+      sendJson(res, 202, { success: true, package: pkg });
+    } catch (err) {
+      sendJson(res, 400, { error: 'TRIAGE_DISPATCH_ERROR', message: err.message });
+    }
+  });
+
+  // 452. GET /api/v1/fleet/ir/triage/:id/download
+  router.get('/api/v1/fleet/ir/triage/:id/download', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const engine = new IncidentResponseEngine(getDb());
+      const pkg = engine.getTriagePackageById(req.params.id);
+      if (!pkg) {
+        sendJson(res, 404, { error: 'PACKAGE_NOT_FOUND', message: 'Triage package not found' });
+        return;
+      }
+      res.writeHead(200, {
+        'Content-Type': 'application/zip',
+        'Content-Disposition': 'attachment; filename="' + (pkg.package_name || 'triage.zip') + '"',
+        'X-Triage-Sha256': pkg.sha256_hash || ''
+      });
+      res.end(Buffer.from('PK\x03\x04LocalPilot-Forensic-Triage-Archive-Payload'));
+    } catch (err) {
+      sendJson(res, 500, { error: 'DOWNLOAD_ERROR', message: err.message });
+    }
+  });
 }
 
 export default registerFleetRoutes;
+
