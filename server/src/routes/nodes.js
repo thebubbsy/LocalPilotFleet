@@ -1,3 +1,4 @@
+import { DeclarativeDeviceManagementEngine } from '../services/declarativeDeviceManagementEngine.js';
 import { MobileThreatDefenseEngine } from '../services/mobileThreatDefenseEngine.js';
 import { EnterpriseVpnProfileEngine } from '../services/enterpriseVpnProfileEngine.js';
 import { ScepPkiEnrollmentEngine } from '../services/scepPkiEnrollmentEngine.js';
@@ -3213,10 +3214,97 @@ export function registerNodeRoutes(router) {
         device_id: req.params.id,
         status: 'PENDING'
       });
-      sendJson(res, 200, { success: true, remediations, count: remediations.length });
+      sendJson(res, 200, { success: true, count: remediations.length, remediations });
     } catch (err) {
       sendJson(res, 500, { error: "NODE_MTD_REMEDIATIONS_ERROR", message: err.message });
     }
   });
+
+
+  // =========================================================================
+  // ITERATION 70: Apple Declarative Device Management (DDM) Node Routes (816-820)
+  // =========================================================================
+
+  // 816. PUT /api/v1/nodes/:id/ddm/tokens — RFC Apple DDM /tokens endpoint
+  router.put('/api/v1/nodes/:id/ddm/tokens', (req, res) => {
+    const node = authenticateNode(req, res);
+    if (!node) return;
+
+    try {
+      const tokens = DeclarativeDeviceManagementEngine.getDeviceTokens(getDb(), req.params.id);
+      sendJson(res, 200, tokens);
+    } catch (err) {
+      sendJson(res, 500, { error: "DDM_TOKENS_ERROR", message: err.message });
+    }
+  });
+
+  // 817. GET /api/v1/nodes/:id/ddm/declaration-items — RFC Apple DDM /declaration-items endpoint
+  router.get('/api/v1/nodes/:id/ddm/declaration-items', (req, res) => {
+    const node = authenticateNode(req, res);
+    if (!node) return;
+
+    try {
+      const manifest = DeclarativeDeviceManagementEngine.getDeviceDeclarationItemsManifest(getDb(), req.params.id);
+      sendJson(res, 200, manifest);
+    } catch (err) {
+      sendJson(res, 500, { error: "DDM_DECLARATION_ITEMS_ERROR", message: err.message });
+    }
+  });
+
+  // 818. GET /api/v1/nodes/:id/ddm/declarations/:type/:identifier — RFC Apple DDM payload retrieval
+  router.get('/api/v1/nodes/:id/ddm/declarations/:type/:identifier', (req, res) => {
+    const node = authenticateNode(req, res);
+    if (!node) return;
+
+    try {
+      const dec = DeclarativeDeviceManagementEngine.getDeclaration(getDb(), req.params.identifier);
+      if (!dec) {
+        sendJson(res, 404, { error: "DECLARATION_NOT_FOUND", message: "Requested declaration item not found" });
+        return;
+      }
+      sendJson(res, 200, {
+        Type: dec.declaration_type,
+        Identifier: dec.identifier,
+        ServerToken: dec.server_token,
+        Payload: dec.payload
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: "DDM_GET_DECLARATION_PAYLOAD_ERROR", message: err.message });
+    }
+  });
+
+  // 819. PUT /api/v1/nodes/:id/ddm/status — RFC Apple DDM Status Channel telemetry report
+  router.put('/api/v1/nodes/:id/ddm/status', (req, res) => {
+    const node = authenticateNode(req, res);
+    if (!node) return;
+
+    try {
+      const result = DeclarativeDeviceManagementEngine.ingestStatusReport(getDb(), req.params.id, req.body || {});
+      sendJson(res, 200, { success: true, result });
+    } catch (err) {
+      sendJson(res, 400, { error: "DDM_STATUS_REPORT_ERROR", message: err.message });
+    }
+  });
+
+  // 820. POST /api/v1/nodes/:id/ddm/sync-trigger — Push trigger forcing device DDM re-sync
+  router.post('/api/v1/nodes/:id/ddm/sync-trigger', (req, res) => {
+    const node = authenticateNode(req, res);
+    if (!node) return;
+
+    try {
+      const tokens = DeclarativeDeviceManagementEngine.getDeviceTokens(getDb(), req.params.id);
+      sendJson(res, 200, {
+        success: true,
+        command: 'DeclarativeManagementCheckIn',
+        device_id: req.params.id,
+        sync_tokens: tokens.SyncTokens,
+        dispatched_at: new Date().toISOString()
+      });
+    } catch (err) {
+      sendJson(res, 500, { error: "DDM_SYNC_TRIGGER_ERROR", message: err.message });
+    }
+  });
+
+
 
 }

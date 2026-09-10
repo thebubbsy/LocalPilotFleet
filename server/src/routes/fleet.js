@@ -1,3 +1,4 @@
+import { DeclarativeDeviceManagementEngine } from '../services/declarativeDeviceManagementEngine.js';
 import { MobileThreatDefenseEngine } from '../services/mobileThreatDefenseEngine.js';
 import { EnterpriseVpnProfileEngine } from '../services/enterpriseVpnProfileEngine.js';
 import { ScepPkiEnrollmentEngine } from '../services/scepPkiEnrollmentEngine.js';
@@ -11508,5 +11509,126 @@ try {
       sendJson(res, 500, { error: "MTD_RISK_QUERY_ERROR", message: err.message });
     }
   });
+
+  // =========================================================================
+  // ITERATION 70: Apple Declarative Device Management (DDM) Fleet Routes (806-815)
+  // =========================================================================
+
+  // 806. GET /api/v1/fleet/ddm/stats — Fleet DDM engine overview & telemetry
+  router.get('/api/v1/fleet/ddm/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = DeclarativeDeviceManagementEngine.getDdmStats(getDb());
+      sendJson(res, 200, { success: true, stats });
+    } catch (err) {
+      sendJson(res, 500, { error: "DDM_STATS_ERROR", message: err.message });
+    }
+  });
+
+  // 807. GET /api/v1/fleet/ddm/declarations — Query declaration items
+  router.get('/api/v1/fleet/ddm/declarations', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const declarations = DeclarativeDeviceManagementEngine.getDeclarations(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, count: declarations.length, declarations });
+    } catch (err) {
+      sendJson(res, 500, { error: "DDM_LIST_DECLARATIONS_ERROR", message: err.message });
+    }
+  });
+
+  // 808. POST /api/v1/fleet/ddm/declarations — Create declaration item
+  router.post('/api/v1/fleet/ddm/declarations', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const declaration = DeclarativeDeviceManagementEngine.createDeclaration(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, declaration });
+    } catch (err) {
+      sendJson(res, 400, { error: "DDM_CREATE_DECLARATION_ERROR", message: err.message });
+    }
+  });
+
+  // 809. GET /api/v1/fleet/ddm/declarations/:id — Get single declaration
+  router.get('/api/v1/fleet/ddm/declarations/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const declaration = DeclarativeDeviceManagementEngine.getDeclaration(getDb(), req.params.id);
+      if (!declaration) {
+        sendJson(res, 404, { error: "DECLARATION_NOT_FOUND", message: "Declaration item not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, declaration });
+    } catch (err) {
+      sendJson(res, 500, { error: "DDM_GET_DECLARATION_ERROR", message: err.message });
+    }
+  });
+
+  // 810. DELETE /api/v1/fleet/ddm/declarations/:id — Delete declaration
+  router.delete('/api/v1/fleet/ddm/declarations/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const success = DeclarativeDeviceManagementEngine.deleteDeclaration(getDb(), req.params.id);
+      sendJson(res, 200, { success });
+    } catch (err) {
+      sendJson(res, 500, { error: "DDM_DELETE_DECLARATION_ERROR", message: err.message });
+    }
+  });
+
+  // 811. GET /api/v1/fleet/ddm/manifests — List device assignments
+  router.get('/api/v1/fleet/ddm/manifests', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const manifests = DeclarativeDeviceManagementEngine.getManifests(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, count: manifests.length, manifests });
+    } catch (err) {
+      sendJson(res, 500, { error: "DDM_LIST_MANIFESTS_ERROR", message: err.message });
+    }
+  });
+
+  // 812. POST /api/v1/fleet/ddm/manifests/assign — Assign declaration to device
+  router.post('/api/v1/fleet/ddm/manifests/assign', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const { device_id, declaration_id } = req.body || {};
+      const result = DeclarativeDeviceManagementEngine.assignDeclarationToDevice(getDb(), device_id, declaration_id);
+      sendJson(res, 201, { success: true, manifest: result });
+    } catch (err) {
+      sendJson(res, 400, { error: "DDM_ASSIGN_ERROR", message: err.message });
+    }
+  });
+
+  // 813. DELETE /api/v1/fleet/ddm/manifests/:id — Unassign declaration from device
+  router.delete('/api/v1/fleet/ddm/manifests/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const success = DeclarativeDeviceManagementEngine.unassignDeclaration(getDb(), req.params.id);
+      sendJson(res, 200, { success });
+    } catch (err) {
+      sendJson(res, 500, { error: "DDM_UNASSIGN_ERROR", message: err.message });
+    }
+  });
+
+  // 814. GET /api/v1/fleet/ddm/status-reports — Query status channel reports
+  router.get('/api/v1/fleet/ddm/status-reports', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const reports = DeclarativeDeviceManagementEngine.getStatusReports(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, count: reports.length, reports });
+    } catch (err) {
+      sendJson(res, 500, { error: "DDM_STATUS_REPORTS_ERROR", message: err.message });
+    }
+  });
+
+  // 815. GET /api/v1/fleet/ddm/devices/:id/status — Device consolidated DDM status map
+  router.get('/api/v1/fleet/ddm/devices/:id/status', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const statusMap = DeclarativeDeviceManagementEngine.getDeviceAggregatedStatus(getDb(), req.params.id);
+      sendJson(res, 200, { success: true, device_id: req.params.id, status: statusMap });
+    } catch (err) {
+      sendJson(res, 500, { error: "DDM_DEVICE_STATUS_ERROR", message: err.message });
+    }
+  });
+
+
 
 }

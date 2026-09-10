@@ -294,6 +294,12 @@ const App = {
         window.MobileThreatDefenseTable.render();
       }
       break;
+    case 'ddm':
+      if (window.DeclarativeDeviceManagementTable && typeof window.DeclarativeDeviceManagementTable.render === 'function') {
+        window.DeclarativeDeviceManagementTable.render();
+      }
+      break;
+
 
       case 'itdr':
         if (window.IdentityThreatTable) window.IdentityThreatTable.render();

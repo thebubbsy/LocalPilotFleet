@@ -4087,6 +4087,51 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_mtd_rem_dev ON mtd_remediation_actions(device_id);
     CREATE INDEX IF NOT EXISTS idx_mtd_rem_status ON mtd_remediation_actions(status);
 
+    -- Table 199: ddm_declarations (Apple Declarative Device Management Items)
+    CREATE TABLE IF NOT EXISTS ddm_declarations (
+      id TEXT PRIMARY KEY,
+      declaration_type TEXT NOT NULL CHECK(declaration_type IN ('configuration', 'activation', 'asset', 'management')),
+      identifier TEXT NOT NULL UNIQUE,
+      server_token TEXT NOT NULL,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ddm_dec_type ON ddm_declarations(declaration_type);
+    CREATE INDEX IF NOT EXISTS idx_ddm_dec_ident ON ddm_declarations(identifier);
+
+    -- Table 200: ddm_device_manifests (Per-Device Declaration Sets & Sync State)
+    CREATE TABLE IF NOT EXISTS ddm_device_manifests (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      declaration_id TEXT NOT NULL,
+      sync_status TEXT NOT NULL DEFAULT 'PENDING' CHECK(sync_status IN ('PENDING', 'SYNCHRONIZED', 'FAILED', 'REMOVED')),
+      applied_server_token TEXT,
+      last_synced_at TEXT,
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(declaration_id) REFERENCES ddm_declarations(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ddm_man_dev ON ddm_device_manifests(device_id);
+    CREATE INDEX IF NOT EXISTS idx_ddm_man_dec ON ddm_device_manifests(declaration_id);
+    CREATE INDEX IF NOT EXISTS idx_ddm_man_status ON ddm_device_manifests(sync_status);
+
+    -- Table 201: ddm_status_reports (Autonomous Status Channel Event Ledger)
+    CREATE TABLE IF NOT EXISTS ddm_status_reports (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      status_key TEXT NOT NULL,
+      status_value_json TEXT NOT NULL DEFAULT '{}',
+      received_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ddm_stat_dev ON ddm_status_reports(device_id);
+    CREATE INDEX IF NOT EXISTS idx_ddm_stat_key ON ddm_status_reports(status_key);
+
+
 
 
 
@@ -9710,6 +9755,59 @@ exit 0`,
         policy_name: 'Zero-Tolerance Mobile Threat Defense Compliance'
       })
     );
+
+    // Seed 199-201: Apple Declarative Device Management (Iteration 70)
+    const insertDdmDec = db.prepare(`
+      INSERT OR IGNORE INTO ddm_declarations (
+        id, declaration_type, identifier, server_token, payload_json, is_active
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    insertDdmDec.run(
+      'ddm-dec-01',
+      'configuration',
+      'com.localpilot.declaration.security.passcode',
+      'sha256-tok-01a',
+      JSON.stringify({
+        minimum_length: 8,
+        require_alphanumeric: true,
+        max_failed_attempts: 5,
+        passcode_expiration_days: 90
+      }),
+      1
+    );
+
+    const insertDdmMan = db.prepare(`
+      INSERT OR IGNORE INTO ddm_device_manifests (
+        id, device_id, declaration_id, sync_status, applied_server_token, last_synced_at
+      ) VALUES (?, ?, ?, ?, ?, DATETIME('now', '-10 minutes'))
+    `);
+
+    insertDdmMan.run(
+      'ddm-man-01',
+      devTarget.id,
+      'ddm-dec-01',
+      'SYNCHRONIZED',
+      'sha256-tok-01a'
+    );
+
+    const insertDdmStat = db.prepare(`
+      INSERT OR IGNORE INTO ddm_status_reports (
+        id, device_id, status_key, status_value_json, received_at
+      ) VALUES (?, ?, ?, ?, DATETIME('now', '-5 minutes'))
+    `);
+
+    insertDdmStat.run(
+      'ddm-stat-01',
+      devTarget.id,
+      'device.operating-system.version',
+      JSON.stringify({
+        version: '15.0',
+        build: '24A335',
+        supplemental_version: '15.0.1'
+      })
+    );
+
 
 
   }
