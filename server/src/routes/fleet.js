@@ -1,3 +1,4 @@
+import { NetworkIsolationEngine } from '../services/networkIsolationEngine.js';
 import { TamperProtectionEngine } from '../services/tamperProtectionEngine.js';
 import { PeripheralControlEngine } from '../services/peripheralControlEngine.js';
 import { WebProtectionEngine } from '../services/webProtectionEngine.js';
@@ -8258,6 +8259,191 @@ try {
     if (!requireFleetKey(req, res)) return;
     try {
       const script = TamperProtectionEngine.generateTamperProtectionScript(getDb(), req.params.deviceId);
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end(script);
+    } catch (err) {
+      sendJson(res, 500, { error: "SCRIPT_GEN_ERROR", message: err.message });
+    }
+  });
+
+  // --- Iteration 51: Network Isolation & Host Quarantine Endpoints (525-538) ---
+
+  // 525. GET /api/v1/fleet/network-isolation/stats
+  router.get('/api/v1/fleet/network-isolation/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = NetworkIsolationEngine.getIsolationStats(getDb());
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: "STATS_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 526. GET /api/v1/fleet/network-isolation/policies
+  router.get('/api/v1/fleet/network-isolation/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policies = NetworkIsolationEngine.getPolicies(getDb());
+      sendJson(res, 200, policies);
+    } catch (err) {
+      sendJson(res, 500, { error: "POLICIES_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 527. POST /api/v1/fleet/network-isolation/policies
+  router.post('/api/v1/fleet/network-isolation/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.name) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "Policy name is required" });
+        return;
+      }
+      const policy = NetworkIsolationEngine.createPolicy(getDb(), req.body);
+      sendJson(res, 201, { success: true, policy });
+    } catch (err) {
+      sendJson(res, 400, { error: "POLICY_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 528. GET /api/v1/fleet/network-isolation/policies/:id
+  router.get('/api/v1/fleet/network-isolation/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policy = NetworkIsolationEngine.getPolicyById(getDb(), req.params.id);
+      if (!policy) {
+        sendJson(res, 404, { error: "POLICY_NOT_FOUND", message: "Policy not found" });
+        return;
+      }
+      sendJson(res, 200, policy);
+    } catch (err) {
+      sendJson(res, 500, { error: "POLICY_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 529. PATCH /api/v1/fleet/network-isolation/policies/:id
+  router.patch('/api/v1/fleet/network-isolation/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const updated = NetworkIsolationEngine.updatePolicy(getDb(), req.params.id, req.body || {});
+      if (!updated) {
+        sendJson(res, 404, { error: "POLICY_NOT_FOUND", message: "Policy not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, policy: updated });
+    } catch (err) {
+      sendJson(res, 400, { error: "POLICY_UPDATE_ERROR", message: err.message });
+    }
+  });
+
+  // 530. DELETE /api/v1/fleet/network-isolation/policies/:id
+  router.delete('/api/v1/fleet/network-isolation/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const ok = NetworkIsolationEngine.deletePolicy(getDb(), req.params.id);
+      if (!ok) {
+        sendJson(res, 404, { error: "POLICY_NOT_FOUND", message: "Policy not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, message: "Policy deleted" });
+    } catch (err) {
+      sendJson(res, 500, { error: "POLICY_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 531. GET /api/v1/fleet/network-isolation/exclusions
+  router.get('/api/v1/fleet/network-isolation/exclusions', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const exclusions = NetworkIsolationEngine.getExclusions(getDb(), req.query?.policy_id);
+      sendJson(res, 200, exclusions);
+    } catch (err) {
+      sendJson(res, 500, { error: "EXCLUSIONS_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 532. POST /api/v1/fleet/network-isolation/exclusions
+  router.post('/api/v1/fleet/network-isolation/exclusions', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.friendly_name || !req.body?.endpoint_value) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "friendly_name and endpoint_value are required" });
+        return;
+      }
+      const exclusion = NetworkIsolationEngine.createExclusion(getDb(), req.body);
+      sendJson(res, 201, { success: true, exclusion });
+    } catch (err) {
+      sendJson(res, 400, { error: "EXCLUSION_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 533. DELETE /api/v1/fleet/network-isolation/exclusions/:id
+  router.delete('/api/v1/fleet/network-isolation/exclusions/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const ok = NetworkIsolationEngine.deleteExclusion(getDb(), req.params.id);
+      if (!ok) {
+        sendJson(res, 404, { error: "EXCLUSION_NOT_FOUND", message: "Exclusion not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, message: "Exclusion deleted" });
+    } catch (err) {
+      sendJson(res, 500, { error: "EXCLUSION_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 534. POST /api/v1/fleet/network-isolation/isolate/:deviceId
+  router.post('/api/v1/fleet/network-isolation/isolate/:deviceId', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const state = NetworkIsolationEngine.isolateDevice(getDb(), req.params.deviceId, req.body || {});
+      sendJson(res, 200, { success: true, state });
+    } catch (err) {
+      sendJson(res, 400, { error: "ISOLATION_ERROR", message: err.message });
+    }
+  });
+
+  // 535. POST /api/v1/fleet/network-isolation/release/:deviceId
+  router.post('/api/v1/fleet/network-isolation/release/:deviceId', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const state = NetworkIsolationEngine.releaseDevice(getDb(), req.params.deviceId, req.body || {});
+      sendJson(res, 200, { success: true, state });
+    } catch (err) {
+      sendJson(res, 400, { error: "RELEASE_ERROR", message: err.message });
+    }
+  });
+
+  // 536. GET /api/v1/fleet/network-isolation/logs
+  router.get('/api/v1/fleet/network-isolation/logs', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const logs = NetworkIsolationEngine.getIsolationLogs(getDb(), req.query || {});
+      sendJson(res, 200, { logs, count: logs.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "LOGS_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 537. POST /api/v1/fleet/network-isolation/logs
+  router.post('/api/v1/fleet/network-isolation/logs', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.device_id || !req.body?.transition_type) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "device_id and transition_type are required" });
+        return;
+      }
+      const log = NetworkIsolationEngine.logIsolationEvent(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, log });
+    } catch (err) {
+      sendJson(res, 400, { error: "LOG_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 538. GET /api/v1/fleet/network-isolation/script/:deviceId
+  router.get('/api/v1/fleet/network-isolation/script/:deviceId', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const script = NetworkIsolationEngine.generateIsolationScript(getDb(), req.params.deviceId);
       res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
       res.end(script);
     } catch (err) {

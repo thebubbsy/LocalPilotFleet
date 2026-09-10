@@ -2937,6 +2937,61 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_tae_device ON tamper_audit_events(device_id);
     CREATE INDEX IF NOT EXISTS idx_tae_type ON tamper_audit_events(event_type);
     CREATE INDEX IF NOT EXISTS idx_tae_time ON tamper_audit_events(timestamp DESC);
+    -- 142. NETWORK_ISOLATION_POLICIES — Live Host Quarantine & WFP Isolation Baselines (Iteration 51)
+    CREATE TABLE IF NOT EXISTS network_isolation_policies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      target_scope TEXT NOT NULL DEFAULT 'ALL_FLEET' CHECK(target_scope IN ('ALL_FLEET', 'DYNAMIC_GROUP', 'ORGANIZATION')),
+      target_id TEXT,
+      isolation_mode TEXT NOT NULL DEFAULT 'SELECTIVE_MANAGEMENT' CHECK(isolation_mode IN ('FULL_DISCONNECT', 'SELECTIVE_MANAGEMENT', 'HONEYPOT_REDIRECT')),
+      allow_dns INTEGER NOT NULL DEFAULT 1 CHECK(allow_dns IN (0, 1)),
+      allow_dhcp INTEGER NOT NULL DEFAULT 1 CHECK(allow_dhcp IN (0, 1)),
+      allow_fleet_telemetry INTEGER NOT NULL DEFAULT 1 CHECK(allow_fleet_telemetry IN (0, 1)),
+      honeypot_redirect_ip TEXT,
+      is_enabled INTEGER NOT NULL DEFAULT 1 CHECK(is_enabled IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_nip_enabled ON network_isolation_policies(is_enabled);
+    CREATE INDEX IF NOT EXISTS idx_nip_mode ON network_isolation_policies(isolation_mode);
+
+    -- 143. ISOLATION_EXCLUSION_ENDPOINTS — Out-of-band SecOps & Cloudflare Tunnels Ingress (Iteration 51)
+    CREATE TABLE IF NOT EXISTS isolation_exclusion_endpoints (
+      id TEXT PRIMARY KEY,
+      policy_id TEXT,
+      friendly_name TEXT NOT NULL,
+      endpoint_type TEXT NOT NULL CHECK(endpoint_type IN ('IP_ADDRESS', 'CIDR_SUBNET', 'FQDN', 'PORT_RANGE')),
+      endpoint_value TEXT NOT NULL,
+      direction TEXT NOT NULL DEFAULT 'OUTBOUND' CHECK(direction IN ('INBOUND', 'OUTBOUND', 'BOTH')),
+      port INTEGER,
+      is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(policy_id) REFERENCES network_isolation_policies(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_iee_val ON isolation_exclusion_endpoints(endpoint_value);
+    CREATE INDEX IF NOT EXISTS idx_iee_policy ON isolation_exclusion_endpoints(policy_id);
+
+    -- 144. ISOLATION_AUDIT_LOGS — Forensic Host Containment Transitions & Packet Drops (Iteration 51)
+    CREATE TABLE IF NOT EXISTS isolation_audit_logs (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      hostname TEXT NOT NULL,
+      transition_type TEXT NOT NULL CHECK(transition_type IN ('HOST_ISOLATED', 'HOST_RELEASED', 'EXCLUSION_BYPASS_ATTEMPT', 'UNAUTHORIZED_TRAFFIC_DROPPED')),
+      initiated_by TEXT NOT NULL DEFAULT 'SecOps Admin',
+      reason TEXT NOT NULL,
+      packet_summary TEXT,
+      details TEXT,
+      severity TEXT NOT NULL DEFAULT 'HIGH' CHECK(severity IN ('INFO', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+      timestamp TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ial_device ON isolation_audit_logs(device_id);
+    CREATE INDEX IF NOT EXISTS idx_ial_type ON isolation_audit_logs(transition_type);
+    CREATE INDEX IF NOT EXISTS idx_ial_time ON isolation_audit_logs(timestamp DESC);
   `);
 
   // Schema migrations for existing databases
@@ -6841,6 +6896,119 @@ exit 0`,
         'cmd.exe',
         'RESTORED',
         JSON.stringify({ injected_path: 'C:\\Windows\\Temp', remediation: 'Auto-reverted by Tamper Protection Engine' }),
+        'HIGH'
+      );
+    }
+  }
+  // 51. Seed Network Isolation & Host Quarantine Governance Baselines (Iteration 51)
+  const quarantineCount = db.prepare('SELECT COUNT(*) as count FROM network_isolation_policies').get().count;
+  if (quarantineCount === 0) {
+    const insertIsoPolicy = db.prepare(`
+      INSERT OR IGNORE INTO network_isolation_policies (
+        id, name, description, target_scope, target_id, isolation_mode,
+        allow_dns, allow_dhcp, allow_fleet_telemetry, honeypot_redirect_ip, is_enabled
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertIsoPolicy.run(
+      'nip-enterprise-containment',
+      'Enterprise Strict Host Quarantine Baseline',
+      'Enforces total network isolation via WFP while maintaining LocalPilot Fleet management & DNS/DHCP lease renewal.',
+      'ALL_FLEET',
+      null,
+      'SELECTIVE_MANAGEMENT',
+      1,
+      1,
+      1,
+      null,
+      1
+    );
+
+    insertIsoPolicy.run(
+      'nip-airgap-lockdown',
+      'Airgap Complete Disconnect Isolation',
+      'Completely drops 100% of all IPv4/IPv6 inbound and outbound traffic with zero exceptions for high-consequence containment.',
+      'DYNAMIC_GROUP',
+      'grp-critical-infrastructure',
+      'FULL_DISCONNECT',
+      0,
+      0,
+      0,
+      null,
+      1
+    );
+
+    const insertExclusionEndpoint = db.prepare(`
+      INSERT OR IGNORE INTO isolation_exclusion_endpoints (
+        id, policy_id, friendly_name, endpoint_type, endpoint_value, direction, port, is_active
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertExclusionEndpoint.run(
+      'iee-fleet-server',
+      'nip-enterprise-containment',
+      'LocalPilot Fleet On-Premises Server',
+      'IP_ADDRESS',
+      '127.0.0.1',
+      'BOTH',
+      8443,
+      1
+    );
+
+    insertExclusionEndpoint.run(
+      'iee-cloudflare-tunnel',
+      'nip-enterprise-containment',
+      'Cloudflare Zero Trust Edge Ingress Gateway',
+      'CIDR_SUBNET',
+      '198.41.128.0/17',
+      'OUTBOUND',
+      443,
+      1
+    );
+
+    insertExclusionEndpoint.run(
+      'iee-soc-siem',
+      'nip-enterprise-containment',
+      'Enterprise SOC Syslog Collector',
+      'IP_ADDRESS',
+      '10.0.0.50',
+      'OUTBOUND',
+      514,
+      1
+    );
+
+    const sampleDevice = db.prepare("SELECT id, hostname FROM devices WHERE hostname = 'DESKTOP-R0H12DJ' LIMIT 1").get()
+      || db.prepare("SELECT id, hostname FROM devices LIMIT 1").get();
+
+    if (sampleDevice) {
+      const insertIal = db.prepare(`
+        INSERT OR IGNORE INTO isolation_audit_logs (
+          id, device_id, hostname, transition_type, initiated_by, reason,
+          packet_summary, details, severity, timestamp
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', '-25 minutes'))
+      `);
+
+      insertIal.run(
+        'ial-01',
+        sampleDevice.id,
+        sampleDevice.hostname,
+        'HOST_ISOLATED',
+        'IncidentResponsePlaybook #7',
+        'Active C2 beacon detected by EDR process lineage engine',
+        'WFP rules engaged: Inbound=DROP_ALL, Outbound=ALLOW_FLEET_ONLY',
+        JSON.stringify({ c2_dest: '198.51.100.99:443', process: 'invoice_oct_report.exe' }),
+        'CRITICAL'
+      );
+
+      insertIal.run(
+        'ial-02',
+        sampleDevice.id,
+        sampleDevice.hostname,
+        'UNAUTHORIZED_TRAFFIC_DROPPED',
+        'Windows Filtering Platform (WFP)',
+        'Outbound TCP connection dropped during host containment',
+        'TCP 10.0.1.20:49210 -> 203.0.113.88:445 [DROPPED]',
+        JSON.stringify({ target_port: 445, protocol: 'SMB', direction: 'OUTBOUND' }),
         'HIGH'
       );
     }

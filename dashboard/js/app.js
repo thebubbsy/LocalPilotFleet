@@ -230,6 +230,9 @@ const App = {
       case 'tamper-protection':
         if (window.TamperProtectionTable) window.TamperProtectionTable.render();
         break;
+      case 'network-isolation':
+        if (window.NetworkIsolationTable) window.NetworkIsolationTable.render();
+        break;
       case 'settings':
         this.renderSettings();
         break;
