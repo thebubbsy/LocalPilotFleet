@@ -227,6 +227,9 @@ const App = {
       case 'peripheral-control':
         if (window.PeripheralControlTable) window.PeripheralControlTable.render();
         break;
+      case 'tamper-protection':
+        if (window.TamperProtectionTable) window.TamperProtectionTable.render();
+        break;
       case 'settings':
         this.renderSettings();
         break;

@@ -2881,6 +2881,62 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_pae_type ON peripheral_audit_events(event_type);
     CREATE INDEX IF NOT EXISTS idx_pae_action ON peripheral_audit_events(action_taken);
     CREATE INDEX IF NOT EXISTS idx_pae_time ON peripheral_audit_events(timestamp DESC);
+    -- 139. TAMPER_PROTECTION_POLICIES — Defender Core Tamper & Anti-Snooping Baselines (Iteration 50)
+    CREATE TABLE IF NOT EXISTS tamper_protection_policies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      target_scope TEXT NOT NULL DEFAULT 'ALL_FLEET' CHECK(target_scope IN ('ALL_FLEET', 'DYNAMIC_GROUP', 'ORGANIZATION')),
+      target_id TEXT,
+      tamper_protection_state TEXT NOT NULL DEFAULT 'ENFORCED' CHECK(tamper_protection_state IN ('ENFORCED', 'AUDIT_ONLY', 'DISABLED')),
+      lock_security_services INTEGER NOT NULL DEFAULT 1 CHECK(lock_security_services IN (0, 1)),
+      protect_antivirus_exclusions INTEGER NOT NULL DEFAULT 1 CHECK(protect_antivirus_exclusions IN (0, 1)),
+      prevent_safe_mode_bypass INTEGER NOT NULL DEFAULT 1 CHECK(prevent_safe_mode_bypass IN (0, 1)),
+      is_enabled INTEGER NOT NULL DEFAULT 1 CHECK(is_enabled IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tpp_enabled ON tamper_protection_policies(is_enabled);
+    CREATE INDEX IF NOT EXISTS idx_tpp_state ON tamper_protection_policies(tamper_protection_state);
+
+    -- 140. ANTIVIRUS_EXCLUSION_RULES — Governed File, Folder, Extension & Process AV Exclusions (Iteration 50)
+    CREATE TABLE IF NOT EXISTS antivirus_exclusion_rules (
+      id TEXT PRIMARY KEY,
+      policy_id TEXT,
+      exclusion_type TEXT NOT NULL CHECK(exclusion_type IN ('PATH', 'FOLDER', 'EXTENSION', 'PROCESS')),
+      exclusion_value TEXT NOT NULL,
+      risk_tier TEXT NOT NULL DEFAULT 'LOW' CHECK(risk_tier IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+      justification TEXT NOT NULL,
+      approved_by TEXT NOT NULL DEFAULT 'SecurityAdmin',
+      is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+      created_at TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(policy_id) REFERENCES tamper_protection_policies(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_aver_val ON antivirus_exclusion_rules(exclusion_value);
+    CREATE INDEX IF NOT EXISTS idx_aver_type ON antivirus_exclusion_rules(exclusion_type);
+    CREATE INDEX IF NOT EXISTS idx_aver_policy ON antivirus_exclusion_rules(policy_id);
+
+    -- 141. TAMPER_AUDIT_EVENTS — Real-time Registry, Service & Exclusion Tampering Stream (Iteration 50)
+    CREATE TABLE IF NOT EXISTS tamper_audit_events (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      hostname TEXT NOT NULL,
+      username TEXT NOT NULL DEFAULT 'System',
+      event_type TEXT NOT NULL CHECK(event_type IN ('REGISTRY_TAMPER_ATTEMPT', 'SERVICE_STOP_ATTEMPT', 'UNAUTHORIZED_EXCLUSION_INJECTED', 'DRIVER_UNLOAD_ATTEMPT', 'RTP_DISABLE_ATTEMPT')),
+      target_resource TEXT NOT NULL,
+      attacker_process TEXT NOT NULL,
+      action_taken TEXT NOT NULL DEFAULT 'BLOCKED' CHECK(action_taken IN ('BLOCKED', 'RESTORED', 'AUDITED')),
+      details TEXT,
+      severity TEXT NOT NULL DEFAULT 'CRITICAL' CHECK(severity IN ('INFO', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+      timestamp TEXT DEFAULT (DATETIME('now')),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tae_device ON tamper_audit_events(device_id);
+    CREATE INDEX IF NOT EXISTS idx_tae_type ON tamper_audit_events(event_type);
+    CREATE INDEX IF NOT EXISTS idx_tae_time ON tamper_audit_events(timestamp DESC);
   `);
 
   // Schema migrations for existing databases
@@ -6673,6 +6729,119 @@ exit 0`,
         null,
         JSON.stringify({ bus: 'USB 3.0', capacity_mb: 32000, volume_guid: '{694b8e5c-0000-0000-0000-100000000000}' }),
         'INFO'
+      );
+    }
+  }
+  // 50. Seed Tamper Protection & Antivirus Exclusion Governance Baselines
+  const tamperCount = db.prepare('SELECT COUNT(*) as count FROM tamper_protection_policies').get().count;
+  if (tamperCount === 0) {
+    const insertTamper = db.prepare(`
+      INSERT OR IGNORE INTO tamper_protection_policies (
+        id, name, description, target_scope, target_id, tamper_protection_state,
+        lock_security_services, protect_antivirus_exclusions, prevent_safe_mode_bypass, is_enabled
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertTamper.run(
+      'tpp-enterprise-strict',
+      'Enterprise Strict Tamper & Anti-Snooping Baseline',
+      'Locks WinDefend and Sense services, prevents unauthorized registry disablement, and denies local exclusion injection.',
+      'ALL_FLEET',
+      null,
+      'ENFORCED',
+      1,
+      1,
+      1,
+      1
+    );
+
+    insertTamper.run(
+      'tpp-developer-monitored',
+      'Developer Workstation Monitored Tamper Policy',
+      'Monitors exclusion changes and audits security service termination attempts without hard blocking dev runtimes.',
+      'DYNAMIC_GROUP',
+      'grp-workstations',
+      'AUDIT_ONLY',
+      1,
+      0,
+      0,
+      1
+    );
+
+    const insertExclusion = db.prepare(`
+      INSERT OR IGNORE INTO antivirus_exclusion_rules (
+        id, policy_id, exclusion_type, exclusion_value, risk_tier, justification, approved_by, is_active
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertExclusion.run(
+      'aver-git-path',
+      'tpp-enterprise-strict',
+      'PATH',
+      'C:\\Program Files\\Git\\bin\\git.exe',
+      'LOW',
+      'Developer tooling performance optimization for git version control operations.',
+      'SecOps Lead',
+      1
+    );
+
+    insertExclusion.run(
+      'aver-cargo-cache',
+      'tpp-enterprise-strict',
+      'FOLDER',
+      'C:\\Users\\*\\.cargo\\registry',
+      'LOW',
+      'Rust build cache directory to prevent disk I/O scan storms during compiling.',
+      'Architecture Review Board',
+      1
+    );
+
+    insertExclusion.run(
+      'aver-high-risk-temp',
+      'tpp-enterprise-strict',
+      'FOLDER',
+      'C:\\temp\\unins000',
+      'HIGH',
+      'Legacy installer scratch area flagged for mandatory quarterly security audit.',
+      'SecOps Auditor',
+      1
+    );
+
+    const sampleDevice = db.prepare("SELECT id, hostname FROM devices WHERE hostname = 'DESKTOP-R0H12DJ' LIMIT 1").get()
+      || db.prepare("SELECT id, hostname FROM devices LIMIT 1").get();
+
+    if (sampleDevice) {
+      const insertTae = db.prepare(`
+        INSERT OR IGNORE INTO tamper_audit_events (
+          id, device_id, hostname, username, event_type, target_resource,
+          attacker_process, action_taken, details, severity, timestamp
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now', '-20 minutes'))
+      `);
+
+      insertTae.run(
+        'tae-01',
+        sampleDevice.id,
+        sampleDevice.hostname,
+        'SYSTEM',
+        'REGISTRY_TAMPER_ATTEMPT',
+        'HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows Defender\\DisableAntiSpyware',
+        'powershell.exe -enc SQBFAFgA...',
+        'BLOCKED',
+        JSON.stringify({ prevented_value: 1, call_stack: 'ntdll!NtSetValueKey -> kernelbase!RegSetValueExW' }),
+        'CRITICAL'
+      );
+
+      insertTae.run(
+        'tae-02',
+        sampleDevice.id,
+        sampleDevice.hostname,
+        'Tony',
+        'UNAUTHORIZED_EXCLUSION_INJECTED',
+        'HKLM\\SOFTWARE\\Microsoft\\Windows Defender\\Exclusions\\Paths\\C:\\Windows\\Temp',
+        'cmd.exe',
+        'RESTORED',
+        JSON.stringify({ injected_path: 'C:\\Windows\\Temp', remediation: 'Auto-reverted by Tamper Protection Engine' }),
+        'HIGH'
       );
     }
   }

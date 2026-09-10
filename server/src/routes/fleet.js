@@ -1,3 +1,4 @@
+import { TamperProtectionEngine } from '../services/tamperProtectionEngine.js';
 import { PeripheralControlEngine } from '../services/peripheralControlEngine.js';
 import { WebProtectionEngine } from '../services/webProtectionEngine.js';
 import { SandboxDetonationEngine } from '../services/sandboxDetonationEngine.js';
@@ -8094,6 +8095,169 @@ try {
     if (!requireFleetKey(req, res)) return;
     try {
       const script = PeripheralControlEngine.generatePeripheralControlScript(getDb(), req.params.deviceId);
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end(script);
+    } catch (err) {
+      sendJson(res, 500, { error: "SCRIPT_GEN_ERROR", message: err.message });
+    }
+  });
+
+  // --- Iteration 50: Tamper Protection & Exclusion Governance Endpoints (513-524) ---
+
+  // 513. GET /api/v1/fleet/tamper-protection/stats
+  router.get('/api/v1/fleet/tamper-protection/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = TamperProtectionEngine.getTamperProtectionStats(getDb());
+      sendJson(res, 200, stats);
+    } catch (err) {
+      sendJson(res, 500, { error: "STATS_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 514. GET /api/v1/fleet/tamper-protection/policies
+  router.get('/api/v1/fleet/tamper-protection/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policies = TamperProtectionEngine.getPolicies(getDb());
+      sendJson(res, 200, policies);
+    } catch (err) {
+      sendJson(res, 500, { error: "POLICIES_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 515. POST /api/v1/fleet/tamper-protection/policies
+  router.post('/api/v1/fleet/tamper-protection/policies', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.name) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "Policy name is required" });
+        return;
+      }
+      const policy = TamperProtectionEngine.createPolicy(getDb(), req.body);
+      sendJson(res, 201, { success: true, policy });
+    } catch (err) {
+      sendJson(res, 400, { error: "POLICY_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 516. GET /api/v1/fleet/tamper-protection/policies/:id
+  router.get('/api/v1/fleet/tamper-protection/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const policy = TamperProtectionEngine.getPolicyById(getDb(), req.params.id);
+      if (!policy) {
+        sendJson(res, 404, { error: "POLICY_NOT_FOUND", message: "Policy not found" });
+        return;
+      }
+      sendJson(res, 200, policy);
+    } catch (err) {
+      sendJson(res, 500, { error: "POLICY_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 517. PATCH /api/v1/fleet/tamper-protection/policies/:id
+  router.patch('/api/v1/fleet/tamper-protection/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const updated = TamperProtectionEngine.updatePolicy(getDb(), req.params.id, req.body || {});
+      if (!updated) {
+        sendJson(res, 404, { error: "POLICY_NOT_FOUND", message: "Policy not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, policy: updated });
+    } catch (err) {
+      sendJson(res, 400, { error: "POLICY_UPDATE_ERROR", message: err.message });
+    }
+  });
+
+  // 518. DELETE /api/v1/fleet/tamper-protection/policies/:id
+  router.delete('/api/v1/fleet/tamper-protection/policies/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const ok = TamperProtectionEngine.deletePolicy(getDb(), req.params.id);
+      if (!ok) {
+        sendJson(res, 404, { error: "POLICY_NOT_FOUND", message: "Policy not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, message: "Policy deleted" });
+    } catch (err) {
+      sendJson(res, 500, { error: "POLICY_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 519. GET /api/v1/fleet/tamper-protection/exclusions
+  router.get('/api/v1/fleet/tamper-protection/exclusions', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const exclusions = TamperProtectionEngine.getExclusions(getDb(), req.query?.policy_id);
+      sendJson(res, 200, exclusions);
+    } catch (err) {
+      sendJson(res, 500, { error: "EXCLUSIONS_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 520. POST /api/v1/fleet/tamper-protection/exclusions
+  router.post('/api/v1/fleet/tamper-protection/exclusions', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.exclusion_value) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "exclusion_value is required" });
+        return;
+      }
+      const exclusion = TamperProtectionEngine.createExclusion(getDb(), req.body);
+      sendJson(res, 201, { success: true, exclusion });
+    } catch (err) {
+      sendJson(res, 400, { error: "EXCLUSION_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 521. DELETE /api/v1/fleet/tamper-protection/exclusions/:id
+  router.delete('/api/v1/fleet/tamper-protection/exclusions/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const ok = TamperProtectionEngine.deleteExclusion(getDb(), req.params.id);
+      if (!ok) {
+        sendJson(res, 404, { error: "EXCLUSION_NOT_FOUND", message: "Exclusion not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, message: "Exclusion deleted" });
+    } catch (err) {
+      sendJson(res, 500, { error: "EXCLUSION_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 522. GET /api/v1/fleet/tamper-protection/events
+  router.get('/api/v1/fleet/tamper-protection/events', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const events = TamperProtectionEngine.getTamperEvents(getDb(), req.query || {});
+      sendJson(res, 200, { events, count: events.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "EVENTS_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 523. POST /api/v1/fleet/tamper-protection/events
+  router.post('/api/v1/fleet/tamper-protection/events', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.device_id || !req.body?.event_type) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "device_id and event_type are required" });
+        return;
+      }
+      const event = TamperProtectionEngine.logTamperEvent(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, event });
+    } catch (err) {
+      sendJson(res, 400, { error: "EVENT_LOG_ERROR", message: err.message });
+    }
+  });
+
+  // 524. GET /api/v1/fleet/tamper-protection/script/:deviceId
+  router.get('/api/v1/fleet/tamper-protection/script/:deviceId', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const script = TamperProtectionEngine.generateTamperProtectionScript(getDb(), req.params.deviceId);
       res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
       res.end(script);
     } catch (err) {

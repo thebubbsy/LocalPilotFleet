@@ -1,3 +1,4 @@
+import { TamperProtectionEngine } from '../services/tamperProtectionEngine.js';
 import { PeripheralControlEngine } from '../services/peripheralControlEngine.js';
 import { WebProtectionEngine } from '../services/webProtectionEngine.js';
 import { SandboxDetonationEngine } from '../services/sandboxDetonationEngine.js';
@@ -2355,6 +2356,20 @@ export function registerNodeRoutes(router) {
       sendJson(res, 201, { success: true, event });
     } catch (err) {
       sendJson(res, 400, { error: 'NODE_PERIPHERAL_EVENT_ERROR', message: err.message });
+    }
+  });
+
+  // POST /api/v1/nodes/:id/tamper-protection/events — Node agent reports tamper attempt
+  router.post('/api/v1/nodes/:id/tamper-protection/events', (req, res) => {
+    const { id } = req.params;
+    try {
+      const event = TamperProtectionEngine.logTamperEvent(getDb(), {
+        device_id: id,
+        ...(req.body || {})
+      });
+      sendJson(res, 201, { success: true, event });
+    } catch (err) {
+      sendJson(res, 400, { error: "NODE_TAMPER_EVENT_ERROR", message: err.message });
     }
   });
 }
