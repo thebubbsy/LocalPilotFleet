@@ -1,3 +1,4 @@
+import { IdentityThreatEngine } from '../services/identityThreatEngine.js';
 import { VulnerabilityManagementEngine } from '../services/vulnerabilityManagementEngine.js';
 import { ThreatIntelEngine } from '../services/threatIntelEngine.js';
 import { IncidentCorrelationEngine } from '../services/incidentCorrelationEngine.js';
@@ -2492,6 +2493,65 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { success: true, result });
     } catch (err) {
       sendJson(res, 400, { error: "NODE_TVM_SCAN_ERROR", message: err.message });
+    }
+  });
+
+  // 608. GET /api/v1/nodes/:id/itdr/honeytokens — Node agent queries active deception assets to monitor
+  router.get('/api/v1/nodes/:id/itdr/honeytokens', (req, res) => {
+    try {
+      const honeytokens = IdentityThreatEngine.getHoneytokens(getDb(), { is_active: 1 });
+      sendJson(res, 200, { honeytokens, count: honeytokens.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "NODE_HONEYTOKENS_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 609. POST /api/v1/nodes/:id/itdr/report-tripwire — Node agent reports honeytoken tripwire activation
+  router.post('/api/v1/nodes/:id/itdr/report-tripwire', (req, res) => {
+    const { id } = req.params;
+    try {
+      if (!req.body?.account_name && !req.body?.honeytoken_id) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "account_name or honeytoken_id is required" });
+        return;
+      }
+      const device = getDb().prepare('SELECT hostname FROM devices WHERE id = ?').get(id);
+      const hostname = device ? device.hostname : id;
+
+      const result = IdentityThreatEngine.triggerHoneytoken(
+        getDb(),
+        req.body.honeytoken_id || req.body.account_name,
+        hostname,
+        req.body.attacker_ip || '127.0.0.1',
+        req.body.details || {}
+      );
+      sendJson(res, 201, { success: true, ...result });
+    } catch (err) {
+      sendJson(res, 400, { error: "NODE_TRIPWIRE_REPORT_ERROR", message: err.message });
+    }
+  });
+
+  // 610. POST /api/v1/nodes/:id/itdr/report-credential-theft — Node agent reports LSASS dump / Kerberoast
+  router.post('/api/v1/nodes/:id/itdr/report-credential-theft', (req, res) => {
+    const { id } = req.params;
+    try {
+      if (!req.body?.target_account || !req.body?.attack_vector) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "target_account and attack_vector are required" });
+        return;
+      }
+      const device = getDb().prepare('SELECT hostname FROM devices WHERE id = ?').get(id);
+      const hostname = device ? device.hostname : id;
+
+      const detection = IdentityThreatEngine.recordDetection(getDb(), {
+        target_account: req.body.target_account,
+        source_host: hostname,
+        source_ip: req.body.source_ip || '127.0.0.1',
+        attack_vector: req.body.attack_vector,
+        risk_score: req.body.risk_score,
+        evidence: req.body.evidence || req.body.details || {}
+      });
+      sendJson(res, 201, { success: true, detection });
+    } catch (err) {
+      sendJson(res, 400, { error: "NODE_CREDENTIAL_THEFT_REPORT_ERROR", message: err.message });
     }
   });
 }

@@ -230,6 +230,9 @@ const App = {
       case 'tamper-protection':
         if (window.TamperProtectionTable) window.TamperProtectionTable.render();
         break;
+      case 'itdr':
+        if (window.IdentityThreatTable) window.IdentityThreatTable.render();
+        break;
       case 'tvm':
         if (window.VulnerabilityManagementTable) window.VulnerabilityManagementTable.render();
         break;

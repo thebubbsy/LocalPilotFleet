@@ -1,3 +1,4 @@
+import { IdentityThreatEngine } from '../services/identityThreatEngine.js';
 import { VulnerabilityManagementEngine } from '../services/vulnerabilityManagementEngine.js';
 import { ThreatIntelEngine } from '../services/threatIntelEngine.js';
 import { IncidentCorrelationEngine } from '../services/incidentCorrelationEngine.js';
@@ -9106,6 +9107,164 @@ try {
       sendJson(res, 200, { success: true, result });
     } catch (err) {
       sendJson(res, 400, { error: "TVM_SCAN_ERROR", message: err.message });
+    }
+  });
+
+  // 596. GET /api/v1/fleet/itdr/stats — Fleet-wide identity threat & credential exposure statistics
+  router.get('/api/v1/fleet/itdr/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = IdentityThreatEngine.getItdrStats(getDb());
+      sendJson(res, 200, { success: true, stats });
+    } catch (err) {
+      sendJson(res, 500, { error: "ITDR_STATS_ERROR", message: err.message });
+    }
+  });
+
+  // 597. GET /api/v1/fleet/itdr/detections — Retrieve identity attack detections
+  router.get('/api/v1/fleet/itdr/detections', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const detections = IdentityThreatEngine.getDetections(getDb(), req.query || {});
+      sendJson(res, 200, { detections, count: detections.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "ITDR_DETECTIONS_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 598. GET /api/v1/fleet/itdr/detections/:id — Retrieve single identity attack detection
+  router.get('/api/v1/fleet/itdr/detections/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const detection = IdentityThreatEngine.getDetectionById(getDb(), req.params.id);
+      if (!detection) {
+        sendJson(res, 404, { error: "DETECTION_NOT_FOUND", message: "Identity detection not found" });
+        return;
+      }
+      sendJson(res, 200, { detection });
+    } catch (err) {
+      sendJson(res, 500, { error: "ITDR_DETECTION_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 599. POST /api/v1/fleet/itdr/detections — Record new identity threat detection
+  router.post('/api/v1/fleet/itdr/detections', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.target_account || !req.body?.source_host || !req.body?.attack_vector) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "target_account, source_host, and attack_vector are required" });
+        return;
+      }
+      const detection = IdentityThreatEngine.recordDetection(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, detection });
+    } catch (err) {
+      sendJson(res, 400, { error: "ITDR_DETECTION_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 600. PATCH /api/v1/fleet/itdr/detections/:id — Update detection status & resolution notes
+  router.patch('/api/v1/fleet/itdr/detections/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.status) {
+        sendJson(res, 400, { error: "MISSING_STATUS", message: "status is required" });
+        return;
+      }
+      const updated = IdentityThreatEngine.updateDetectionStatus(getDb(), req.params.id, req.body.status, req.body.remediation_notes || req.body.notes);
+      sendJson(res, 200, { success: true, detection: updated });
+    } catch (err) {
+      sendJson(res, 400, { error: "ITDR_DETECTION_UPDATE_ERROR", message: err.message });
+    }
+  });
+
+  // 601. POST /api/v1/fleet/itdr/contain-account — Execute automated containment on targeted account
+  router.post('/api/v1/fleet/itdr/contain-account', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.account_name) {
+        sendJson(res, 400, { error: "MISSING_ACCOUNT", message: "account_name is required" });
+        return;
+      }
+      const contained = IdentityThreatEngine.containAccount(getDb(), req.body.account_name, req.body.action || 'ACCOUNT_LOCKED', req.body.notes);
+      sendJson(res, 200, { success: true, account: contained });
+    } catch (err) {
+      sendJson(res, 400, { error: "ITDR_CONTAIN_ERROR", message: err.message });
+    }
+  });
+
+  // 602. GET /api/v1/fleet/itdr/honeytokens — Retrieve deception honeytokens catalog
+  router.get('/api/v1/fleet/itdr/honeytokens', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const honeytokens = IdentityThreatEngine.getHoneytokens(getDb(), req.query || {});
+      sendJson(res, 200, { honeytokens, count: honeytokens.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "ITDR_HONEYTOKENS_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 603. POST /api/v1/fleet/itdr/honeytokens — Register new deception honeytoken asset
+  router.post('/api/v1/fleet/itdr/honeytokens', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.account_name || !req.body?.honeytoken_type) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "account_name and honeytoken_type are required" });
+        return;
+      }
+      const token = IdentityThreatEngine.createHoneytoken(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, honeytoken: token });
+    } catch (err) {
+      sendJson(res, 400, { error: "ITDR_HONEYTOKEN_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 604. POST /api/v1/fleet/itdr/honeytokens/:id/trigger — Tripwire activation trigger
+  router.post('/api/v1/fleet/itdr/honeytokens/:id/trigger', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const result = IdentityThreatEngine.triggerHoneytoken(
+        getDb(),
+        req.params.id,
+        req.body?.trigger_host || 'Fleet-Gateway',
+        req.body?.attacker_ip || '127.0.0.1',
+        req.body?.details || {}
+      );
+      sendJson(res, 200, { success: true, ...result });
+    } catch (err) {
+      sendJson(res, 400, { error: "ITDR_TRIGGER_ERROR", message: err.message });
+    }
+  });
+
+  // 605. DELETE /api/v1/fleet/itdr/honeytokens/:id — Remove honeytoken from deception catalog
+  router.delete('/api/v1/fleet/itdr/honeytokens/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const success = IdentityThreatEngine.deleteHoneytoken(getDb(), req.params.id);
+      sendJson(res, 200, { success });
+    } catch (err) {
+      sendJson(res, 500, { error: "ITDR_HONEYTOKEN_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 606. GET /api/v1/fleet/itdr/accounts — Retrieve identity accounts risk profiles
+  router.get('/api/v1/fleet/itdr/accounts', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const accounts = IdentityThreatEngine.getAccountRiskProfiles(getDb(), req.query || {});
+      sendJson(res, 200, { accounts, count: accounts.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "ITDR_ACCOUNTS_FETCH_ERROR", message: err.message });
+    }
+  });
+
+  // 607. POST /api/v1/fleet/itdr/accounts/:name/assess — Recalculate account risk profile
+  router.post('/api/v1/fleet/itdr/accounts/:name/assess', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const account = IdentityThreatEngine.assessAccountRisk(getDb(), req.params.name);
+      sendJson(res, 200, { success: true, account });
+    } catch (err) {
+      sendJson(res, 400, { error: "ITDR_ASSESS_ERROR", message: err.message });
     }
   });
 }

@@ -3241,6 +3241,66 @@ export function initDb(dbOrPath, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_vrt_cve ON vulnerability_remediation_tasks(cve_id);
     CREATE INDEX IF NOT EXISTS idx_vrt_status ON vulnerability_remediation_tasks(status);
     CREATE INDEX IF NOT EXISTS idx_vrt_priority ON vulnerability_remediation_tasks(priority);
+    -- =========================================================================
+    -- ITERATION 56: Identity Threat Detection & Response (ITDR & Credential Defense Engine)
+    -- =========================================================================
+    -- Table 157: identity_threat_detections
+    CREATE TABLE IF NOT EXISTS identity_threat_detections (
+      id TEXT PRIMARY KEY,
+      target_account TEXT NOT NULL,
+      source_host TEXT NOT NULL,
+      source_ip TEXT,
+      domain_controller TEXT NOT NULL DEFAULT 'DC01.LOCALPILOT.CORP',
+      attack_vector TEXT NOT NULL CHECK(attack_vector IN ('KERBEROASTING', 'ASREP_ROASTING', 'DCSYNC', 'LSASS_MEMORY_DUMP', 'HONEYTOKEN_TRIGGERED', 'PASSWORD_SPRAY', 'PASS_THE_HASH', 'GOLDEN_TICKET')),
+      mitre_technique TEXT NOT NULL DEFAULT 'T1558',
+      risk_score REAL NOT NULL DEFAULT 75.0,
+      status TEXT NOT NULL DEFAULT 'NEW' CHECK(status IN ('NEW', 'INVESTIGATING', 'CONTAINED', 'DISMISSED')),
+      remediation_action_taken TEXT,
+      detected_at TEXT DEFAULT (DATETIME('now')),
+      resolved_at TEXT,
+      raw_evidence_json TEXT NOT NULL DEFAULT '{}'
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_itd_account ON identity_threat_detections(target_account);
+    CREATE INDEX IF NOT EXISTS idx_itd_vector ON identity_threat_detections(attack_vector);
+    CREATE INDEX IF NOT EXISTS idx_itd_status ON identity_threat_detections(status);
+
+    -- Table 158: identity_honeytokens_catalog
+    CREATE TABLE IF NOT EXISTS identity_honeytokens_catalog (
+      id TEXT PRIMARY KEY,
+      honeytoken_type TEXT NOT NULL CHECK(honeytoken_type IN ('DECOY_USER_ACCOUNT', 'FAKE_SPN_SERVICE', 'CREDENTIAL_MANAGER_BLOB', 'REGISTRY_LSA_SECRET')),
+      account_name TEXT NOT NULL UNIQUE,
+      domain_name TEXT NOT NULL DEFAULT 'LOCALPILOT.CORP',
+      spn TEXT,
+      planted_on_host TEXT,
+      description TEXT,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      trigger_count INTEGER NOT NULL DEFAULT 0,
+      last_triggered_at TEXT,
+      created_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ihc_type ON identity_honeytokens_catalog(honeytoken_type);
+    CREATE INDEX IF NOT EXISTS idx_ihc_account ON identity_honeytokens_catalog(account_name);
+
+    -- Table 159: identity_account_risk_scores
+    CREATE TABLE IF NOT EXISTS identity_account_risk_scores (
+      id TEXT PRIMARY KEY,
+      account_name TEXT NOT NULL UNIQUE,
+      account_type TEXT NOT NULL DEFAULT 'USER' CHECK(account_type IN ('USER', 'SERVICE_ACCOUNT', 'DOMAIN_ADMIN', 'LOCAL_ADMIN')),
+      department TEXT,
+      risk_score REAL NOT NULL DEFAULT 10.0,
+      risk_level TEXT NOT NULL DEFAULT 'LOW' CHECK(risk_level IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+      anomalous_logon_count INTEGER NOT NULL DEFAULT 0,
+      lateral_movement_count INTEGER NOT NULL DEFAULT 0,
+      containment_status TEXT NOT NULL DEFAULT 'NORMAL' CHECK(containment_status IN ('NORMAL', 'PASSWORD_RESET_REQUIRED', 'TOKENS_REVOKED', 'ACCOUNT_LOCKED')),
+      last_assessed_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_iars_name ON identity_account_risk_scores(account_name);
+    CREATE INDEX IF NOT EXISTS idx_iars_level ON identity_account_risk_scores(risk_level);
+    CREATE INDEX IF NOT EXISTS idx_iars_status ON identity_account_risk_scores(containment_status);
+
   `);
 
   // Schema migrations for existing databases
@@ -7644,6 +7704,124 @@ exit 0`,
       );
     }
   }
+
+  // Iteration 56: Identity Threat Detection & Response Seeds
+  const itdrCount = db.prepare('SELECT COUNT(*) as count FROM identity_threat_detections').get().count;
+  if (itdrCount === 0) {
+    const devTarget = db.prepare('SELECT id, hostname FROM devices LIMIT 1').get() || { id: 'dev-01', hostname: 'DESKTOP-CORP-01' };
+
+    const insertItd = db.prepare(`
+      INSERT OR IGNORE INTO identity_threat_detections (
+        id, target_account, source_host, source_ip, domain_controller,
+        attack_vector, mitre_technique, risk_score, status, raw_evidence_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertItd.run(
+      'itd-01',
+      'svc_sql_reporting',
+      devTarget.hostname,
+      '192.168.1.145',
+      'DC01.LOCALPILOT.CORP',
+      'KERBEROASTING',
+      'T1558.003',
+      88.5,
+      'NEW',
+      JSON.stringify({ ticket_encryption: 'RC4-HMAC', requested_spn: 'MSSQLSvc/sql01.localpilot.corp:1433', client_process: 'powershell.exe' })
+    );
+
+    insertItd.run(
+      'itd-02',
+      'LOCAL_SYSTEM',
+      devTarget.hostname,
+      '127.0.0.1',
+      'DC01.LOCALPILOT.CORP',
+      'LSASS_MEMORY_DUMP',
+      'T1003.001',
+      95.0,
+      'INVESTIGATING',
+      JSON.stringify({ dumping_process: 'procdump64.exe', target_process: 'lsass.exe', granted_access: '0x1010', call_trace: 'ntdll.dll!NtOpenProcess' })
+    );
+
+    insertItd.run(
+      'itd-03',
+      'DA_Honeytoken_Alpha',
+      devTarget.hostname,
+      '192.168.1.200',
+      'DC02.LOCALPILOT.CORP',
+      'HONEYTOKEN_TRIGGERED',
+      'T1078.002',
+      99.0,
+      'NEW',
+      JSON.stringify({ decoy_account: 'DA_Honeytoken_Alpha', trigger_action: 'Interactive Logon Attempt', status_code: '0xC000006A' })
+    );
+
+    const insertIhc = db.prepare(`
+      INSERT OR IGNORE INTO identity_honeytokens_catalog (
+        id, honeytoken_type, account_name, domain_name, spn, planted_on_host, description
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertIhc.run(
+      'ihc-01',
+      'DECOY_USER_ACCOUNT',
+      'DA_Honeytoken_Alpha',
+      'LOCALPILOT.CORP',
+      null,
+      devTarget.hostname,
+      'Decoy Domain Admin account planted in fake AD group to detect lateral reconnaissance'
+    );
+
+    insertIhc.run(
+      'ihc-02',
+      'FAKE_SPN_SERVICE',
+      'svc_decoy_backup',
+      'LOCALPILOT.CORP',
+      'backup/nas01.localpilot.corp',
+      devTarget.hostname,
+      'Decoy service account with legacy RC4 SPN registered to trap Kerberoasting scanners'
+    );
+
+    const insertIars = db.prepare(`
+      INSERT OR IGNORE INTO identity_account_risk_scores (
+        id, account_name, account_type, department, risk_score, risk_level, anomalous_logon_count, lateral_movement_count
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertIars.run(
+      'iars-01',
+      'svc_sql_reporting',
+      'SERVICE_ACCOUNT',
+      'Database Operations',
+      88.5,
+      'HIGH',
+      4,
+      1
+    );
+
+    insertIars.run(
+      'iars-02',
+      'Administrator',
+      'DOMAIN_ADMIN',
+      'IT Infrastructure',
+      35.0,
+      'LOW',
+      0,
+      0
+    );
+
+    insertIars.run(
+      'iars-03',
+      'DA_Honeytoken_Alpha',
+      'DOMAIN_ADMIN',
+      'Security Deception Decoy',
+      99.0,
+      'CRITICAL',
+      1,
+      0
+    );
+  }
+
 
 }
 
