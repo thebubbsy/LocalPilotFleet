@@ -3659,6 +3659,66 @@ export function initDb(dbOrPath, options = {}) {
     );
 
     CREATE INDEX IF NOT EXISTS idx_rcp_active ON ransomware_containment_policies(is_active);
+    -- =========================================================================
+    -- ITERATION 63: Software License Optimization & Enterprise Metering Engine
+    -- =========================================================================
+    -- Table 178: software_licenses
+    CREATE TABLE IF NOT EXISTS software_licenses (
+      id TEXT PRIMARY KEY,
+      product_name TEXT NOT NULL,
+      vendor TEXT NOT NULL,
+      license_type TEXT NOT NULL DEFAULT 'PER_SEAT' CHECK(license_type IN ('PER_SEAT', 'CONCURRENT', 'SITE_LICENSE', 'SUBSCRIPTION', 'OEM', 'PERPETUAL')),
+      license_key TEXT,
+      total_seats INTEGER NOT NULL DEFAULT 1,
+      allocated_seats INTEGER NOT NULL DEFAULT 0,
+      cost_per_seat_usd REAL NOT NULL DEFAULT 0.0,
+      billing_cycle TEXT NOT NULL DEFAULT 'ANNUAL' CHECK(billing_cycle IN ('ANNUAL', 'MONTHLY', 'PERPETUAL')),
+      expiration_date TEXT,
+      created_at TEXT DEFAULT (DATETIME('now')),
+      updated_at TEXT DEFAULT (DATETIME('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_lic_vendor ON software_licenses(vendor);
+    CREATE INDEX IF NOT EXISTS idx_lic_type ON software_licenses(license_type);
+
+    -- Table 179: software_license_allocations
+    CREATE TABLE IF NOT EXISTS software_license_allocations (
+      id TEXT PRIMARY KEY,
+      license_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      hostname TEXT NOT NULL,
+      assigned_user TEXT,
+      assigned_at TEXT DEFAULT (DATETIME('now')),
+      status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE', 'RECLAIMED', 'REVOKED', 'FLAGGED_SHELFWARE')),
+      last_used_at TEXT,
+      reclamation_reason TEXT,
+      FOREIGN KEY(license_id) REFERENCES software_licenses(id) ON DELETE CASCADE,
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sla_lic ON software_license_allocations(license_id);
+    CREATE INDEX IF NOT EXISTS idx_sla_dev ON software_license_allocations(device_id);
+    CREATE INDEX IF NOT EXISTS idx_sla_status ON software_license_allocations(status);
+
+    -- Table 180: software_usage_metering
+    CREATE TABLE IF NOT EXISTS software_usage_metering (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      hostname TEXT NOT NULL,
+      process_name TEXT NOT NULL,
+      product_name TEXT,
+      total_runtime_seconds INTEGER NOT NULL DEFAULT 0,
+      foreground_seconds INTEGER NOT NULL DEFAULT 0,
+      launch_count INTEGER NOT NULL DEFAULT 1,
+      last_launched_at TEXT DEFAULT (DATETIME('now')),
+      is_shelfware INTEGER NOT NULL DEFAULT 0 CHECK(is_shelfware IN (0, 1)),
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sum_device ON software_usage_metering(device_id);
+    CREATE INDEX IF NOT EXISTS idx_sum_process ON software_usage_metering(process_name);
+    CREATE INDEX IF NOT EXISTS idx_sum_shelfware ON software_usage_metering(is_shelfware);
+
 
 
 
@@ -8769,6 +8829,118 @@ exit 0`,
       1
     );
   }
+
+  // Iteration 63: Software License Optimization & Enterprise Metering Seeds
+  const licCount = db.prepare('SELECT COUNT(*) as count FROM software_licenses').get().count;
+  if (licCount === 0) {
+    const devTarget = db.prepare('SELECT id, hostname FROM devices LIMIT 1').get() || { id: 'dev-01', hostname: 'DESKTOP-CORP-01' };
+
+    const insertLic = db.prepare(`
+      INSERT OR IGNORE INTO software_licenses (
+        id, product_name, vendor, license_type, license_key, total_seats, allocated_seats, cost_per_seat_usd, billing_cycle, expiration_date
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertLic.run(
+      'lic-01',
+      'Adobe Creative Cloud All Apps',
+      'Adobe Inc.',
+      'SUBSCRIPTION',
+      'ADOB-CC26-8839-4412-ENT',
+      25,
+      22,
+      899.88,
+      'ANNUAL',
+      '2027-01-15'
+    );
+
+    insertLic.run(
+      'lic-02',
+      'JetBrains All Products Pack',
+      'JetBrains s.r.o.',
+      'SUBSCRIPTION',
+      'JB-COMM-9921-X812-FLT',
+      50,
+      48,
+      549.00,
+      'ANNUAL',
+      '2026-11-30'
+    );
+
+    insertLic.run(
+      'lic-03',
+      'Microsoft Visio Professional 2024',
+      'Microsoft Corporation',
+      'PERPETUAL',
+      'W269N-WFGWX-YVC9B-4J6C9-T83GX',
+      10,
+      10,
+      719.99,
+      'PERPETUAL',
+      null
+    );
+
+    const insertSla = db.prepare(`
+      INSERT OR IGNORE INTO software_license_allocations (
+        id, license_id, device_id, hostname, assigned_user, status, last_used_at, reclamation_reason
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertSla.run(
+      'sla-01',
+      'lic-01',
+      devTarget.id,
+      devTarget.hostname,
+      'tony@localpilot.corp',
+      'ACTIVE',
+      '2026-09-08 14:20:00',
+      null
+    );
+
+    insertSla.run(
+      'sla-02',
+      'lic-03',
+      devTarget.id,
+      devTarget.hostname,
+      'legacy_designer@localpilot.corp',
+      'FLAGGED_SHELFWARE',
+      '2026-06-12 09:11:00',
+      'Zero active usage detected in over 90 days'
+    );
+
+    const insertSum = db.prepare(`
+      INSERT OR IGNORE INTO software_usage_metering (
+        id, device_id, hostname, process_name, product_name, total_runtime_seconds, foreground_seconds, launch_count, last_launched_at, is_shelfware
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertSum.run(
+      'sum-01',
+      devTarget.id,
+      devTarget.hostname,
+      'Photoshop.exe',
+      'Adobe Creative Cloud All Apps',
+      72000,
+      54000,
+      24,
+      '2026-09-08 14:20:00',
+      0
+    );
+
+    insertSum.run(
+      'sum-02',
+      devTarget.id,
+      devTarget.hostname,
+      'visio.exe',
+      'Microsoft Visio Professional 2024',
+      120,
+      30,
+      1,
+      '2026-06-12 09:11:00',
+      1
+    );
+  }
+
 
 
 

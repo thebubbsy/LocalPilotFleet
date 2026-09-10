@@ -1,3 +1,4 @@
+import { LicenseOptimizationEngine } from '../services/licenseOptimizationEngine.js';
 import { RansomwareCanaryEngine } from '../services/ransomwareCanaryEngine.js';
 import { CloudAppDiscoveryEngine } from '../services/cloudAppDiscoveryEngine.js';
 import { UebaEngine } from '../services/uebaEngine.js';
@@ -10275,6 +10276,172 @@ try {
       sendJson(res, 200, { success: true, script });
     } catch (err) {
       sendJson(res, 500, { error: "RANSOMWARE_SCRIPT_GENERATE_ERROR", message: err.message });
+    }
+  });
+
+
+  // =========================================================================
+  // ITERATION 63: Software License Optimization & Enterprise Metering Engine
+  // =========================================================================
+
+  // 701. GET /api/v1/fleet/sam/stats — Fleet-wide SAM & license optimization statistics
+  router.get('/api/v1/fleet/sam/stats', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const stats = LicenseOptimizationEngine.getLicenseStats(getDb());
+      sendJson(res, 200, { success: true, stats });
+    } catch (err) {
+      sendJson(res, 500, { error: "SAM_STATS_ERROR", message: err.message });
+    }
+  });
+
+  // 702. GET /api/v1/fleet/sam/licenses — List software license entitlements
+  router.get('/api/v1/fleet/sam/licenses', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const licenses = LicenseOptimizationEngine.getLicenses(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, licenses, count: licenses.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "SAM_LICENSES_ERROR", message: err.message });
+    }
+  });
+
+  // 703. GET /api/v1/fleet/sam/licenses/:id — Single license entitlement with seat allocations
+  router.get('/api/v1/fleet/sam/licenses/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const license = LicenseOptimizationEngine.getLicenseById(getDb(), req.params.id);
+      if (!license) {
+        sendJson(res, 404, { error: "LICENSE_NOT_FOUND", message: "Software license entitlement not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, license });
+    } catch (err) {
+      sendJson(res, 500, { error: "SAM_LICENSE_GET_ERROR", message: err.message });
+    }
+  });
+
+  // 704. POST /api/v1/fleet/sam/licenses — Register new software license entitlement
+  router.post('/api/v1/fleet/sam/licenses', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.product_name || !req.body?.vendor) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "product_name and vendor are required" });
+        return;
+      }
+      const license = LicenseOptimizationEngine.createLicense(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, license });
+    } catch (err) {
+      sendJson(res, 400, { error: "SAM_LICENSE_CREATE_ERROR", message: err.message });
+    }
+  });
+
+  // 705. PUT /api/v1/fleet/sam/licenses/:id — Update license entitlement
+  router.put('/api/v1/fleet/sam/licenses/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const license = LicenseOptimizationEngine.updateLicense(getDb(), req.params.id, req.body || {});
+      if (!license) {
+        sendJson(res, 404, { error: "LICENSE_NOT_FOUND", message: "Software license entitlement not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, license });
+    } catch (err) {
+      sendJson(res, 400, { error: "SAM_LICENSE_UPDATE_ERROR", message: err.message });
+    }
+  });
+
+  // 706. DELETE /api/v1/fleet/sam/licenses/:id — Delete license entitlement
+  router.delete('/api/v1/fleet/sam/licenses/:id', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const deleted = LicenseOptimizationEngine.deleteLicense(getDb(), req.params.id);
+      if (!deleted) {
+        sendJson(res, 404, { error: "LICENSE_NOT_FOUND", message: "Software license entitlement not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, deleted: true });
+    } catch (err) {
+      sendJson(res, 500, { error: "SAM_LICENSE_DELETE_ERROR", message: err.message });
+    }
+  });
+
+  // 707. GET /api/v1/fleet/sam/allocations — List seat allocations
+  router.get('/api/v1/fleet/sam/allocations', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const allocations = LicenseOptimizationEngine.getAllocations(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, allocations, count: allocations.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "SAM_ALLOCATIONS_ERROR", message: err.message });
+    }
+  });
+
+  // 708. POST /api/v1/fleet/sam/allocations — Allocate seat to device
+  router.post('/api/v1/fleet/sam/allocations', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.license_id || !req.body?.device_id) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "license_id and device_id are required" });
+        return;
+      }
+      const allocation = LicenseOptimizationEngine.allocateLicense(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, allocation });
+    } catch (err) {
+      sendJson(res, 400, { error: "SAM_ALLOCATE_ERROR", message: err.message });
+    }
+  });
+
+  // 709. POST /api/v1/fleet/sam/allocations/:id/reclaim — Reclaim license seat
+  router.post('/api/v1/fleet/sam/allocations/:id/reclaim', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const allocation = LicenseOptimizationEngine.reclaimLicense(getDb(), req.params.id, req.body?.reason);
+      if (!allocation) {
+        sendJson(res, 404, { error: "ALLOCATION_NOT_FOUND", message: "Seat allocation not found" });
+        return;
+      }
+      sendJson(res, 200, { success: true, allocation });
+    } catch (err) {
+      sendJson(res, 500, { error: "SAM_RECLAIM_ERROR", message: err.message });
+    }
+  });
+
+  // 710. GET /api/v1/fleet/sam/metering — Query process usage metering
+  router.get('/api/v1/fleet/sam/metering', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const metering = LicenseOptimizationEngine.getMeteringSummary(getDb(), req.query || {});
+      sendJson(res, 200, { success: true, metering, count: metering.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "SAM_METERING_ERROR", message: err.message });
+    }
+  });
+
+  // 711. POST /api/v1/fleet/sam/metering — Ingest process usage metering telemetry
+  router.post('/api/v1/fleet/sam/metering', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      if (!req.body?.device_id || !req.body?.process_name) {
+        sendJson(res, 400, { error: "MISSING_FIELDS", message: "device_id and process_name are required" });
+        return;
+      }
+      const record = LicenseOptimizationEngine.ingestMeteringTelemetry(getDb(), req.body || {});
+      sendJson(res, 201, { success: true, record });
+    } catch (err) {
+      sendJson(res, 400, { error: "SAM_METERING_INGEST_ERROR", message: err.message });
+    }
+  });
+
+  // 712. POST /api/v1/fleet/sam/reclaim-shelfware — Bulk identify and flag shelfware licenses
+  router.post('/api/v1/fleet/sam/reclaim-shelfware', (req, res) => {
+    if (!requireFleetKey(req, res)) return;
+    try {
+      const threshold = parseInt(req.body?.inactive_days_threshold, 10) || 30;
+      const result = LicenseOptimizationEngine.identifyShelfware(getDb(), threshold);
+      sendJson(res, 200, { success: true, result });
+    } catch (err) {
+      sendJson(res, 500, { error: "SAM_SHELFWARE_SCAN_ERROR", message: err.message });
     }
   });
 

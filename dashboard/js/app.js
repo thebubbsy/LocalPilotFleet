@@ -258,6 +258,11 @@ const App = {
           window.RansomwareCanaryTable.render();
         }
         break;
+      case 'sam':
+        if (window.LicenseOptimizationTable && typeof window.LicenseOptimizationTable.render === 'function') {
+          window.LicenseOptimizationTable.render();
+        }
+        break;
       case 'itdr':
         if (window.IdentityThreatTable) window.IdentityThreatTable.render();
         break;

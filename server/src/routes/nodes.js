@@ -1,3 +1,4 @@
+import { LicenseOptimizationEngine } from '../services/licenseOptimizationEngine.js';
 import { RansomwareCanaryEngine } from '../services/ransomwareCanaryEngine.js';
 import { CloudAppDiscoveryEngine } from '../services/cloudAppDiscoveryEngine.js';
 import { UebaEngine } from '../services/uebaEngine.js';
@@ -2832,6 +2833,79 @@ export function registerNodeRoutes(router) {
       sendJson(res, 200, { success: true, policy: policies[0] || null });
     } catch (err) {
       sendJson(res, 500, { error: "NODE_CANARY_POLICY_ERROR", message: err.message });
+    }
+  });
+
+
+  // =========================================================================
+  // ITERATION 63: Software License Optimization & Enterprise Metering Endpoints
+  // =========================================================================
+
+  // 713. GET /api/v1/nodes/:id/sam/licenses — Endpoint agent checks assigned licenses & product keys
+  router.get('/api/v1/nodes/:id/sam/licenses', (req, res) => {
+    const node = authenticateNode(req, res);
+    if (!node) return;
+
+    try {
+      const db = getDb();
+      const licenses = db.prepare(`
+        SELECT sla.id as allocation_id, sla.status, sla.assigned_at,
+               sl.id as license_id, sl.product_name, sl.vendor, sl.license_type, sl.license_key, sl.expiration_date
+        FROM software_license_allocations sla
+        JOIN software_licenses sl ON sla.license_id = sl.id
+        WHERE sla.device_id = ? AND sla.status = 'ACTIVE'
+      `).all(req.params.id);
+
+      sendJson(res, 200, { success: true, licenses, count: licenses.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "NODE_SAM_LICENSES_ERROR", message: err.message });
+    }
+  });
+
+  // 714. POST /api/v1/nodes/:id/sam/metering-report — Endpoint agent reports process foreground runtime
+  router.post('/api/v1/nodes/:id/sam/metering-report', (req, res) => {
+    const node = authenticateNode(req, res);
+    if (!node) return;
+
+    try {
+      const db = getDb();
+      const items = Array.isArray(req.body?.processes) ? req.body.processes : [req.body || {}];
+      let ingested = 0;
+
+      for (const p of items) {
+        if (p.process_name) {
+          LicenseOptimizationEngine.ingestMeteringTelemetry(db, {
+            ...p,
+            device_id: req.params.id,
+            hostname: node.hostname
+          });
+          ingested++;
+        }
+      }
+
+      sendJson(res, 200, { success: true, ingested });
+    } catch (err) {
+      sendJson(res, 400, { error: "NODE_METERING_REPORT_ERROR", message: err.message });
+    }
+  });
+
+  // 715. GET /api/v1/nodes/:id/sam/reclaim-orders — Endpoint agent checks for software uninstall/deactivation orders
+  router.get('/api/v1/nodes/:id/sam/reclaim-orders', (req, res) => {
+    const node = authenticateNode(req, res);
+    if (!node) return;
+
+    try {
+      const db = getDb();
+      const orders = db.prepare(`
+        SELECT sla.id as allocation_id, sla.reclamation_reason, sl.product_name, sl.vendor
+        FROM software_license_allocations sla
+        JOIN software_licenses sl ON sla.license_id = sl.id
+        WHERE sla.device_id = ? AND sla.status = 'RECLAIMED'
+      `).all(req.params.id);
+
+      sendJson(res, 200, { success: true, reclaim_orders: orders, count: orders.length });
+    } catch (err) {
+      sendJson(res, 500, { error: "NODE_SAM_RECLAIM_ORDERS_ERROR", message: err.message });
     }
   });
 
