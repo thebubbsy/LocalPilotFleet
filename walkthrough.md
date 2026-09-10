@@ -2033,3 +2033,41 @@ Iteration 50 delivers enterprise Endpoint Tamper Protection and Antivirus Exclus
    - 20/20 unit tests passed in `server/tests/tamper_protection.test.js`.
    - 1,073/1,073 tests passed across 136 test suites in `npm test`.
    - Git Commit: `b4b699d` pushed to `origin main` and mirrored to OneDrive.
+
+## Iteration 51: Endpoint Network Isolation & Host Quarantine Governance Engine
+
+### Overview
+Iteration 51 delivers enterprise Endpoint Network Isolation and Host Quarantine Governance capabilities equivalent to Microsoft Defender for Endpoint Device Isolation and CrowdStrike Falcon Host Containment. It allows SecOps to dynamically quarantine compromised endpoints using Windows Filtering Platform (WFP) and Windows Advanced Firewall packet filters (inbound/outbound DROP-ALL), selectively preserve out-of-band management channels (LocalPilot Fleet, Cloudflare Tunnels, SOC SIEM collectors, DNS/DHCP), and record forensic transition audit logs and unauthorized packet drops with automated CRITICAL alarm dispatch.
+
+### Key Deliverables & Database Schema
+1. **Database Schema (Tables 142-144 in SQLite):**
+   - `network_isolation_policies` (Table 142): Configures containment profiles and isolation modes (`FULL_DISCONNECT`, `SELECTIVE_MANAGEMENT`, `HONEYPOT_REDIRECT`), preserving essential protocols (DNS, DHCP, Fleet telemetry) and honeypot redirect addresses.
+   - `isolation_exclusion_endpoints` (Table 143): Out-of-band SecOps management exclusions matching IP addresses, CIDR subnets, FQDNs, and port ranges.
+   - `isolation_audit_logs` (Table 144): Forensic audit stream tracking `HOST_ISOLATED`, `HOST_RELEASED`, `EXCLUSION_BYPASS_ATTEMPT`, and `UNAUTHORIZED_TRAFFIC_DROPPED`.
+2. **Backend Engine (`server/src/services/networkIsolationEngine.js`):**
+   - 12 static methods providing policy CRUD, out-of-band exclusion management, live host containment (`isolateDevice`, `releaseDevice`), forensic packet drop logging, automated CRITICAL alarm dispatch, and native Windows PowerShell/WFP netsh quarantine script generation.
+3. **REST Endpoints (525-538 in `fleet.js` & `nodes.js`):**
+   - `GET /api/v1/fleet/network-isolation/stats`
+   - `GET /api/v1/fleet/network-isolation/policies`
+   - `POST /api/v1/fleet/network-isolation/policies`
+   - `GET /api/v1/fleet/network-isolation/policies/:id`
+   - `PATCH /api/v1/fleet/network-isolation/policies/:id`
+   - `DELETE /api/v1/fleet/network-isolation/policies/:id`
+   - `GET /api/v1/fleet/network-isolation/exclusions`
+   - `POST /api/v1/fleet/network-isolation/exclusions`
+   - `DELETE /api/v1/fleet/network-isolation/exclusions/:id`
+   - `POST /api/v1/fleet/network-isolation/isolate/:deviceId`
+   - `POST /api/v1/fleet/network-isolation/release/:deviceId`
+   - `GET /api/v1/fleet/network-isolation/logs`
+   - `POST /api/v1/fleet/network-isolation/logs`
+   - `GET /api/v1/fleet/network-isolation/script/:deviceId`
+   - `POST /api/v1/nodes/:id/network-isolation/logs`
+4. **Dashboard Blade (`dashboard/js/components/networkIsolationTable.js`):**
+   - KPI metric cards (Quarantined Hosts, Active Policies, SecOps Exclusions, Dropped Packets).
+   - Interactive isolation profile manager with PowerShell/WFP script preview.
+   - Out-of-band SecOps exclusion endpoint manager with CIDR/Port badges.
+   - Live containment state transition log and packet interception stream with 1-click Quick Contain/Release action buttons.
+5. **Quality Gate Verification:**
+   - 20/20 unit tests passed in `server/tests/network_isolation.test.js`.
+   - 1,093/1,093 tests passed across 137 test suites in `npm test`.
+   - Git Commit: `41c9f3a` pushed to `origin main` and mirrored to OneDrive.
